@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SVG to HTML - Comparison Example</title>
+    <style>
+      :root {
+        color: #1f2937;
+        background: #f8fafc;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      .toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        min-height: 76px;
+        align-items: center;
+        gap: 18px;
+        border-bottom: 1px solid #e5e7eb;
+        background: rgba(255, 255, 255, 0.92);
+        padding: 0 20px;
+        backdrop-filter: blur(12px);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .score {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid #bbf7d0;
+        border-radius: 999px;
+        background: #f0fdf4;
+        color: #166534;
+        font-size: 20px;
+        font-weight: 800;
+        line-height: 1;
+        padding: 12px 18px;
+      }
+
+      .source-pill {
+        margin-left: auto;
+        border: 1px solid #bbf7d0;
+        border-radius: 999px;
+        background: #ecfdf5;
+        color: #059669;
+        font-size: 15px;
+        font-weight: 800;
+        padding: 9px 16px;
+        white-space: nowrap;
+      }
+
+      .viewport {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: #64748b;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .slider {
+        width: min(360px, 18vw);
+        accent-color: #0284c7;
+      }
+
+      .page {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 28px;
+        padding: 32px 20px;
+      }
+
+      .card {
+        overflow: hidden;
+        border: 1px solid #e5e7eb;
+        border-radius: 28px;
+        background: white;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+      }
+
+      .card-header {
+        display: flex;
+        min-height: 62px;
+        align-items: center;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 0 22px;
+        color: #94a3b8;
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .render {
+        max-height: 820px;
+        overflow: hidden;
+        background: repeating-linear-gradient(
+          45deg,
+          #f8fafc 0,
+          #f8fafc 20px,
+          #f1f5f9 20px,
+          #f1f5f9 40px
+        );
+      }
+
+      .render img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      .diff {
+        margin: 0 20px 28px;
+        overflow: hidden;
+        border: 1px solid #e5e7eb;
+        border-radius: 16px;
+        background: white;
+      }
+
+      .diff summary {
+        cursor: pointer;
+        padding: 14px 18px;
+        color: #475569;
+        font-weight: 800;
+      }
+
+      .diff img {
+        display: block;
+        width: 100%;
+        border-top: 1px solid #e5e7eb;
+      }
+
+      @media (max-width: 960px) {
+        .toolbar {
+          align-items: flex-start;
+          flex-wrap: wrap;
+          padding: 16px;
+        }
+
+        .source-pill {
+          margin-left: 0;
+        }
+
+        .viewport {
+          display: none;
+        }
+
+        .page {
+          grid-template-columns: 1fr;
+          padding: 18px 14px;
+        }
+
+        .card {
+          border-radius: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="toolbar">
+      <h1>Comparison Result</h1>
+      <span class="score">4.33%</span>
+      <span class="source-pill">Local · 36 files · 960.0 KB</span>
+      <span class="viewport">
+        Preview width
+        <input class="slider" type="range" value="505" min="320" max="960" />
+        505px
+      </span>
+    </header>
+
+    <main>
+      <section class="page" aria-label="SVG and HTML render comparison">
+        <article class="card">
+          <div class="card-header">SVG Render</div>
+          <div class="render">
+            <img
+              src="./assets/comparison-4.33-source.png"
+              alt="Original SVG render"
+            />
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">HTML Render</div>
+          <div class="render">
+            <img
+              src="./assets/comparison-4.33-html.png"
+              alt="Generated HTML render"
+            />
+          </div>
+        </article>
+      </section>
+
+      <details class="diff">
+        <summary>Pixel diff image</summary>
+        <img src="./assets/comparison-4.33-diff.png" alt="Pixel diff result" />
+      </details>
+    </main>
+  </body>
+</html>

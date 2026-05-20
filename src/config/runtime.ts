@@ -1,0 +1,13 @@
+export const AGENT_TIMEOUT_MS = 5_400_000
+export const DIFF_RATIO_THRESHOLD = Number(
+  process.env['DIFF_RATIO_THRESHOLD'] ?? 0.05,
+)
+export const MODULE_DIFF_RATIO_THRESHOLD = Number(
+  process.env['MODULE_DIFF_RATIO_THRESHOLD'] ?? 0.1,
+)
+export const FONT_RENDERING_LIMIT_DIFF_RATIO = Number(
+  process.env['FONT_RENDERING_LIMIT_DIFF_RATIO'] ?? 0.065,
+)
+export const FONT_RENDERING_LIMIT_GEOMETRY_TOLERANCE_PX = Number(
+  process.env['FONT_RENDERING_LIMIT_GEOMETRY_TOLERANCE_PX'] ?? 2.5,
+)

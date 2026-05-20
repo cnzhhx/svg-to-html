@@ -1,0 +1,27 @@
+{
+  "defaultModel": "codex",
+  "models": {
+    "kimi": {
+      "runtime": "kimi-cli",
+      "provider": "kimi",
+      "baseURL": "",
+      "apiKey": "",
+      "model": "kimi-for-coding",
+      "cliModel": "kimi-code/kimi-for-coding",
+      "headers": {
+        "User-Agent": "KimiCLI/1.39.0"
+      },
+      "requiresOpenaiAuth": false,
+      "wireApi": "chat"
+    },
+    "codex": {
+      "runtime": "codex",
+      "provider": "",
+      "baseURL": "",
+      "apiKey": "",
+      "model": "gpt-5.5",
+      "requiresOpenaiAuth": false,
+      "wireApi": "responses"
+    }
+  }
+}

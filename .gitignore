@@ -1,0 +1,13 @@
+node_modules/
+workspace/
+docs/
+dist/
+test/output/
+*.tsbuildinfo
+
+.env
+.env.*
+config/model-provider.json
+
+.DS_Store
+**/.DS_Store

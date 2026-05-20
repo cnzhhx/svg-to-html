@@ -1,0 +1,41 @@
+{
+  "name": "svg-to-html",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "doctor": "node scripts/check-system-deps.mjs",
+    "postinstall": "node scripts/check-system-deps.mjs --postinstall",
+    "start": "tsx src/server.ts",
+    "task:generate": "tsx src/cli/generate-design.ts",
+    "task:resolve-container-layout": "tsx src/cli/resolve-container-layout.ts",
+    "task:split-svg-modules": "tsx src/cli/split-svg-modules.ts",
+    "task:analyze-session-cost": "tsx src/cli/analyze-session-cost.ts",
+    "task:inspect-module-svg": "tsx src/cli/inspect-module-svg.ts",
+    "task:export-svg-node-asset": "tsx src/cli/export-svg-node-asset.ts",
+    "task:extract-module-text": "tsx src/cli/extract-module-text.ts",
+    "task:infer-text-style": "tsx src/cli/infer-text-style.ts",
+    "task:sync-text-layout": "tsx src/cli/sync-text-layout.ts",
+    "task:verify": "tsx src/cli/verify-design.ts",
+    "task:verify-module": "tsx src/cli/verify-module-design.ts",
+    "task:export-framework": "tsx src/cli/export-framework.ts"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "^0.120.0",
+    "archiver": "^7.0.1",
+    "express": "^5.1.0",
+    "multer": "^1.4.5-lts.2",
+    "nanoid": "^5.1.5",
+    "openai": "^4.104.0",
+    "prettier": "^3.5.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/archiver": "^7.0.0",
+    "@types/express": "^5.0.2",
+    "@types/multer": "^1.4.12",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@10.11.0+sha512.6540583f41cc5f628eb3d9773ecee802f4f9ef9923cc45b69890fb47991d4b092964694ec3a4f738a420c918a333062c8b925d312f42e4f0c263eb603551f977"
+}

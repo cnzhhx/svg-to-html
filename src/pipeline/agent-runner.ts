@@ -1,0 +1,12 @@
+import { MAX_CONCURRENT_AGENTS } from './agent-runner/config.js'
+import { createAgentRunQueue } from './agent-runner/run-queue.js'
+import { runSession } from './agent-runner/session-runner.js'
+
+const agentRunQueue = createAgentRunQueue({
+  maxConcurrentAgents: MAX_CONCURRENT_AGENTS,
+  runSession,
+})
+
+const { enqueueSession, pauseSession, resumeQueuedSessions } = agentRunQueue
+
+export { enqueueSession, pauseSession, resumeQueuedSessions }
