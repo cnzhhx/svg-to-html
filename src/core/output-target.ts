@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { toAbsolutePath } from "./utils.js";
+import { toAbsolutePath } from "./paths.js";
 
 type OutputFormat = "html" | "vue" | "react";
 

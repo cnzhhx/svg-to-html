@@ -1,14 +1,13 @@
 import type { SvgLayoutNode } from "../svg-layout.js";
-import type { Box } from "../utils.js";
+import type { Box } from "../geometry.js";
 import {
   areaOf,
   centerXOf,
   centerYOf,
   containmentRatio,
-  isAncestorPath,
-  isSimilar,
   overlapRatio,
-} from "./geometry.js";
+} from "../geometry.js";
+import { isAncestorPath, isSimilar } from "./patterns.js";
 import type { ExplicitContainerMeta, ShapeContainerMeta } from "./types.js";
 
 const SHAPE_CONTAINER_TAGS = new Set([

@@ -275,5 +275,5 @@ const createModuleTextStyleHints = async ({
   return payload;
 };
 
-export type { ModuleTextStyleHint, ModuleTextStyleHintsFile };
+export type { ModuleTextStyleHintsFile };
 export { createModuleTextStyleHints };

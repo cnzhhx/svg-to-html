@@ -2,7 +2,6 @@ import path from "node:path";
 
 import {
   loadComponentLibraryDescriptor,
-  writeTextFile,
 } from "../../core/component-library/index.js";
 import type {
   ComponentLibraryAgentContext,
@@ -10,6 +9,7 @@ import type {
   ComponentLibrarySessionRef,
 } from "../../core/component-library/types.js";
 import { writeJsonFile } from "../../core/utils.js";
+import { writeTextFile } from "../../core/file-io.js";
 import type { Session } from "../../session-store/types.js";
 
 const escapeMarkdownCell = (value: unknown) =>

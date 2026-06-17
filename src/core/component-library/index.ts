@@ -4,5 +4,4 @@ export {
   getComponentLibrary,
   listComponentLibraries,
   loadComponentLibraryDescriptor,
-  writeTextFile,
 } from "./registry.js";

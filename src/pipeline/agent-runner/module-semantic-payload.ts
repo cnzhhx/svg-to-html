@@ -2,6 +2,12 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  containmentRatio,
+  centerOf,
+  overlapRatio,
+  type Box,
+} from "../../core/geometry.js";
+import {
   compactAttrValue,
   inspectSvgSource,
 } from "../../core/svg-inspection.js";
@@ -61,20 +67,13 @@ type WriteModuleSemanticPayloadInput = {
   moduleSvgPath: string;
 };
 
-type NumericBox = {
-  height: number;
-  width: number;
-  x: number;
-  y: number;
-};
-
 type SvgDomTextNodeSummary = {
   attrs: Record<string, string>;
   nodePath: string;
-  pixelBox?: NumericBox;
+  pixelBox?: Box;
   tag: string;
   text: string;
-  viewBoxBox?: NumericBox;
+  viewBoxBox?: Box;
 };
 
 const MODULE_SEMANTIC_PAYLOAD_VERSION = 4;
@@ -137,9 +136,9 @@ const pickLayoutTargetRegion = ({
   renderedTextRegion,
   textRegion,
 }: {
-  region?: NumericBox;
-  renderedTextRegion?: NumericBox;
-  textRegion?: NumericBox;
+  region?: Box;
+  renderedTextRegion?: Box;
+  textRegion?: Box;
 }) => renderedTextRegion ?? textRegion ?? region;
 
 const pickLayoutTargetSource = ({
@@ -147,9 +146,9 @@ const pickLayoutTargetSource = ({
   renderedTextRegion,
   textRegion,
 }: {
-  region?: NumericBox;
-  renderedTextRegion?: NumericBox;
-  textRegion?: NumericBox;
+  region?: Box;
+  renderedTextRegion?: Box;
+  textRegion?: Box;
 }) => {
   if (renderedTextRegion) return "renderedTextRegion";
   if (textRegion) return "textRegion";
@@ -157,7 +156,7 @@ const pickLayoutTargetSource = ({
   return "none";
 };
 
-const readNumericBox = (value: unknown): NumericBox | undefined => {
+const readNumericBox = (value: unknown): Box | undefined => {
   if (!isRecord(value)) return undefined;
   const x =
     typeof value.x === "number" && Number.isFinite(value.x)
@@ -188,7 +187,7 @@ const readNumericBox = (value: unknown): NumericBox | undefined => {
 
 const bboxArrayToBox = (
   value: unknown,
-): NumericBox | undefined =>
+): Box | undefined =>
   Array.isArray(value) &&
   value.length >= 4 &&
   value.every((item) => typeof item === "number" && Number.isFinite(item))
@@ -200,38 +199,13 @@ const bboxArrayToBox = (
       }
     : undefined;
 
-const boxArea = (box: NumericBox | undefined) =>
-  box ? Math.max(0, box.width) * Math.max(0, box.height) : 0;
+const overlapRatioOrZero = (left: Box | undefined, right: Box | undefined) =>
+  left && right ? overlapRatio(left, right) : 0;
 
-const intersectArea = (
-  left: NumericBox | undefined,
-  right: NumericBox | undefined,
-) => {
-  if (!left || !right) return 0;
-  const x1 = Math.max(left.x, right.x);
-  const y1 = Math.max(left.y, right.y);
-  const x2 = Math.min(left.x + left.width, right.x + right.width);
-  const y2 = Math.min(left.y + left.height, right.y + right.height);
-  return Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-};
-
-const overlapRatio = (
-  left: NumericBox | undefined,
-  right: NumericBox | undefined,
-) => {
-  const interArea = intersectArea(left, right);
-  if (!interArea) return 0;
-  return interArea / Math.max(1, Math.min(boxArea(left), boxArea(right)));
-};
-
-const coverageRatio = (
-  covered: NumericBox | undefined,
-  covering: NumericBox | undefined,
-) => {
-  const interArea = intersectArea(covered, covering);
-  if (!interArea) return 0;
-  return interArea / Math.max(1, boxArea(covered));
-};
+const containmentRatioOrZero = (
+  inner: Box | undefined,
+  outer: Box | undefined,
+) => (inner && outer ? containmentRatio(inner, outer) : 0);
 
 const SIMPLE_FILTER_MAX_OFFSET = 4;
 const SIMPLE_FILTER_MAX_OPACITY = 0.35;
@@ -487,8 +461,8 @@ const findCandidateVisualEffectTargetNodeIds = (
       if (!isVisibleVisualEffectTarget(child)) return false;
       const childBox = readNumericBox(child.bbox);
       return (
-        coverageRatio(nodeBox, childBox) >= 0.92 &&
-        coverageRatio(childBox, nodeBox) >= 0.92
+        containmentRatioOrZero(nodeBox, childBox) >= 0.92 &&
+        containmentRatioOrZero(childBox, nodeBox) >= 0.92
       );
     })
     .map((child) => child.id)
@@ -641,29 +615,24 @@ const readSvgDomTextNodes = async ({
 const normalizeComparableText = (value: unknown) =>
   typeof value === "string" ? value.replace(/\s+/g, "").trim() : "";
 
-const centerOf = (box: NumericBox) => ({
-  x: box.x + box.width / 2,
-  y: box.y + box.height / 2,
-});
-
 const buildTextGeometryDisagreements = ({
   textContentBlocks,
   textSummary,
 }: {
   textContentBlocks: Array<{
-    bbox?: NumericBox;
+    bbox?: Box;
     id: unknown;
     text: unknown;
   }>;
   textSummary: Array<{
     id: unknown;
-    layoutTargetRegion?: NumericBox;
+    layoutTargetRegion?: Box;
     layoutTargetSource?: string;
-    region?: NumericBox;
-    renderedTextRegion?: NumericBox;
+    region?: Box;
+    renderedTextRegion?: Box;
     sourceBlockText: unknown;
     text: unknown;
-    textRegion?: NumericBox;
+    textRegion?: Box;
   }>;
 }) => {
   const contentById = new Map(
@@ -981,7 +950,7 @@ const writeModuleSemanticPayload = async ({
           normalizeComparableText(block.text) !== "" &&
           normalizeComparableText(block.text) ===
             normalizeComparableText(primaryText ?? "");
-        const geometryMatches = overlapRatio(elementBox, blockBox) >= 0.28;
+        const geometryMatches = overlapRatioOrZero(elementBox, blockBox) >= 0.28;
         return idMatches || (textMatches && geometryMatches);
       });
 
@@ -991,8 +960,8 @@ const writeModuleSemanticPayload = async ({
           normalizeComparableText(node.text) ===
             normalizeComparableText(primaryText ?? "");
         const geometryMatches =
-          overlapRatio(elementBox, node.pixelBox) >= 0.28 ||
-          overlapRatio(elementBox, node.viewBoxBox) >= 0.28;
+          overlapRatioOrZero(elementBox, node.pixelBox) >= 0.28 ||
+          overlapRatioOrZero(elementBox, node.viewBoxBox) >= 0.28;
         return textMatches || (geometryMatches && textMatches);
       });
 
@@ -1054,7 +1023,7 @@ const writeModuleSemanticPayload = async ({
           normalizeComparableText(element.primaryText ?? "") ||
           normalizeComparableText(block.sourceBlockText ?? "") ===
             normalizeComparableText(element.primaryText ?? ""));
-      const geometryMatches = overlapRatio(blockBox, element.bbox) >= 0.28;
+      const geometryMatches = overlapRatioOrZero(blockBox, element.bbox) >= 0.28;
       return idMatches || (textMatches && geometryMatches);
     });
     const matchedSvgDomTextNodes = svgDomTextNodes
@@ -1066,8 +1035,8 @@ const writeModuleSemanticPayload = async ({
             normalizeComparableText(node.text) ===
               normalizeComparableText(block.sourceBlockText ?? ""));
         const geometryMatches =
-          overlapRatio(blockBox, node.pixelBox) >= 0.28 ||
-          overlapRatio(blockBox, node.viewBoxBox) >= 0.28;
+          overlapRatioOrZero(blockBox, node.pixelBox) >= 0.28 ||
+          overlapRatioOrZero(blockBox, node.viewBoxBox) >= 0.28;
         return textMatches || (geometryMatches && textMatches);
       })
       .map((node) => node.nodePath);

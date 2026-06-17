@@ -1,3 +1,4 @@
+import { truncate } from '../../core/string-utils.js'
 import { sessionStore } from '../../session-store.js'
 import type { WorkflowArchiveMaterial } from '../workflow-archive.js'
 import { archiveSessionCheckpoint } from './checkpoint.js'
@@ -97,8 +98,11 @@ const getAgentCommandStatus = ({
 
 const truncateArchiveOutput = (output: string): string => {
   if (ARCHIVE_COMMAND_OUTPUT_MAX_CHARS <= 0) return output
-  if (output.length <= ARCHIVE_COMMAND_OUTPUT_MAX_CHARS) return output
-  return `${output.slice(0, ARCHIVE_COMMAND_OUTPUT_MAX_CHARS)}\n\n[truncated: ${output.length} chars total]`
+  return truncate(
+    output,
+    ARCHIVE_COMMAND_OUTPUT_MAX_CHARS,
+    (value) => `\n\n[truncated: ${value.length} chars total]`,
+  )
 }
 
 const buildAgentCommandArchiveMaterials = ({

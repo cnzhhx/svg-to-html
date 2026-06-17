@@ -2,7 +2,7 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 
 import { capturePage, evaluatePage, launchEdge } from "./cdp.js";
-import startStaticServer from "./static-server.js";
+import { startStaticServer } from "./static-server.js";
 import {
   assertFile,
   type ResolvedSvgDesign,

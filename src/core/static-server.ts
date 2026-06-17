@@ -219,5 +219,4 @@ const startStaticServer = async (): Promise<StaticServer> => {
   }
 }
 
-export default startStaticServer
-export { shutdownStaticServerPool }
+export { startStaticServer, shutdownStaticServerPool }

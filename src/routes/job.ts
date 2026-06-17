@@ -5,6 +5,7 @@ import path from "node:path";
 import archiver from "archiver";
 
 import { DIFF_RATIO_THRESHOLD } from "../config/runtime.js";
+import { truncate } from "../core/string-utils.js";
 import { getWorkspaceRoot } from "../core/utils.js";
 import { cancelSessionRun, enqueueSession } from "../pipeline/agent-runner.js";
 import {
@@ -22,10 +23,8 @@ const API_REASONING_MESSAGE_TEXT_LIMIT = 4_000;
 const API_LOG_TEXT_LIMIT = 2_000;
 const API_RECENT_LOG_LIMIT = 40;
 
-const truncateApiText = (value: unknown, limit: number) => {
-  const text = String(value ?? "");
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
-};
+const truncateApiText = (value: unknown, limit: number) =>
+  truncate(String(value ?? ""), limit, "…");
 
 const safeMessagesForApi = (
   messages: SessionMessage[],

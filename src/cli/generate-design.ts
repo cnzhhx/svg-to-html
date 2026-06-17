@@ -4,18 +4,9 @@ import { initializeDesignScaffolds } from "../core/design-scaffold.js";
 import { parseOutputFormat } from "../core/output-target.js";
 import { buildSemiAutoScaffoldArtifacts } from "../core/semi-auto-scaffold.js";
 import { shutdownStaticServerPool } from "../core/static-server.js";
+import { parseFlagValue } from "./cli-utils.js";
 
 const VALUE_FLAGS = new Set(["--format", "--scale"]);
-
-const parseFlagValue = (args: string[], flag: string) => {
-  const inlineArg = args.find((arg) => arg.startsWith(`${flag}=`));
-  if (inlineArg) return inlineArg.slice(flag.length + 1);
-
-  const flagIndex = args.indexOf(flag);
-  if (flagIndex >= 0) return args[flagIndex + 1];
-
-  return undefined;
-};
 
 const parseInputPath = (args: string[]) =>
   args.find((arg, index) => {

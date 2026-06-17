@@ -429,5 +429,5 @@ const readSvgLayout = async ({
   }
 };
 
-export type { Box, SvgLayoutNode, SvgLayoutResult };
+export type { SvgLayoutNode, SvgLayoutResult };
 export { readSvgLayout };

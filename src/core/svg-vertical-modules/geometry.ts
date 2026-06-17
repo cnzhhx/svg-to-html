@@ -1,20 +1,9 @@
-import {
-  areaOf,
-  clamp,
-  isFiniteBox,
-  isPageScaleBox,
-  pointInside,
-  round,
-  unionBoxes,
-  uniqueStrings,
-} from "../geometry.js";
+import { clamp, isFiniteBox, round } from "../geometry.js";
 import type { Box, Region } from "../utils.js";
 import type {
   ModuleBox,
   SerializableRegion,
 } from "./types.js";
-
-export { areaOf, isFiniteBox, isPageScaleBox, pointInside, round, unionBoxes, uniqueStrings };
 
 export const toModuleBox = (box: Box, viewport: Box): ModuleBox | null => {
   if (!isFiniteBox(box)) return null;

@@ -58,9 +58,4 @@ const normalizeAssetRole = (
   return undefined;
 };
 
-const hasConcreteVisualAssetRole = (
-  role: CanonicalAssetRole | undefined,
-) => role !== undefined && role !== "layout-shell";
-
-export { hasConcreteVisualAssetRole, normalizeAssetRole };
-export type { CanonicalAssetRole };
+export { normalizeAssetRole };

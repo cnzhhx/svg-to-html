@@ -449,17 +449,12 @@ class SessionStore extends EventEmitter {
 const sessionStore = new SessionStore();
 
 export type {
-  PipelineStep,
   Session,
   SessionEvent,
   SessionMessage,
-  SessionPersistenceState,
   SessionResult,
-  SessionStatus,
   WorkflowArchiveEntry,
   WorkflowArchiveItem,
   WorkflowArchiveStage,
-  WorkflowNodeKey,
-  WorkflowProgress,
 } from "./session-store/types.js";
 export { sessionStore };

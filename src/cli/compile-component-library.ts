@@ -1,19 +1,12 @@
 import { compileComponentLibrary } from "../pipeline/component-library/compiler.js";
 import type { ComponentLibraryFramework } from "../core/component-library/types.js";
+import { parseFlagValue } from "./cli-utils.js";
 
 const VALUE_FLAGS = new Set([
   "--framework",
   "--source-dir",
   "--url",
 ]);
-
-const parseFlagValue = (args: string[], flag: string) => {
-  const inlineArg = args.find((arg) => arg.startsWith(`${flag}=`));
-  if (inlineArg) return inlineArg.slice(flag.length + 1);
-  const flagIndex = args.indexOf(flag);
-  if (flagIndex >= 0) return args[flagIndex + 1];
-  return undefined;
-};
 
 const parseFramework = (value: unknown): ComponentLibraryFramework => {
   const normalized = String(value ?? "").trim().toLowerCase();

@@ -3,7 +3,7 @@ import type { SvgLayoutResult } from "../svg-layout.js";
 import type { Box } from "../utils.js";
 
 export type ModulePlannerMode = "auto" | "script" | "model";
-export type SelectedModulePlanner = "single-page" | "model";
+type SelectedModulePlanner = "single-page" | "model";
 
 export type ModuleKind =
   | "global-shell"
@@ -16,7 +16,7 @@ export type ModuleKind =
   | "overlay"
   | "model-region";
 
-export type ModulePlannerConstraints = {
+type ModulePlannerConstraints = {
   avoidSplittingCardsOrRepeatedItems: boolean;
   avoidSplittingVisibleText: boolean;
   preferSemanticSections: boolean;
@@ -55,7 +55,7 @@ export type ModelPlannerPreviewImage = {
   width: number;
 };
 
-export type ModelPlannerRegion = {
+type ModelPlannerRegion = {
   height: number;
   width: number;
   x: number;

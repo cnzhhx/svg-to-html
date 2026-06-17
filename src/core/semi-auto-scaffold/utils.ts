@@ -1,5 +1,3 @@
-import { areaOf, containmentRatio } from '../geometry.js'
-
 const formatPx = (value: number) => `${Math.round(value)}px`
 
 const sanitizeId = (value: string) =>
@@ -8,9 +6,4 @@ const sanitizeId = (value: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
 
-export {
-  areaOf,
-  containmentRatio,
-  formatPx,
-  sanitizeId,
-}
+export { formatPx, sanitizeId }

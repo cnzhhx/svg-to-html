@@ -7,6 +7,7 @@ import {
   type ModulePlanMode,
   type ModulePlannerMode,
 } from '../core/svg-vertical-modules.js'
+import { parseFlagValue } from './cli-utils.js'
 
 const VALUE_FLAGS = new Set([
   '--artifact-dir',
@@ -19,16 +20,6 @@ const VALUE_FLAGS = new Set([
 ])
 
 const DEPRECATED_FLAGS = new Set(['--max-modules', '--target-module-count'])
-
-const parseFlagValue = (args: string[], flag: string) => {
-  const inlineArg = args.find((arg) => arg.startsWith(`${flag}=`))
-  if (inlineArg) return inlineArg.slice(flag.length + 1)
-
-  const flagIndex = args.indexOf(flag)
-  if (flagIndex >= 0) return args[flagIndex + 1]
-
-  return undefined
-}
 
 const parseNumberFlag = ({
   args,

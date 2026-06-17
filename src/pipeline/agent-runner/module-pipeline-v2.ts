@@ -14,7 +14,7 @@ import { isRecord, writeJsonFile } from "../../core/utils.js";
 import { sessionStore } from "../../session-store.js";
 import type { AgentThread } from "../agent-runtime/index.js";
 import { mergeModulesIntoHtml, readModulePlan } from "../module-merge.js";
-import type { VerifyResult } from "../verify/types.js";
+import type { VerifyResult } from "../verify.js";
 import {
   createComponentLibraryAgentContext,
   createComponentLibraryPlanRef,

@@ -7,7 +7,7 @@ import {
   type SessionResult,
 } from "../../session-store.js";
 import { verifyDesign, type VerifyResult } from "../verify.js";
-import type { VerifyMode } from "../verify/types.js";
+import type { VerifyMode } from "../verify.js";
 import { archiveSessionCheckpoint } from "./checkpoint.js";
 
 const buildVerifyStepResult = (
