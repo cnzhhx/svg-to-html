@@ -1,13 +1,16 @@
-import path from 'node:path'
-
 import { sessionStore } from '../../session-store.js'
 import type { WorkflowArchiveMaterial } from '../workflow-archive.js'
 import { archiveSessionCheckpoint } from './checkpoint.js'
 
 import type {
   AgentCommandKind,
-  AgentVerifyQualityStatus,
 } from './agent-turn-types.js'
+
+// Archive 命令输出截断限制（只影响本地存储，不影响发送给模型的内容）
+const ARCHIVE_COMMAND_OUTPUT_MAX_CHARS = Math.max(
+  0,
+  Number(process.env['ARCHIVE_COMMAND_OUTPUT_MAX_CHARS'] ?? 5000),
+)
 
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -50,97 +53,75 @@ const classifyAgentWorkflowCommand = (command: string): AgentCommandKind | null 
   ) {
     return 'verify-module-design'
   }
+  if (
+    commandRunsCli(command, 'src/cli/verify-module-framework.ts') ||
+    commandRunsPackageScript(command, 'task:verify-module-framework')
+  ) {
+    return 'verify-module-framework'
+  }
   return null
 }
 
 const parseVerifyDiffRatio = (output: string) => {
+  // Modern verify CLIs emit compact JSON such as {"diffRatio":0.0914,"passed":false}
+  try {
+    const parsedJson = JSON.parse(output) as unknown
+    if (
+      typeof parsedJson === 'object' &&
+      parsedJson !== null &&
+      'diffRatio' in parsedJson &&
+      typeof (parsedJson as { diffRatio: unknown }).diffRatio === 'number'
+    ) {
+      const parsed = (parsedJson as { diffRatio: number }).diffRatio
+      return Number.isFinite(parsed) ? parsed : undefined
+    }
+  } catch {
+    // fall through to legacy text format
+  }
+
   const match = output.match(/Diff ratio:\s*([0-9.]+)/i)
   if (!match) return undefined
   const parsed = Number(match[1])
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
-const parseVerifyQualityStatus = (
-  output: string,
-): AgentVerifyQualityStatus | undefined => {
-  const match = output.match(/"qualityStatus"\s*:\s*"(pass|partial|fail)"/i)
-  if (!match) return undefined
-  const status = match[1]
-  return status === 'pass' || status === 'partial' || status === 'fail'
-    ? status
-    : undefined
-}
-
-const outputIndicatesVerifyGateFailure = (output: string) =>
-  /gate failed/i.test(output) ||
-  /"layoutBoxPassed"\s*:\s*false/.test(output) ||
-  /"workflowLintPassed"\s*:\s*false/.test(output) ||
-  /"finalOutputPolicyPassed"\s*:\s*false/.test(output) ||
-  /"moduleRegionDiffPassed"\s*:\s*false/.test(output) ||
-  /"passed"\s*:\s*false/.test(output)
 
 const getAgentCommandStatus = ({
   exitCode,
-  output,
 }: {
   exitCode: number | null
-  output: string
 }): 'completed' | 'failed' => {
   if (exitCode !== 0) return 'failed'
-  if (outputIndicatesVerifyGateFailure(output)) {
-    return 'failed'
-  }
   return 'completed'
 }
 
+const truncateArchiveOutput = (output: string): string => {
+  if (ARCHIVE_COMMAND_OUTPUT_MAX_CHARS <= 0) return output
+  if (output.length <= ARCHIVE_COMMAND_OUTPUT_MAX_CHARS) return output
+  return `${output.slice(0, ARCHIVE_COMMAND_OUTPUT_MAX_CHARS)}\n\n[truncated: ${output.length} chars total]`
+}
+
 const buildAgentCommandArchiveMaterials = ({
-  artifactDir,
-  diffRatio,
-  htmlPath,
   output,
+  renderEntryPath,
 }: {
-  artifactDir: string
-  diffRatio?: number
-  htmlPath: string
   output: string
+  renderEntryPath: string
 }): WorkflowArchiveMaterial[] => {
   const materials: WorkflowArchiveMaterial[] = [
     {
       kind: 'text',
       label: 'Command Output',
       targetName: 'command-output.log',
-      content: output || '(empty)',
+      content: truncateArchiveOutput(output) || '(empty)',
     },
     {
       kind: 'file',
-      label: 'HTML Snapshot',
-      sourcePath: htmlPath,
+      label: 'Render Entry Snapshot',
+      sourcePath: renderEntryPath,
       optional: true,
     },
   ]
-
-  if (diffRatio !== undefined) {
-    materials.push(
-      {
-        kind: 'file',
-        label: 'Diff PNG',
-        sourcePath: path.join(artifactDir, 'diff.png'),
-        optional: true,
-      },
-      {
-        kind: 'file',
-        label: 'Verify Report JSON',
-        sourcePath: path.join(artifactDir, 'verify-report.json'),
-        optional: true,
-      },
-      {
-        kind: 'file',
-        label: 'Final Output Policy JSON',
-        sourcePath: path.join(artifactDir, 'final-output-policy.json'),
-        optional: true,
-      },
-    )
-  }
 
   return materials
 }
@@ -166,17 +147,14 @@ const archiveAgentCommandCheckpoint = async ({
   if (!session) return
 
   const diffRatio =
-    commandKind === 'verify-design' || commandKind === 'verify-module-design'
+    commandKind === 'verify-design' ||
+    commandKind === 'verify-module-design' ||
+    commandKind === 'verify-module-framework'
       ? parseVerifyDiffRatio(output)
-      : undefined
-  const qualityStatus =
-    commandKind === 'verify-design'
-      ? parseVerifyQualityStatus(output)
       : undefined
   const normalizedExitCode = typeof exitCode === 'number' ? exitCode : null
   const status = getAgentCommandStatus({
     exitCode: normalizedExitCode,
-    output,
   })
   const note =
     status === 'completed'
@@ -194,14 +172,12 @@ const archiveAgentCommandCheckpoint = async ({
       commandKind,
       exitCode: normalizedExitCode,
       internalRound,
-      qualityStatus,
+
       source: 'model-agent-turn',
     },
     materials: buildAgentCommandArchiveMaterials({
-      artifactDir: session.artifactDir,
-      diffRatio,
-      htmlPath: session.htmlPath,
       output,
+      renderEntryPath: session.outputTarget.renderEntryPath,
     }),
   })
 }
@@ -211,5 +187,4 @@ export {
   classifyAgentWorkflowCommand,
   getAgentCommandStatus,
   parseVerifyDiffRatio,
-  parseVerifyQualityStatus,
 }

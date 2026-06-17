@@ -1,15 +1,11 @@
 import type { ContainerLayoutReport } from "../container-layout/types.js";
 import type { SvgLayoutResult } from "../svg-layout.js";
 import type { Box } from "../utils.js";
-import type {
-  PlannerOcrBlock,
-  PlannerShellEntry,
-} from "../svg-vertical-modules/types.js";
 
-export type ModulePlannerMode = "auto" | "script" | "codex";
+export type ModulePlannerMode = "auto" | "script" | "model";
 export type SelectedModulePlanner = "single-page" | "model";
 
-export type CodexModuleKind =
+export type ModuleKind =
   | "global-shell"
   | "section"
   | "header"
@@ -27,23 +23,18 @@ export type ModulePlannerConstraints = {
   smallDecorationsBelongToNearestModule: boolean;
 };
 
-export type CodexPlannerRequest = {
+export type ModelPlannerRequest = {
   constraints: ModulePlannerConstraints;
   design: {
     height: number;
     name: string;
     previewImagePath: string;
-    previewImages?: CodexPlannerPreviewImage[];
+    previewImages?: ModelPlannerPreviewImage[];
     sourceSvgPath: string;
     width: number;
   };
   geometryHints?: {
     note: string;
-    ocrBlocks: Array<{
-      bbox: Box;
-      id: string;
-      text?: string;
-    }>;
     sourceBoxes: Array<{
       box: Box;
       id: string;
@@ -53,7 +44,7 @@ export type CodexPlannerRequest = {
   mode: "auto" | "single" | "vertical";
 };
 
-export type CodexPlannerPreviewImage = {
+export type ModelPlannerPreviewImage = {
   fullHeight: number;
   height: number;
   imagePath: string;
@@ -64,22 +55,22 @@ export type CodexPlannerPreviewImage = {
   width: number;
 };
 
-export type CodexPlannerRegion = {
+export type ModelPlannerRegion = {
   height: number;
   width: number;
   x: number;
   y: number;
 };
 
-export type CodexPlannerModule = {
+export type ModelPlannerModule = {
   id?: string;
   kind?: string;
   reason?: string;
-  region?: CodexPlannerRegion;
+  region?: ModelPlannerRegion;
 };
 
-export type CodexPlannerResponse = {
-  modules?: CodexPlannerModule[];
+export type ModelPlannerResponse = {
+  modules?: ModelPlannerModule[];
   strategy?: string;
 };
 
@@ -116,7 +107,7 @@ export type ModulePlannerMetadata = {
   validation?: ModulePlanValidationSummary;
 };
 
-export type CodexModulePlannerInput = {
+export type ModelPlannerInput = {
   artifactDir: string;
   constraints: ModulePlannerConstraints;
   containerLayout?: ContainerLayoutReport;
@@ -124,39 +115,33 @@ export type CodexModulePlannerInput = {
     height: number;
     name: string;
     previewImagePath: string;
-    previewImages?: CodexPlannerPreviewImage[];
+    previewImages?: ModelPlannerPreviewImage[];
     sourceSvgPath: string;
     width: number;
   };
   mode: "auto" | "single" | "vertical";
   moduleDir: string;
-  ocrBlocks: PlannerOcrBlock[];
   plannerRetries: number;
-  shellManifest: PlannerShellEntry[];
   svgLayout?: SvgLayoutResult;
   viewport: Box;
 };
 
-export type NormalizeCodexPlanInput = {
+export type NormalizeModelPlanInput = {
   containerLayout?: ContainerLayoutReport;
-  ocrBlocks: PlannerOcrBlock[];
-  response: CodexPlannerResponse;
-  shellManifest: PlannerShellEntry[];
+  response: ModelPlannerResponse;
   svgLayout?: SvgLayoutResult;
   validation: ModulePlanValidationResult;
   viewport: Box;
 };
 
-export type ValidateCodexPlanInput = {
+export type ValidateModelPlanInput = {
   containerLayout?: ContainerLayoutReport;
-  ocrBlocks: PlannerOcrBlock[];
   response: unknown;
-  shellManifest: PlannerShellEntry[];
   viewport: Box;
 };
 
 export type ValidationSourceBox = {
   box: Box;
   id: string;
-  kind: "container" | "ocr" | "repeat-group" | "shell";
+  kind: "container" | "repeat-group";
 };

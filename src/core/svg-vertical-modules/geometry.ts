@@ -1,40 +1,20 @@
-import { areaOf } from "../geometry.js";
+import {
+  areaOf,
+  clamp,
+  isFiniteBox,
+  isPageScaleBox,
+  pointInside,
+  round,
+  unionBoxes,
+  uniqueStrings,
+} from "../geometry.js";
 import type { Box, Region } from "../utils.js";
 import type {
   ModuleBox,
-  PlannerShellEntry,
   SerializableRegion,
 } from "./types.js";
 
-export const round = (value: number, digits = 3) =>
-  Number(value.toFixed(digits));
-
-export const clamp = (value: number, min: number, max: number) =>
-  Math.min(max, Math.max(min, value));
-
-export { areaOf };
-
-export const isPageScaleBox = (box: Box, viewport: Box) => {
-  const areaRatio = areaOf(box) / Math.max(1, areaOf(viewport));
-  return (
-    areaRatio >= 0.82 &&
-    box.width >= viewport.width * 0.88 &&
-    box.height >= viewport.height * 0.62
-  );
-};
-
-export const centerOf = (box: Box) => ({
-  x: box.x + box.width / 2,
-  y: box.y + box.height / 2,
-});
-
-export const isFiniteBox = (box: Box) =>
-  Number.isFinite(box.x) &&
-  Number.isFinite(box.y) &&
-  Number.isFinite(box.width) &&
-  Number.isFinite(box.height) &&
-  box.width > 0 &&
-  box.height > 0;
+export { areaOf, isFiniteBox, isPageScaleBox, pointInside, round, unionBoxes, uniqueStrings };
 
 export const toModuleBox = (box: Box, viewport: Box): ModuleBox | null => {
   if (!isFiniteBox(box)) return null;
@@ -99,46 +79,3 @@ export const expandRegion = ({
 
   return toSerializableRegion(id, expanded ?? region);
 };
-
-export const unionBoxes = (boxes: Box[]): Box | null => {
-  if (!boxes.length) return null;
-
-  const left = Math.min(...boxes.map((box) => box.x));
-  const top = Math.min(...boxes.map((box) => box.y));
-  const right = Math.max(...boxes.map((box) => box.x + box.width));
-  const bottom = Math.max(...boxes.map((box) => box.y + box.height));
-
-  return {
-    height: round(bottom - top),
-    width: round(right - left),
-    x: round(left),
-    y: round(top),
-  };
-};
-
-export const pointInside = (point: { x: number; y: number }, box: Box) =>
-  point.x >= box.x &&
-  point.x <= box.x + box.width &&
-  point.y >= box.y &&
-  point.y <= box.y + box.height;
-
-export const uniqueStrings = (items: string[]) => [...new Set(items)].sort();
-
-export const shellIdsForRegion = ({
-  containerIds,
-  region,
-  shellManifest,
-}: {
-  containerIds: string[];
-  region: Region;
-  shellManifest: PlannerShellEntry[];
-}) =>
-  uniqueStrings(
-    shellManifest
-      .filter(
-        (entry) =>
-          containerIds.includes(entry.containerId) ||
-          (entry.box ? pointInside(centerOf(entry.box), region) : false),
-      )
-      .map((entry) => entry.containerId),
-  );

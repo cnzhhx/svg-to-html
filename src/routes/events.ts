@@ -2,6 +2,7 @@ import type { Request, Response } from 'express'
 import { Router } from 'express'
 
 import { sessionStore, type SessionEvent } from '../session-store.js'
+import type { Session } from '../session-store.js'
 
 const router = Router()
 
@@ -10,6 +11,52 @@ const isBrokenPipeError = (error: unknown) =>
   error !== null &&
   'code' in error &&
   (error.code === 'EPIPE' || error.code === 'ECONNRESET')
+
+const isFrontendMessage = (
+  message: Session['messages'][number],
+) => Boolean(message)
+
+const sessionForEventStream = (session: Session): Session => ({
+  ...session,
+  logs: [],
+  messages: session.messages.filter(isFrontendMessage),
+})
+
+const isFrontendAgentEvent = (event: Record<string, unknown>) => {
+  const eventType = event['type']
+  if (
+    eventType === 'thread.started' ||
+    eventType === 'turn.started' ||
+    eventType === 'turn.completed' ||
+    eventType === 'turn.failed'
+  ) {
+    return true
+  }
+  if (
+    eventType !== 'item.started' &&
+    eventType !== 'item.updated' &&
+    eventType !== 'item.completed'
+  ) {
+    return false
+  }
+
+  const item = event['item']
+  if (!item || typeof item !== 'object') return false
+  const itemType = (item as Record<string, unknown>)['type']
+  return (
+    itemType === 'agent_message' ||
+    itemType === 'command_execution' ||
+    itemType === 'error' ||
+    itemType === 'mcp_tool_call' ||
+    itemType === 'reasoning'
+  )
+}
+
+const shouldPushEventToFrontend = (event: SessionEvent) => {
+  if (event.type === 'agent:event') return isFrontendAgentEvent(event.event)
+  if (event.type === 'message') return isFrontendMessage(event.message)
+  return true
+}
 
 router.get('/sessions/:id/events', (req: Request, res: Response) => {
   const sessionId = String(req.params['id'] ?? '')
@@ -62,6 +109,7 @@ router.get('/sessions/:id/events', (req: Request, res: Response) => {
   }
 
   const listener = (event: SessionEvent) => {
+    if (!shouldPushEventToFrontend(event)) return
     writeEventStream(`data: ${JSON.stringify(event)}\n\n`)
   }
 
@@ -75,12 +123,15 @@ router.get('/sessions/:id/events', (req: Request, res: Response) => {
   req.on('aborted', cleanup)
   req.on('close', cleanup)
 
+  sessionStore.on(`session:${sessionId}`, listener)
+
   if (!writeEventStream('retry: 3000\n')) return
+  const initSession = sessionStore.get(sessionId) ?? session
   if (
     !writeEventStream(
       `data: ${JSON.stringify({
         type: 'init',
-        session,
+        session: sessionForEventStream(initSession),
         timestamp: Date.now(),
       })}\n\n`,
     )
@@ -91,8 +142,6 @@ router.get('/sessions/:id/events', (req: Request, res: Response) => {
   heartbeat = setInterval(() => {
     writeEventStream(': keepalive\n\n')
   }, 15000)
-
-  sessionStore.on(`session:${sessionId}`, listener)
 })
 
 export default router

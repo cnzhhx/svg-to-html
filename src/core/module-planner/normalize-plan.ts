@@ -1,15 +1,23 @@
-import { areaOf, intersectionArea } from "../geometry.js";
+import {
+  areaOf,
+  bottomOf,
+  centerOf,
+  clamp,
+  intersectionArea,
+  isPageScaleBox,
+  overlapLength,
+  pointInside,
+  rightOf,
+  round,
+  unionBoxes,
+  uniqueStrings,
+} from "../geometry.js";
 import type { SvgLayoutNode } from "../svg-layout.js";
 import type { Box, Region } from "../utils.js";
 import {
   expandRegion,
-  isPageScaleBox,
-  pointInside,
-  shellIdsForRegion,
   toModuleBox,
   toSerializableRegion,
-  unionBoxes,
-  uniqueStrings,
 } from "../svg-vertical-modules/geometry.js";
 import type {
   PlannedModules,
@@ -17,39 +25,19 @@ import type {
   SvgVerticalModule,
 } from "../svg-vertical-modules/types.js";
 import type {
-  CodexPlannerModule,
-  NormalizeCodexPlanInput,
+  ModelPlannerModule,
+  NormalizeModelPlanInput,
   ValidationSourceBox,
 } from "./types.js";
 import {
   collectValidationSourceBoxes,
-  normalizeCodexModuleKind,
+  isLargeBackgroundLikeBox,
+  normalizeModuleKind,
   repairRegionsAwayFromSourceBoxes,
 } from "./validate-plan.js";
 
 const SNAP_TOLERANCE_PX = 24;
 const REGION_STITCH_TOLERANCE_PX = 2;
-
-const rightOf = (box: Pick<Box, "width" | "x">) => box.x + box.width;
-
-const bottomOf = (box: Pick<Box, "height" | "y">) => box.y + box.height;
-
-const overlapLength = (
-  leftStart: number,
-  leftEnd: number,
-  rightStart: number,
-  rightEnd: number,
-) => Math.max(0, Math.min(leftEnd, rightEnd) - Math.max(leftStart, rightStart));
-
-const centerOf = (box: Box) => ({
-  x: box.x + box.width / 2,
-  y: box.y + box.height / 2,
-});
-
-const round = (value: number, digits = 3) => Number(value.toFixed(digits));
-
-const clamp = (value: number, min: number, max: number) =>
-  Math.min(max, Math.max(min, value));
 
 const isRenderableContentNode = (node: SvgLayoutNode) =>
   node.depth > 0 &&
@@ -67,15 +55,16 @@ const intersectsRegion = (box: Box, region: Region) => {
 };
 
 const nodeBox = (node: SvgLayoutNode, viewport: Box) => {
-  if (!node.pixelBox) return null;
-  return toModuleBox(node.pixelBox, viewport);
+  const box = node.visibleBox ?? node.pixelBox;
+  if (!box) return null;
+  return toModuleBox(box, viewport);
 };
 
 const sourceContainerIdsForRegion = ({
   containerLayout,
   region,
   viewport,
-}: Pick<NormalizeCodexPlanInput, "containerLayout"> & {
+}: Pick<NormalizeModelPlanInput, "containerLayout"> & {
   region: Region;
   viewport: Box;
 }) =>
@@ -84,7 +73,7 @@ const sourceContainerIdsForRegion = ({
       .filter(
         (container) =>
           intersectsRegion(container.box, region) &&
-          !isPageScaleBox(container.box, viewport),
+          !isPageScaleBox(container.box, viewport.width, viewport.height),
       )
       .map((container) => container.id),
   );
@@ -149,7 +138,7 @@ const normalizeRegion = ({
   viewport,
 }: {
   index: number;
-  module: CodexPlannerModule;
+  module: ModelPlannerModule;
   safeYLines: number[];
   viewport: Box;
 }) => {
@@ -167,7 +156,7 @@ const normalizeRegion = ({
 
   return {
     id: `module-${String(index + 1).padStart(2, "0")}`,
-    kind: normalizeCodexModuleKind(module.kind),
+    kind: normalizeModuleKind(module.kind),
     reason:
       typeof module.reason === "string" && module.reason.trim()
         ? module.reason.trim()
@@ -269,15 +258,6 @@ const stitchFlatVerticalRegions = ({
     top = bottom;
     return stitched;
   });
-};
-
-const isLargeBackgroundLikeBox = (box: Box, viewport: Box) => {
-  const nearFullWidth = box.width >= viewport.width * 0.85;
-  const tall = box.height >= Math.min(900, viewport.height * 0.16);
-  const oversized =
-    box.width > viewport.width * 1.05 || box.x < -viewport.width * 0.1;
-  const largeArea = areaOf(box) >= areaOf(viewport) * 0.08;
-  return nearFullWidth && tall && (oversized || largeArea);
 };
 
 const collectBoundarySourceBands = ({
@@ -410,9 +390,7 @@ const normalizeTopLevelCoverage = ({
 
 type ModuleOwnershipDraft = NormalizedModuleRegion & {
   candidateNodes: NodeMatch[];
-  ocrBlockIds: string[];
   retainedNodes: NodeMatch[];
-  shellContainerIds: string[];
   sourceContainerIds: string[];
 };
 
@@ -438,7 +416,7 @@ const collectRenderableNodeMatches = ({
   svgLayout,
   viewport,
 }: {
-  svgLayout?: NormalizeCodexPlanInput["svgLayout"];
+  svgLayout?: NormalizeModelPlanInput["svgLayout"];
   viewport: Box;
 }) =>
   (svgLayout?.nodes ?? []).flatMap((node, order): NodeMatch[] => {
@@ -488,7 +466,7 @@ const isCrossModuleSharedBackgroundCandidate = ({
 }) => {
   if (hits.length <= 1) return false;
   if (!BACKGROUND_CANDIDATE_TAGS.has(match.node.tag)) return false;
-  if (isPageScaleBox(match.box, viewport)) return true;
+  if (isPageScaleBox(match.box, viewport.width, viewport.height)) return true;
 
   const nodeArea = Math.max(1, areaOf(match.box));
   const viewportArea = Math.max(1, areaOf(viewport));
@@ -581,7 +559,7 @@ const createSharedLayers = ({
         reason:
           "Cross-module background/decorative SVG nodes are rendered once as a shared page layer to preserve paint order without assigning background pieces to semantic modules.",
         region,
-        textTreatment: "ocr-checked-no-ordinary-text",
+        textTreatment: "non-text-shared-asset",
       },
     ];
   });
@@ -592,7 +570,7 @@ const assignNodeOwnership = ({
   viewport,
 }: {
   drafts: ModuleOwnershipDraft[];
-  svgLayout?: NormalizeCodexPlanInput["svgLayout"];
+  svgLayout?: NormalizeModelPlanInput["svgLayout"];
   viewport: Box;
 }) => {
   const allMatches = collectRenderableNodeMatches({ svgLayout, viewport });
@@ -643,58 +621,6 @@ const repairRegionFromOwnedNodes = ({
   };
 };
 
-const assignOcrBlocksToBestModules = ({
-  modules,
-  ocrBlocks,
-}: {
-  modules: ModuleOwnershipDraft[];
-  ocrBlocks: NormalizeCodexPlanInput["ocrBlocks"];
-}) => {
-  const byModule = new Map(modules.map((module) => [module.id, [] as string[]]));
-
-  ocrBlocks.forEach((block) => {
-    const blockArea = Math.max(1, areaOf(block.bbox));
-    const hits = modules
-      .flatMap((module) => {
-        const intersection = intersectionArea(block.bbox, module.region);
-        if (intersection <= 0) return [];
-        const overlap = intersection / blockArea;
-        const centerScore = pointInside(centerOf(block.bbox), module.region)
-          ? 1
-          : 0;
-        const containerScore =
-          block.assignedContainerId &&
-          module.sourceContainerIds.includes(block.assignedContainerId)
-            ? 0.1
-            : 0;
-        if (centerScore === 0 && overlap < 0.2 && containerScore === 0) {
-          return [];
-        }
-        return [
-          {
-            module,
-            score: overlap + centerScore + containerScore,
-            containerScore,
-          },
-        ];
-      })
-      .sort(
-        (left, right) =>
-          right.score - left.score ||
-          right.containerScore - left.containerScore ||
-          (left.module.kind === "global-shell" ? 1 : 0) -
-            (right.module.kind === "global-shell" ? 1 : 0) ||
-          areaOf(left.module.region) - areaOf(right.module.region),
-      );
-
-    const owner = hits[0]?.module;
-    if (!owner) return;
-    byModule.get(owner.id)?.push(block.id);
-  });
-
-  return byModule;
-};
-
 const containsMostOf = (inner: Region, outer: Region) =>
   intersectionArea(inner, outer) / Math.max(1, areaOf(inner)) >= 0.82;
 
@@ -717,7 +643,7 @@ const isParentBackgroundNode = ({
   viewport: Box;
 }) => {
   if (!BACKGROUND_CANDIDATE_TAGS.has(match.node.tag)) return false;
-  if (isPageScaleBox(match.box, viewport)) return true;
+  if (isPageScaleBox(match.box, viewport.width, viewport.height)) return true;
 
   const nodeArea = Math.max(1, areaOf(match.box));
   const childArea = Math.max(1, areaOf(child.region));
@@ -778,35 +704,11 @@ const subtractChildOwnedItems = (
   return items.filter((item) => !childOwned.has(item));
 };
 
-const subtractChildRegionOcrBlocks = ({
-  childModules,
-  items,
-  ocrBlocks,
-}: {
-  childModules: ModuleOwnershipDraft[];
-  items: string[];
-  ocrBlocks: NormalizeCodexPlanInput["ocrBlocks"];
-}) => {
-  if (!childModules.length || !items.length) return items;
-  const ocrById = new Map(ocrBlocks.map((block) => [block.id, block]));
-  return items.filter((id) => {
-    const block = ocrById.get(id);
-    if (!block) return true;
-    return !childModules.some(
-      (child) =>
-        pointInside(centerOf(block.bbox), child.region) ||
-        containsMostOf(block.bbox, child.region),
-    );
-  });
-};
-
 const applyNestedModuleOwnership = ({
   drafts,
-  ocrBlocks,
   viewport,
 }: {
   drafts: ModuleOwnershipDraft[];
-  ocrBlocks: NormalizeCodexPlanInput["ocrBlocks"];
   viewport: Box;
 }): ModuleOwnershipDraft[] =>
   drafts.map((parent) => {
@@ -824,26 +726,12 @@ const applyNestedModuleOwnership = ({
         parent,
         viewport,
       }),
-      ocrBlockIds: subtractChildOwnedItems(
-        subtractChildRegionOcrBlocks({
-          childModules,
-          items: parent.ocrBlockIds,
-          ocrBlocks,
-        }),
-        childModules,
-        (child) => child.ocrBlockIds,
-      ),
       retainedNodes: filterParentMatches({
         childModules,
         matches: parent.retainedNodes,
         parent,
         viewport,
       }),
-      shellContainerIds: subtractChildOwnedItems(
-        parent.shellContainerIds,
-        childModules,
-        (child) => child.shellContainerIds,
-      ),
       sourceContainerIds: subtractChildOwnedItems(
         parent.sourceContainerIds,
         childModules,
@@ -861,9 +749,7 @@ const isTinyEmptyModule = ({
 }) => {
   if (
     module.candidateNodes.length ||
-    module.retainedNodes.length ||
-    module.ocrBlockIds.length ||
-    module.shellContainerIds.length
+    module.retainedNodes.length
   ) {
     return false;
   }
@@ -916,11 +802,9 @@ const toSvgVerticalModule = ({
         (match) => match.node.nodePath,
       ),
     ),
-    ocrBlockIds: module.ocrBlockIds,
     reason: module.reason,
     region,
     score: 0,
-    shellContainerIds: module.shellContainerIds,
     sourceContainerIds: module.sourceContainerIds,
   };
 };
@@ -933,7 +817,7 @@ const countIgnoredRenderableNodes = ({
 }: {
   modules: SvgVerticalModule[];
   sharedLayers: SvgSharedLayer[];
-  svgLayout?: NormalizeCodexPlanInput["svgLayout"];
+  svgLayout?: NormalizeModelPlanInput["svgLayout"];
   viewport: Box;
 }) => {
   const regions = [
@@ -948,19 +832,15 @@ const countIgnoredRenderableNodes = ({
   }).length;
 };
 
-const normalizeCodexPlan = ({
+const normalizeModelPlan = ({
   containerLayout,
-  ocrBlocks,
   response,
-  shellManifest,
   svgLayout,
   validation,
   viewport,
-}: NormalizeCodexPlanInput): PlannedModules => {
+}: NormalizeModelPlanInput): PlannedModules => {
   const sourceBoxes = collectValidationSourceBoxes({
     containerLayout,
-    ocrBlocks,
-    shellManifest,
     viewport,
   });
   const safeYLines = collectSafeYLines({
@@ -1018,13 +898,7 @@ const normalizeCodexPlan = ({
     return {
       ...module,
       candidateNodes: [],
-      ocrBlockIds: [],
       retainedNodes: [],
-      shellContainerIds: shellIdsForRegion({
-        containerIds: sourceContainerIds,
-        region,
-        shellManifest,
-      }),
       sourceContainerIds,
     };
   });
@@ -1045,25 +919,11 @@ const normalizeCodexPlan = ({
       });
       return {
         ...module,
-        ocrBlockIds: [],
-        shellContainerIds: shellIdsForRegion({
-          containerIds: sourceContainerIds,
-          region,
-          shellManifest,
-        }),
         sourceContainerIds,
       };
     });
-  const ocrBlockIdsByModule = assignOcrBlocksToBestModules({
-    modules: refreshedDrafts,
-    ocrBlocks,
-  });
   const ownedDrafts = applyNestedModuleOwnership({
-    drafts: refreshedDrafts.map((module) => ({
-      ...module,
-      ocrBlockIds: uniqueStrings(ocrBlockIdsByModule.get(module.id) ?? []),
-    })),
-    ocrBlocks,
+    drafts: refreshedDrafts,
     viewport,
   });
   const filteredDrafts = removeTinyEmptyModules({
@@ -1104,4 +964,4 @@ const normalizeCodexPlan = ({
   };
 };
 
-export { normalizeCodexPlan };
+export { normalizeModelPlan };

@@ -11,6 +11,13 @@ import type {
   WorkflowProgress,
 } from './types.js'
 
+const MAX_STORED_ERROR_CHARS = 100
+
+const sampleStoredError = (error: string) =>
+  error.length > MAX_STORED_ERROR_CHARS
+    ? error.slice(0, MAX_STORED_ERROR_CHARS)
+    : error
+
 const setWorkflowMeta = (
   session: Session,
   patch: Partial<Pick<WorkflowProgress, 'detail' | 'iteration' | 'maxIterations'>>,
@@ -88,12 +95,15 @@ const failWorkflowNode = (
   node: WorkflowNodeKey,
   error: string,
 ) => {
+  const storedError = sampleStoredError(error)
   const progress = ensureWorkflowProgress(session)
   const currentNode = progress.nodes[node]
   session.progress = {
     ...progress,
     currentNode: node,
-    detail: error ? `${WORKFLOW_NODE_LABELS[node]}失败：${error}` : progress.detail,
+    detail: storedError
+      ? `${WORKFLOW_NODE_LABELS[node]}失败：${storedError}`
+      : progress.detail,
     nodes: {
       ...progress.nodes,
       [node]: {
@@ -102,7 +112,7 @@ const failWorkflowNode = (
         status: 'failed',
         startedAt: currentNode.startedAt ?? Date.now(),
         completedAt: Date.now(),
-        error,
+        error: storedError,
       },
     },
   }
@@ -133,6 +143,9 @@ const startStep = (session: Session, step: PipelineStep) => {
   const hasExecutionStarted = Object.values(session.steps).some(
     (state) => state.status !== 'pending',
   )
+  if (!hasExecutionStarted) {
+    session.executionStartedAt = Date.now()
+  }
   session.status = 'running'
   session.activeStep = step
   session.steps[step] = { status: 'running', startedAt: session.steps[step]?.startedAt ?? Date.now() }
@@ -157,12 +170,13 @@ const completeStep = (
 }
 
 const failStep = (session: Session, step: PipelineStep, error: string) => {
+  const storedError = sampleStoredError(error)
   ensureWorkflowProgress(session)
   session.steps[step] = {
     ...session.steps[step],
     status: 'failed',
     completedAt: Date.now(),
-    error,
+    error: storedError,
   }
   session.activeStep = null
   session.updatedAt = Date.now()
@@ -189,20 +203,6 @@ const markQueued = (session: Session) => {
           },
           verify: {
             ...progress.nodes.verify,
-            status: 'pending' as const,
-            startedAt: undefined,
-            completedAt: undefined,
-            error: undefined,
-          },
-          export: {
-            ...progress.nodes.export,
-            status: 'pending' as const,
-            startedAt: undefined,
-            completedAt: undefined,
-            error: undefined,
-          },
-          feedback: {
-            ...progress.nodes.feedback,
             status: 'pending' as const,
             startedAt: undefined,
             completedAt: undefined,
@@ -247,17 +247,12 @@ const updateQueuePosition = (
   return session.progress
 }
 
-const pause = (session: Session) => {
+const resetInFlightExecution = (session: Session) => {
   const now = Date.now()
   const progress = ensureWorkflowProgress(session)
-  const pausedStep = session.activeStep
-  if (pausedStep && session.steps[pausedStep]?.status === 'running') {
-    session.steps[pausedStep] = {
-      ...session.steps[pausedStep],
-      status: 'pending',
-      completedAt: now,
-      error: undefined,
-    }
+  const activeStep = session.activeStep
+  if (activeStep && session.steps[activeStep]?.status === 'running') {
+    session.steps[activeStep] = { status: 'pending' }
   }
   session.activeStep = null
   const currentNode = progress.currentNode
@@ -266,17 +261,14 @@ const pause = (session: Session) => {
     nextNodes[currentNode] = {
       ...nextNodes[currentNode],
       status: 'pending',
-      completedAt: now,
+      startedAt: undefined,
+      completedAt: undefined,
       error: undefined,
     }
   }
-  session.status = 'paused'
   session.progress = {
     ...progress,
     nodes: nextNodes,
-    detail: progress.currentNode
-      ? `${WORKFLOW_NODE_LABELS[progress.currentNode]}已暂停`
-      : '执行已暂停',
   }
   session.updatedAt = now
   return session.progress
@@ -292,23 +284,6 @@ const completePipeline = (
   const progress = ensureWorkflowProgress(session)
   session.status = options?.status ?? 'completed'
   session.error = undefined
-  if (progress.nodes.feedback.status !== 'failed') {
-    progress.nodes.feedback = {
-      ...progress.nodes.feedback,
-      status: 'completed',
-      startedAt: progress.nodes.feedback.startedAt ?? Date.now(),
-      completedAt: Date.now(),
-    }
-  }
-  if (progress.nodes.export.status !== 'failed') {
-    progress.nodes.export = {
-      ...progress.nodes.export,
-      status: 'completed',
-      startedAt: progress.nodes.export.startedAt ?? Date.now(),
-      completedAt: Date.now(),
-      error: undefined,
-    }
-  }
   session.progress = {
     ...progress,
     currentNode: 'done',
@@ -330,6 +305,7 @@ const completePipeline = (
 }
 
 const failPipeline = (session: Session, error: string) => {
+  const storedError = sampleStoredError(error)
   const progress = ensureWorkflowProgress(session)
   const now = Date.now()
   const activeStep = session.activeStep
@@ -341,7 +317,7 @@ const failPipeline = (session: Session, error: string) => {
       ...session.steps[activeStep],
       status: 'failed',
       completedAt: now,
-      error,
+      error: storedError,
     }
   }
 
@@ -352,17 +328,17 @@ const failPipeline = (session: Session, error: string) => {
       status: 'failed',
       startedAt: nextNodes[currentNode].startedAt ?? now,
       completedAt: now,
-      error,
+      error: storedError,
     }
   }
 
   session.status = 'failed'
   session.activeStep = null
-  session.error = error
+  session.error = storedError
   session.progress = {
     ...progress,
     nodes: nextNodes,
-    detail: error ? `执行失败：${error}` : '执行失败',
+    detail: storedError ? `执行失败：${storedError}` : '执行失败',
   }
   session.updatedAt = now
   return session.progress
@@ -377,7 +353,7 @@ export {
   failStep,
   failWorkflowNode,
   markQueued,
-  pause,
+  resetInFlightExecution,
   setWorkflowMeta,
   startStep,
   startWorkflowNode,

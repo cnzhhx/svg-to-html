@@ -23,7 +23,7 @@ const createSvgRenderWrapper = ({
         width: ${width}px;
         height: ${height}px;
         overflow: hidden;
-        background: #000;
+        background: transparent;
       }
 
       img {
@@ -69,6 +69,7 @@ const renderSvgToPng = async ({
 
   try {
     await capturePage({
+      deviceScaleFactor: design.scale,
       outputPath: svgPngPath,
       port: browser.port,
       url: pathToFileURL(wrapperPath).href,

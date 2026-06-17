@@ -283,9 +283,3 @@ const createContainerLayoutReport = async ({
 };
 
 export { createContainerLayoutReport };
-export type {
-  ContainerLayoutReport,
-  ContainerRecord,
-  RebuildRecipe,
-  RepeatedGroupRecord,
-} from "./container-layout/types.js";

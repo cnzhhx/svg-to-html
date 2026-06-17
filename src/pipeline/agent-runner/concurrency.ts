@@ -37,4 +37,4 @@ const runWithLimit = async <T, R>({
   return results
 }
 
-export { runWithLimit, throwIfAbortedSignal }
+export { runWithLimit }

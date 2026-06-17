@@ -4,9 +4,9 @@ import { readFile } from "node:fs/promises";
 import { capturePage, evaluatePage, launchEdge } from "./cdp.js";
 import startStaticServer from "./static-server.js";
 import {
-  type DesignPair,
+  assertFile,
+  type ResolvedSvgDesign,
   resolveArtifactDir,
-  resolveDesignPair,
   resolveSvgDesign,
   toAbsolutePath,
   toUrlPath,
@@ -16,10 +16,11 @@ import {
 
 type RenderResult = {
   artifactDir: string;
-  htmlImageErrors: HtmlImageError[];
-  htmlPngPath: string;
-  htmlWrapperPath: string;
+  renderImageErrors: HtmlImageError[];
+  renderPngPath: string;
+  renderWrapperPath: string;
   sourceImageErrors: HtmlImageError[];
+  sourceBasis?: string;
   sourceRenderMode: "svg-image" | "html";
   svgPngPath: string;
   svgWrapperPath: string;
@@ -33,15 +34,22 @@ type HtmlImageError = {
   src: string;
 };
 
+type RenderDesign = ResolvedSvgDesign & {
+  renderEntryPath: string;
+};
+
 const SVG_WRAPPER_NAME = "render-svg.html";
-const HTML_WRAPPER_NAME = "render-html.html";
+const RENDER_WRAPPER_NAME = "render-output.html";
 
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const collectHtmlIntegrityIssues = (html: string, design: DesignPair) => {
+const stripScriptBlocksForIntegrity = (html: string) =>
+  html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "<script></script>");
+
+const collectHtmlIntegrityIssues = (html: string, design: RenderDesign) => {
   const issues: string[] = [];
-  const lowerHtml = html.toLowerCase();
+  const lowerHtml = stripScriptBlocksForIntegrity(html).toLowerCase();
   const svgBaseName = path.basename(design.svgPath).toLowerCase();
   const escapedSvgBaseName = escapeRegExp(svgBaseName);
 
@@ -51,24 +59,27 @@ const collectHtmlIntegrityIssues = (html: string, design: DesignPair) => {
 
   pushIfMatch(
     /<iframe\b[^>]+src\s*=\s*["'][^"']*\.svg(?:[?#][^"']*)?["']/i,
-    "HTML uses <iframe> to load an SVG asset.",
+    "Rendered output uses <iframe> to load an SVG asset.",
   );
-  pushIfMatch(/data:image\//i, "HTML embeds image content via a data URL.");
+  pushIfMatch(
+    /data:image\//i,
+    "Rendered output embeds image content via a data URL.",
+  );
   pushIfMatch(
     /(?:<img\b[^>]+src\s*=\s*["'](?:https?:)?\/\/|url\(\s*["']?(?:https?:)?\/\/)/i,
-    "HTML references a remote image asset.",
+    "Rendered output references a remote image asset.",
   );
-  pushIfMatch(/<svg\b/i, "HTML contains inline <svg> markup.");
+  pushIfMatch(/<svg\b/i, "Rendered output contains inline <svg> markup.");
   pushIfMatch(
     new RegExp(escapedSvgBaseName, "i"),
-    `HTML references the source SVG file name (${svgBaseName}).`,
+    `Rendered output references the source SVG file name (${svgBaseName}).`,
   );
 
   return issues;
 };
 
-const checkHtmlIntegrity = async (design: DesignPair) => {
-  const html = await readFile(design.htmlPath, "utf8");
+const checkHtmlIntegrity = async (design: RenderDesign) => {
+  const html = await readFile(design.renderEntryPath, "utf8");
   return collectHtmlIntegrityIssues(html, design);
 };
 
@@ -91,7 +102,7 @@ const createSvgWrapper = ({
         width: ${width}px;
         height: ${height}px;
         overflow: hidden;
-        background: #000;
+        background: transparent;
       }
 
       img {
@@ -138,12 +149,12 @@ const createSvgWrapper = ({
 `;
 
 const createHtmlWrapper = ({
-  designHtmlUrlPath,
+  renderEntryUrlPath,
   imageErrorsGlobal = "__RENDER_IMAGE_ERRORS__",
   height,
   width,
 }: {
-  designHtmlUrlPath: string;
+  renderEntryUrlPath: string;
   imageErrorsGlobal?: string;
   height: number;
   width: number;
@@ -158,7 +169,7 @@ const createHtmlWrapper = ({
         width: ${width}px;
         height: ${height}px;
         overflow: hidden;
-        background: #000;
+        background: transparent;
       }
 
       iframe {
@@ -166,12 +177,12 @@ const createHtmlWrapper = ({
         width: ${width}px;
         height: ${height}px;
         border: 0;
-        background: #000;
+        background: transparent;
       }
     </style>
   </head>
   <body>
-    <iframe id="source" src="${designHtmlUrlPath}"></iframe>
+    <iframe id="source" src="${renderEntryUrlPath}"></iframe>
     <script>
       const waitForImages = async (root) => {
         const errors = []
@@ -203,6 +214,27 @@ const createHtmlWrapper = ({
       }
 
       const source = document.getElementById('source')
+      // Capture runtime errors thrown inside the iframe render entry (e.g.
+      // an undeclared sourceData/data reference in a framework bundle that
+      // compiled but threw at mount time). Used by the post-merge render health
+      // check to surface blank-mount failures with a concrete reason.
+      window.__RENDER_RUNTIME_ERRORS__ = []
+      source.addEventListener('load', () => {
+        try {
+          const win = source.contentWindow
+          if (win) {
+            win.addEventListener('error', (event) => {
+              const msg = (event && event.message) || 'unknown error'
+              window.__RENDER_RUNTIME_ERRORS__.push(String(msg).slice(0, 300))
+            })
+            win.addEventListener('unhandledrejection', (event) => {
+              const reason = event && event.reason
+              const msg = reason instanceof Error ? reason.message : String(reason)
+              window.__RENDER_RUNTIME_ERRORS__.push('unhandledrejection: ' + String(msg).slice(0, 300))
+            })
+          }
+        } catch {}
+      })
       source.addEventListener('load', async () => {
         const sourceDocument = source.contentDocument
         window.${imageErrorsGlobal} = await waitForImages(sourceDocument)
@@ -223,37 +255,41 @@ const renderDesignTargets = async (
   inputPath: string,
   customArtifactDir?: string,
   options?: {
-    htmlPath?: string;
+    renderEntryPath: string;
     scale?: number;
+    sourceBasis?: string;
     sourceHtmlPath?: string;
   },
 ): Promise<RenderResult> => {
-  const resolvedDesign = options?.htmlPath
-    ? await resolveSvgDesign(inputPath, { scale: options?.scale })
-    : await resolveDesignPair(inputPath, { scale: options?.scale });
-  const design = options?.htmlPath
-    ? {
-        ...resolvedDesign,
-        htmlPath: toAbsolutePath(options.htmlPath),
-      }
-    : resolvedDesign;
+  if (!options?.renderEntryPath) {
+    throw new Error("renderDesignTargets requires renderEntryPath");
+  }
+  const resolvedDesign = await resolveSvgDesign(inputPath, {
+    scale: options.scale,
+  });
+  const design: RenderDesign = {
+    ...resolvedDesign,
+    renderEntryPath: toAbsolutePath(options.renderEntryPath),
+  };
+  await assertFile(design.renderEntryPath, "Render entry");
   const artifactDir = await resolveArtifactDir(
     design.svgPath,
     customArtifactDir,
   );
-  const htmlIntegrityIssues = await checkHtmlIntegrity(design);
+  const renderIntegrityIssues = await checkHtmlIntegrity(design);
 
   const svgWrapperPath = path.join(artifactDir, SVG_WRAPPER_NAME);
-  const htmlWrapperPath = path.join(artifactDir, HTML_WRAPPER_NAME);
+  const renderWrapperPath = path.join(artifactDir, RENDER_WRAPPER_NAME);
   const svgPngPath = path.join(artifactDir, "svg.png");
-  const htmlPngPath = path.join(artifactDir, "html.png");
+  const renderPngPath = path.join(artifactDir, "render.png");
   const sourceRenderMode = options?.sourceHtmlPath ? "html" : "svg-image";
+  const sourceBasis = options?.sourceBasis ?? sourceRenderMode;
 
   await writeTextFile(
     svgWrapperPath,
     options?.sourceHtmlPath
       ? createHtmlWrapper({
-          designHtmlUrlPath: toUrlPath(options.sourceHtmlPath),
+          renderEntryUrlPath: toUrlPath(options.sourceHtmlPath),
           imageErrorsGlobal: "__RENDER_SOURCE_IMAGE_ERRORS__",
           height: design.height,
           width: design.width,
@@ -266,9 +302,9 @@ const renderDesignTargets = async (
   );
 
   await writeTextFile(
-    htmlWrapperPath,
+    renderWrapperPath,
     createHtmlWrapper({
-      designHtmlUrlPath: toUrlPath(design.htmlPath),
+      renderEntryUrlPath: toUrlPath(design.renderEntryPath),
       height: design.height,
       width: design.width,
     }),
@@ -276,11 +312,13 @@ const renderDesignTargets = async (
 
   const server = await startStaticServer();
   const browser = await launchEdge();
-  let htmlImageErrors: HtmlImageError[] = [];
+  let renderImageErrors: HtmlImageError[] = [];
   let sourceImageErrors: HtmlImageError[] = [];
 
   try {
     await capturePage({
+      deviceScaleFactor: design.scale,
+      opaqueBackground: true,
       outputPath: svgPngPath,
       port: browser.port,
       url: `${server.origin}${toUrlPath(svgWrapperPath)}`,
@@ -289,14 +327,17 @@ const renderDesignTargets = async (
     });
 
     await capturePage({
-      outputPath: htmlPngPath,
+      deviceScaleFactor: design.scale,
+      opaqueBackground: true,
+      outputPath: renderPngPath,
       port: browser.port,
-      url: `${server.origin}${toUrlPath(htmlWrapperPath)}`,
+      url: `${server.origin}${toUrlPath(renderWrapperPath)}`,
       viewportHeight: design.height,
       viewportWidth: design.width,
     });
 
     sourceImageErrors = await evaluatePage<HtmlImageError[]>({
+      deviceScaleFactor: design.scale,
       expression:
         sourceRenderMode === "html"
           ? "window.__RENDER_SOURCE_IMAGE_ERRORS__ ?? []"
@@ -307,10 +348,11 @@ const renderDesignTargets = async (
       viewportWidth: design.width,
     });
 
-    htmlImageErrors = await evaluatePage<HtmlImageError[]>({
+    renderImageErrors = await evaluatePage<HtmlImageError[]>({
+      deviceScaleFactor: design.scale,
       expression: "window.__RENDER_IMAGE_ERRORS__ ?? []",
       port: browser.port,
-      url: `${server.origin}${toUrlPath(htmlWrapperPath)}`,
+      url: `${server.origin}${toUrlPath(renderWrapperPath)}`,
       viewportHeight: design.height,
       viewportWidth: design.width,
     });
@@ -330,12 +372,14 @@ const renderDesignTargets = async (
   await writeJsonFile(path.join(artifactDir, "render-report.json"), {
     designName: design.designName,
     height: design.height,
-    htmlImageErrors,
-    htmlImageIntegrityPassed: htmlImageErrors.length === 0,
-    htmlIntegrityIssues,
-    htmlIntegrityPassed: htmlIntegrityIssues.length === 0,
-    htmlPngPath,
+    renderImageErrors,
+    renderImageIntegrityPassed: renderImageErrors.length === 0,
+    renderIntegrityIssues,
+    renderIntegrityPassed: renderIntegrityIssues.length === 0,
+    renderEntryPath: design.renderEntryPath,
+    renderPngPath,
     sourceHtmlPath: options?.sourceHtmlPath,
+    sourceBasis,
     sourceImageErrors,
     sourceImageIntegrityPassed: sourceImageErrors.length === 0,
     sourceRenderMode,
@@ -345,9 +389,10 @@ const renderDesignTargets = async (
 
   return {
     artifactDir,
-    htmlImageErrors,
-    htmlPngPath,
-    htmlWrapperPath,
+    renderImageErrors,
+    renderPngPath,
+    renderWrapperPath,
+    sourceBasis,
     sourceImageErrors,
     sourceRenderMode,
     svgPngPath,
@@ -355,4 +400,4 @@ const renderDesignTargets = async (
   };
 };
 
-export { collectHtmlIntegrityIssues, renderDesignTargets };
+export { renderDesignTargets };

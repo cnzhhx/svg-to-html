@@ -18,4 +18,4 @@ const isAbortError = (error: unknown) => {
   )
 }
 
-export { createAbortError, isAbortError, throwIfRunAborted }
+export { isAbortError, throwIfRunAborted }

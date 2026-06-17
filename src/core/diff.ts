@@ -6,43 +6,37 @@ import {
   DEFAULT_THRESHOLD,
   DIFF_WRAPPER_NAME,
 } from './diff/constants.js'
-import { renderDiffInsightsMarkdown } from './diff/report.js'
-import { resolveDiffRegions } from './diff/regions.js'
 import type {
-  DiffBoundingBox,
   DiffPageResult,
-  RegionStat,
 } from './diff/types.js'
 import { createDiffWrapper } from './diff/wrapper.js'
 import startStaticServer from './static-server.js'
-import { type Region, toUrlPath, writeJsonFile, writeTextFile } from './utils.js'
+import { toUrlPath, writeTextFile } from './utils.js'
 
 const createPixelDiff = async ({
   artifactDir,
-  htmlPngPath,
-  regions,
-  regionsPath,
+  renderPngPath,
+  scale = 1,
   svgPngPath,
   threshold = DEFAULT_THRESHOLD,
+  viewportHeight,
+  viewportWidth,
 }: {
   artifactDir: string
-  htmlPngPath: string
-  regions?: Region[]
-  regionsPath?: string
+  renderPngPath: string
+  scale?: number
   svgPngPath: string
   threshold?: number
+  viewportHeight: number
+  viewportWidth: number
 }) => {
-  const diffRegions = await resolveDiffRegions({ regions, regionsPath })
   const diffWrapperPath = path.join(artifactDir, DIFF_WRAPPER_NAME)
   const diffPngPath = path.join(artifactDir, 'diff.png')
-  const diffReportPath = path.join(artifactDir, 'diff-report.json')
-  const diffInsightsPath = path.join(artifactDir, 'diff-insights.md')
 
   await writeTextFile(
     diffWrapperPath,
     createDiffWrapper({
-      htmlImageUrl: toUrlPath(htmlPngPath),
-      regions: diffRegions,
+      renderImageUrl: toUrlPath(renderPngPath),
       svgImageUrl: toUrlPath(svgPngPath),
       threshold,
     }),
@@ -53,11 +47,13 @@ const createPixelDiff = async ({
 
   try {
     const diffResult = await evaluatePage<DiffPageResult>({
+      deviceScaleFactor: scale,
+      evaluateTimeoutMs: 180000,
       expression: 'window.__DIFF_RESULT__',
       port: browser.port,
       url: `${server.origin}${toUrlPath(diffWrapperPath)}`,
-      viewportHeight: 2400,
-      viewportWidth: 1200,
+      viewportHeight,
+      viewportWidth,
     })
 
     if (!diffResult.diffDataUrl)
@@ -70,17 +66,9 @@ const createPixelDiff = async ({
         'base64',
       ),
     )
-    await writeJsonFile(diffReportPath, diffResult.report)
-    await writeTextFile(
-      diffInsightsPath,
-      renderDiffInsightsMarkdown(diffResult.report),
-    )
 
     return {
       diffCanvasPath: diffWrapperPath,
-      diffInsightsPath,
-      diffPngPath,
-      diffReportPath,
       report: diffResult.report,
     }
   } finally {
@@ -89,5 +77,5 @@ const createPixelDiff = async ({
   }
 }
 
-export type { DiffBoundingBox, RegionStat }
+export type { DiffPageResult }
 export { createPixelDiff }

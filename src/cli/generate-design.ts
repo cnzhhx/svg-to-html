@@ -1,10 +1,11 @@
 import { createContainerLayoutReport } from "../core/container-layout.js";
 import { shutdownBrowserPool } from "../core/cdp.js";
-import { initializeDesignScaffold } from "../core/design-scaffold.js";
+import { initializeDesignScaffolds } from "../core/design-scaffold.js";
+import { parseOutputFormat } from "../core/output-target.js";
 import { buildSemiAutoScaffoldArtifacts } from "../core/semi-auto-scaffold.js";
 import { shutdownStaticServerPool } from "../core/static-server.js";
 
-const VALUE_FLAGS = new Set(["--scale"]);
+const VALUE_FLAGS = new Set(["--format", "--scale"]);
 
 const parseFlagValue = (args: string[], flag: string) => {
   const inlineArg = args.find((arg) => arg.startsWith(`${flag}=`));
@@ -32,15 +33,26 @@ const parseScale = (args: string[]) => {
   return scale;
 };
 
+const parseFormat = (args: string[]) => {
+  const raw = parseFlagValue(args, "--format");
+  if (!raw) {
+    throw new Error(
+      "Missing required --format <html|vue|react>",
+    );
+  }
+  return parseOutputFormat(raw);
+};
+
 const main = async () => {
   const args = process.argv.slice(2);
   const inputPath = parseInputPath(args);
   const overwrite = args.includes("--force") || args.includes("force");
+  const format = parseFormat(args);
   const scale = parseScale(args);
 
   if (!inputPath) {
     throw new Error(
-      "Usage: pnpm exec tsx src/cli/generate-design.ts 设计稿.svg路径 [--force|force] [--scale 1]",
+      "Usage: pnpm exec tsx src/cli/generate-design.ts 设计稿.svg路径 --format <html|vue|react> [--force|force] [--scale 1]",
     );
   }
   const containerLayout = await createContainerLayoutReport({
@@ -53,25 +65,27 @@ const main = async () => {
     scale,
     svgLayoutReport: containerLayout.svgLayout,
   });
-  const design = await initializeDesignScaffold({
-    htmlContent: semiAuto.htmlScaffold,
+  const design = await initializeDesignScaffolds({
+    format,
     inputPath,
     overwrite,
+    renderContent: semiAuto.htmlScaffold,
     scale,
   });
 
-  console.log(`[generate] HTML scaffold ready: ${design.htmlPath}`);
-  console.log(`[generate] Compare HTML ready: ${design.compareHtmlPath}`);
+  console.log(`[generate] Source entry ready: ${design.outputTarget.sourceEntryPath}`);
+  if (design.outputTarget.sourceStylePath) {
+    console.log(`[generate] Source style ready: ${design.outputTarget.sourceStylePath}`);
+  }
+  console.log(`[generate] Render entry ready: ${design.outputTarget.renderEntryPath}`);
+  console.log(`[generate] Compare entry ready: ${design.outputTarget.compareEntryPath}`);
   console.log(
     `[generate] Container layout preflight created: ${containerLayout.markdownPath}`,
   );
-  console.log(`[generate] OCR blocks created: ${semiAuto.ocrBlocksPath}`);
   console.log(
     `[generate] Structure draft created: ${semiAuto.structureDraftPath}`,
   );
-  console.log(
-    `[generate] Shell manifest created: ${semiAuto.shellManifestPath}`,
-  );
+
   console.log(
     `[generate] Scaffold decisions created: ${semiAuto.scaffoldDecisionsPath}`,
   );
@@ -79,14 +93,14 @@ const main = async () => {
   console.log(
     [
       "Design scaffolds initialized. This is a semi-auto starting point, not a completed restoration:",
-      `- HTML: ${design.htmlPath}`,
-      `- Compare HTML: ${design.compareHtmlPath}`,
+      `- Format: ${format}`,
+      `- Source Entry: ${design.outputTarget.sourceEntryPath}`,
+      `- Render Entry: ${design.outputTarget.renderEntryPath}`,
+      `- Compare Entry: ${design.outputTarget.compareEntryPath}`,
       `- Container Layout: ${containerLayout.markdownPath}`,
-      `- OCR Blocks: ${semiAuto.ocrBlocksPath}`,
       `- Structure Draft: ${semiAuto.structureDraftPath}`,
-      `- Shell Manifest: ${semiAuto.shellManifestPath}`,
       `- Scaffold Decisions: ${semiAuto.scaffoldDecisionsPath}`,
-      "- Next: read Container Layout + Rebuild Recipes first, then rebuild HTML, then run verify-design",
+      "- Next: read Container Layout + Rebuild Recipes first, then rebuild source, refresh render entry, then run verify-design",
     ].join("\n"),
   );
 };
