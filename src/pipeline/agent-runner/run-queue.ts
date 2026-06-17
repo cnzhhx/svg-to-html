@@ -18,15 +18,22 @@ const createAgentRunQueue = ({
     string,
     {
       controller: AbortController
+      finished: Promise<void>
+      resolveFinished: () => void
     }
   >()
 
   const reserveRunSlot = (sessionId: string) => {
     const existing = activeRuns.get(sessionId)
-    if (existing) return existing.controller
+    if (existing) return existing
     const controller = new AbortController()
-    activeRuns.set(sessionId, { controller })
-    return controller
+    let resolveFinished = () => {}
+    const finished = new Promise<void>((resolve) => {
+      resolveFinished = resolve
+    })
+    const runState = { controller, finished, resolveFinished }
+    activeRuns.set(sessionId, runState)
+    return runState
   }
 
   const broadcastQueuePositions = () => {
@@ -64,14 +71,15 @@ const createAgentRunQueue = ({
     while (activeRuns.size < maxConcurrentAgents && queue.length > 0) {
       const sessionId = queue.shift()!
       queued.delete(sessionId)
-      const controller = reserveRunSlot(sessionId)
-      void runSession(sessionId, controller)
+      const activeRun = reserveRunSlot(sessionId)
+      void runSession(sessionId, activeRun.controller)
         .catch((error) => {
           console.error(`[agent-runner] runSession(${sessionId}) uncaught:`, error)
           const message = error instanceof Error ? error.message : String(error)
           sessionStore.failPipeline(sessionId, message)
         })
         .finally(() => {
+          activeRun.resolveFinished()
           activeRuns.delete(sessionId)
           processQueue()
         })
@@ -79,7 +87,7 @@ const createAgentRunQueue = ({
     broadcastQueuePositions()
   }
 
-  const resumeQueuedSessions = () => {
+  const processQueuedSessions = () => {
     processQueue()
   }
 
@@ -99,20 +107,19 @@ const createAgentRunQueue = ({
     broadcastQueuePositions()
   }
 
-  const pauseSession = (sessionId: string) => {
+  const cancelSessionRun = async (sessionId: string) => {
     removeFromQueue(sessionId)
     const active = activeRuns.get(sessionId)
-    if (active) {
-      sessionStore.addLog(sessionId, '[agent] pause requested')
-      active.controller.abort('paused-by-user')
-    }
-    sessionStore.pause(sessionId)
+    if (!active) return
+    sessionStore.addLog(sessionId, '[agent] session delete requested; canceling run')
+    active.controller.abort('deleted-by-user')
+    await active.finished
   }
 
   return {
+    cancelSessionRun,
     enqueueSession,
-    pauseSession,
-    resumeQueuedSessions,
+    processQueuedSessions,
   }
 }
 

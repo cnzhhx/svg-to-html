@@ -1,61 +1,88 @@
-import { existsSync } from "node:fs";
 import path from "node:path";
-import {
-  copyFile,
-  cp,
-  mkdir,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 
 import { AGENT_REASONING_EFFORTS } from "../../config/agent-reasoning.js";
 import { MODULE_DIFF_RATIO_THRESHOLD } from "../../config/runtime.js";
+import { normalizeOutputFormat } from "../../core/output-target.js";
 import {
-  MODULE_SVG_CROP_VERSION,
-  createModuleSvgCropFingerprint,
-  cropModuleSvg,
-} from "../../core/svg-vertical-modules/module-svg-crop.js";
-import { createModuleTextBlocks } from "../../core/module-text-blocks.js";
+  createModuleTextBlocks,
+  type ModuleTextBlocksFile,
+} from "../../core/module-text-blocks.js";
 import type { SvgVerticalModule } from "../../core/svg-vertical-modules/types.js";
-import type { DesignPair } from "../../core/utils.js";
-import { writeJsonFile } from "../../core/utils.js";
+import type { ResolvedDesignTarget } from "../../core/utils.js";
+import { isRecord, writeJsonFile } from "../../core/utils.js";
 import { sessionStore } from "../../session-store.js";
 import type { AgentThread } from "../agent-runtime/index.js";
 import { mergeModulesIntoHtml, readModulePlan } from "../module-merge.js";
 import type { VerifyResult } from "../verify/types.js";
 import {
-  buildAgentUnitFeedbackPrompt,
+  createComponentLibraryAgentContext,
+  createComponentLibraryPlanRef,
+} from "./component-library-context.js";
+import {
+  createComponentAdoptionPlan,
+  getComponentAdoptionPlanPath,
+} from "./component-adoption-plan.js";
+import {
   createAgentUnitThread,
+  ModuleOutputIncompleteError,
   runAgentUnit,
 } from "./agent-unit.js";
-import { MODULE_FEEDBACK_MAX } from "./config.js";
+import { buildUserModuleRevisionPrompt } from "../../prompts/module-agent.js";
 import { runWithLimit } from "./concurrency.js";
+import type { AgentTurnMetrics } from "./agent-turn-types.js";
 import { isAbortError, throwIfRunAborted } from "./run-control.js";
+import { archiveSessionCheckpoint } from "./checkpoint.js";
 import { runVerify } from "./verify-step.js";
-import { writeHostModuleAllowedAssets } from "./module-allowed-assets.js";
-import { writeModuleInputSummary } from "./module-input-summary.js";
 import {
-  applyModuleTextStyleHintsToLayout,
+  analyzeModuleElements,
+} from "./module-semantic-pass.js";
+import { writeModuleSemanticPayload } from "./module-semantic-payload.js";
+import {
+  buildModuleSemanticTextHints,
+  createModuleSemanticDraft,
+  ensureModuleContextImages,
+  ensureModuleReferenceImage,
+  readModuleSemanticDocument,
+  type ModuleSemanticDocument,
+} from "./module-semantic.js";
+import {
   createModuleTextStyleHints,
-} from "./module-text-style-hints.js";
+  type ModuleTextStyleHintsFile,
+} from "./module-text-style-inference.js";
 import {
-  readCachedModuleLocalVerify,
   verifyModuleLocal,
 } from "./module-local-verify.js";
+import {
+  verifyModuleFrameworkLocal,
+} from "./module-framework-local-verify.js";
+import { checkFrameworkRenderHealth } from "./render-health-check.js";
+import { finalizeModuleManifest } from "../module-merge/finalize-module-manifest.js";
+import {
+  ensureModuleSvg,
+  ensureScaffoldSnapshot,
+  getModuleDir,
+  getSourceFragmentPath,
+  hasCompleteModuleOutput,
+  readModuleSnapshot,
+  restoreHostModuleArtifacts,
+  restoreModuleSnapshot,
+  writeFailedModulePlaceholder,
+  type ModuleSnapshot,
+} from "./module-artifacts.js";
+
 
 type ModulePipelineV2Input = {
   controller: AbortController;
-  design: DesignPair;
+  design: ResolvedDesignTarget;
   maxParallelModuleAgents: number;
   sessionId: string;
 };
 
-type ModuleUserFeedbackInput = {
+type ModuleUserRevisionInput = {
   artifactDir: string;
   controller: AbortController;
-  design: DesignPair;
+  design: ResolvedDesignTarget;
   moduleId: string;
   moduleMergeManifestPath: string;
   modulePlanPath: string;
@@ -63,11 +90,11 @@ type ModuleUserFeedbackInput = {
   scaffoldHtmlPath: string;
   sessionId: string;
   userInstructions: string;
-  verifyReportPath?: string;
 };
 
 type ModulePipelineV2Result = {
   failedModuleIds: string[];
+  moduleFailureKinds: Record<string, string>;
   moduleAgentManifestPath: string;
   moduleAgentRuns: ModuleAgentRunRecord[];
   moduleValidationRuns: ModuleValidationRun[];
@@ -77,66 +104,43 @@ type ModulePipelineV2Result = {
   verifyResult: VerifyResult;
 };
 
-const buildUserModuleFeedbackPrompt = ({
-  module,
-  userInstructions,
-  verifyReportPath,
+const resolveSessionRenderEntryPath = ({
+  design,
+  session,
 }: {
-  module: SvgVerticalModule;
-  userInstructions: string;
-  verifyReportPath?: string;
+  design: ResolvedDesignTarget;
+  session?: ReturnType<typeof sessionStore.get>;
 }) =>
-  `
-## 用户指定模块修复
-
-用户已经在页面上选择了模块 \`${module.id}\`，本轮只处理这个模块。不要启动总控 agent，不要修改最终 HTML、compare HTML、scaffold 或其他模块；最终 HTML 会由宿主流程在你完成后重新 deterministic merge。
-
-用户调整要求:
-${userInstructions}
-
-${verifyReportPath ? `最新整页 verify report（只读参考）: ${verifyReportPath}` : ""}
-
-请先阅读当前模块目录里的 fragment.html、fragment.css、text-layout.json、manifest.json，以及 Module Input Summary / Vision Text Blocks / allowed-assets。把用户要求转化为本模块源文件修改；如果涉及普通可读文字，继续使用 DOM 文本和 text-layout.json 维护布局。完成后可按需运行最多 2 次官方局部校验，不要运行整页 verify-design。宿主流程会自动重新合并并 full verify。
-`.trim();
-
-type ModuleSnapshot = {
-  assetsSnapshotDir?: string;
-  fragmentCss: string;
-  fragmentHtml: string;
-  manifest: string;
-  textLayout: string;
-  diffRatio: number;
-};
+  session?.result.renderEntryPath ??
+  session?.outputTarget?.renderEntryPath ??
+  design.outputTarget.renderEntryPath;
 
 type ModuleAgentRunRecord = {
+  cachedInputTokens?: number;
   durationMs: number;
   endedAt: number;
   error?: string;
-  feedbackInputDiffRatio?: number;
   id: string;
   inputTokens: number;
   outputByteSizes?: {
-    fragmentCss: number;
-    fragmentHtml: number;
     manifest: number;
-    textLayout: number;
+    moduleCss: number;
+    previewFragmentHtml: number;
+    sourceData?: number;
+    sourceFragment?: number;
   };
-  allowedAssetCount?: number;
+  agentGeneratedAssetCount?: number;
   outputPaths?: {
-    allowedAssets: string;
-    fragmentCss: string;
-    fragmentHtml: string;
     manifest: string;
-    moduleInputSummaryJson?: string;
-    moduleInputSummaryMarkdown?: string;
+    moduleCss: string;
+    moduleSemanticJson?: string;
     moduleSvg: string;
-    moduleOcrBlocks: string;
-    moduleTextBlocks?: string;
-    textStyleHints?: string;
-    textLayout: string;
+    previewFragmentHtml: string;
+    sourceData?: string;
+    sourceFragment?: string;
   };
   outputTokens: number;
-  promptKind: "initial" | "feedback";
+  promptKind: "initial" | "revision";
   region: SvgVerticalModule["region"];
   round: number;
   startedAt: number;
@@ -146,32 +150,75 @@ type ModuleAgentRunRecord = {
     durationMs: number;
     earlyStopReason?: string;
     internalDiffTimeline: Array<{ diffRatio: number; round: number }>;
+    metrics?: AgentTurnMetrics;
     totalCommands: number;
     totalInternalRounds: number;
     totalShellCommands?: number;
     verifyCount: number;
   };
+  uncachedInputTokens?: number;
+};
+
+const getCachedInputTokens = (usage: { cached_input_tokens?: number } | null) =>
+  Math.max(0, Number(usage?.cached_input_tokens ?? 0));
+
+const getUncachedInputTokens = (
+  usage: { cached_input_tokens?: number; input_tokens: number } | null,
+) => {
+  const inputTokens = Math.max(0, Number(usage?.input_tokens ?? 0));
+  const cachedInputTokens = getCachedInputTokens(usage);
+  return Math.max(0, inputTokens - cachedInputTokens);
 };
 
 type ModuleValidationStat = {
   diffPixels?: number;
   diffRatio: number;
+  failureKind?: ModuleValidationFailureKind;
   id: string;
   maxChannelDelta?: number;
   mergeError?: string;
   passed: boolean;
-  verifyReportPath?: string;
+  renderPngPath?: string;
 };
+
+type ModuleValidationFailureKind =
+  | "incomplete_output"
+  | "merge_failed"
+  | "module_framework_failed"
+  | "module_input_failed"
+  | "module_visual_failed";
+
+const MODULE_VALIDATION_FAILURE_KINDS = new Set<ModuleValidationFailureKind>([
+  "incomplete_output",
+  "merge_failed",
+  "module_framework_failed",
+  "module_input_failed",
+  "module_visual_failed",
+]);
+
+const normalizeModuleFailureKind = (
+  value: unknown,
+): ModuleValidationFailureKind =>
+  typeof value === "string" &&
+  MODULE_VALIDATION_FAILURE_KINDS.has(value as ModuleValidationFailureKind)
+    ? (value as ModuleValidationFailureKind)
+    : "merge_failed";
+
+class ModuleInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ModuleInputError";
+  }
+}
 
 type ModuleValidationRun = {
   draftHtmlPath?: string;
   diffRatio: number;
+  failedModuleIds?: string[];
   moduleStats: ModuleValidationStat[];
-  modulesNeedingFeedback: string[];
   round: number;
   scope: "agent-local" | "merged-page";
   threshold: number;
-  verifyReportPath?: string;
 };
 
 const publishMergeReadiness = async ({
@@ -185,16 +232,15 @@ const publishMergeReadiness = async ({
 }) => {
   const latestSession = sessionStore.get(sessionId);
   if (!latestSession) return;
-  const skippedModuleCount = mergeResult.skippedModuleIds.length;
   sessionStore.update(sessionId, {
     result: {
       ...latestSession.result,
-      finalOutputReady: mergeResult.moduleCount > 0 && skippedModuleCount === 0,
       moduleMergeManifestPath,
-      moduleTextLayoutMissingSelectorCount:
-        mergeResult.textLayoutMissingSelectorCount,
-      moduleTextLayoutSelectorCheckPassed:
-        mergeResult.textLayoutSelectorCheckPassed,
+      renderEntryPath: mergeResult.renderEntryPath,
+      sourceEntryPath:
+        mergeResult.sourceEntryPath ?? latestSession.result.sourceEntryPath,
+      sourceStylePath:
+        mergeResult.sourceStylePath ?? latestSession.result.sourceStylePath,
     },
   });
 };
@@ -209,246 +255,306 @@ const normalizeModules = (
         id,
       })) as SvgVerticalModule[]);
 
-const readModuleSnapshot = async (
-  moduleDir: string,
-  diffRatio: number,
-): Promise<ModuleSnapshot> => {
-  const [fragmentHtml, fragmentCss, textLayout, manifest] = await Promise.all([
-    readFile(path.join(moduleDir, "fragment.html"), "utf8"),
-    readFile(path.join(moduleDir, "fragment.css"), "utf8"),
-    readFile(path.join(moduleDir, "text-layout.json"), "utf8"),
-    readFile(path.join(moduleDir, "manifest.json"), "utf8"),
-  ]);
+const buildTextBlocksFileFromSemantic = (
+  document: ModuleSemanticDocument,
+): ModuleTextBlocksFile => ({
+  blockCount: document.textBlocks.length,
+  blocks: document.textBlocks.map((block) => ({
+    bboxIncludesIcon:
+      typeof block.bboxIncludesIcon === "boolean"
+        ? block.bboxIncludesIcon
+        : undefined,
+    color: typeof block.color === "string" ? block.color : undefined,
+    confidence:
+      typeof block.confidence === "number" ? block.confidence : undefined,
+    id: block.id,
+    kind: typeof block.kind === "string" ? block.kind : undefined,
+    lineCount:
+      typeof block.lineCount === "number" && Number.isFinite(block.lineCount)
+        ? Math.round(block.lineCount)
+        : undefined,
+    lineRegions: Array.isArray(block.lineRegions) ? block.lineRegions : undefined,
+    lines: Array.isArray(block.lines) ? block.lines : undefined,
+    region: isRecord(block.region) ? (block.region as ModuleTextBlocksFile["blocks"][number]["region"]) : block.textRegion,
+    renderedTextRegion: isRecord(block.renderedTextRegion)
+      ? (block.renderedTextRegion as ModuleTextBlocksFile["blocks"][number]["renderedTextRegion"])
+      : undefined,
+    source: typeof block.source === "string" ? (block.source as "semantic") : undefined,
+    sourceBlockId:
+      typeof block.sourceBlockId === "string" ? block.sourceBlockId : undefined,
+    sourceBlockText:
+      typeof block.sourceBlockText === "string" ? block.sourceBlockText : undefined,
+    text: block.text,
+    textRegion: block.textRegion,
+  })),
+  coordinateSpace: "local",
+  generatedAt: new Date().toISOString(),
+  generatedBy: "semantic-text-extract",
+  moduleId: document.module.id,
+  previewPath: document.sourceImage.path,
+  region: document.module.region,
+});
 
-  const assetsDir = path.join(moduleDir, "assets");
-  const assetsSnapshotDir = existsSync(assetsDir)
-    ? path.join(
-        moduleDir,
-        ".module-snapshots",
-        `assets-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      )
-    : undefined;
-  if (assetsSnapshotDir) {
-    await mkdir(path.dirname(assetsSnapshotDir), { recursive: true });
-    await cp(assetsDir, assetsSnapshotDir, { recursive: true });
-  }
+const buildTextStyleHintsFileFromSemantic = (
+  document: ModuleSemanticDocument,
+): ModuleTextStyleHintsFile => {
+  const normalizeFit = (value: unknown) => {
+    if (!isRecord(value)) {
+      return { heightDelta: 0, score: 0, widthDelta: 0 };
+    }
+    return {
+      heightDelta:
+        typeof value.heightDelta === "number" ? value.heightDelta : 0,
+      score: typeof value.score === "number" ? value.score : 0,
+      ...(typeof value.visualDensityDelta === "number"
+        ? { visualDensityDelta: value.visualDensityDelta }
+        : {}),
+      ...(typeof value.visualIou === "number"
+        ? { visualIou: value.visualIou }
+        : {}),
+      widthDelta: typeof value.widthDelta === "number" ? value.widthDelta : 0,
+    };
+  };
+  const rawDocument = document as Record<string, unknown>;
+  const textAppearanceHints = Array.isArray(rawDocument["textAppearanceHints"])
+    ? rawDocument["textAppearanceHints"].filter(isRecord)
+    : [];
+  const hintsById = new Map(
+    textAppearanceHints.flatMap((item) => {
+      const id = typeof item.id === "string" ? item.id : undefined;
+      if (!id) return [];
+      const declarations = isRecord(item.declarations)
+        ? (Object.fromEntries(
+            Object.entries(item.declarations).filter(
+              ([, value]) => typeof value === "string",
+            ),
+          ) as Record<string, string>)
+        : {};
+      return [
+        [
+          id,
+          {
+            declarations,
+            fit: normalizeFit(item.fit),
+            kind: typeof item.kind === "string" ? item.kind : undefined,
+            region: isRecord(item.region) ? item.region : undefined,
+            text: typeof item.text === "string" ? item.text : undefined,
+          },
+        ] as const,
+      ];
+    }),
+  );
+
+  const blocks = document.textBlocks.flatMap((block) => {
+    const semanticHint = hintsById.get(block.id);
+    const declarations: Record<string, string> =
+      semanticHint?.declarations ??
+      (isRecord(block.styleInference)
+        ? (Object.fromEntries(
+            Object.entries(block.styleInference).filter(
+              ([, value]) => typeof value === "string",
+            ),
+          ) as Record<string, string>)
+        : {});
+    if (Object.keys(declarations).length === 0) return [];
+    return [
+      {
+        confidence:
+          typeof block.confidence === "number" ? block.confidence : undefined,
+        declarations,
+        fit: semanticHint?.fit ?? normalizeFit(undefined),
+        id: block.id,
+        kind:
+          semanticHint?.kind ??
+          (typeof block.kind === "string" ? block.kind : undefined),
+        lineCount:
+          typeof block.lineCount === "number" && Number.isFinite(block.lineCount)
+            ? Math.round(block.lineCount)
+            : undefined,
+        lineRegions: Array.isArray(block.lineRegions) ? block.lineRegions : undefined,
+        region: block.textRegion,
+        text: semanticHint?.text ?? block.text,
+      },
+    ];
+  });
 
   return {
-    assetsSnapshotDir,
-    diffRatio,
-    fragmentCss,
-    fragmentHtml,
-    manifest,
-    textLayout,
+    blockCount: blocks.length,
+    blocks,
+    generatedAt: new Date().toISOString(),
+    generatedBy: "text-style-inference",
+    moduleId: document.module.id,
+    previewPath: document.sourceImage.path,
   };
 };
 
-const getFileMtimeMs = async (filePath: string) => {
-  try {
-    return (await stat(filePath)).mtimeMs;
-  } catch {
-    return undefined;
-  }
-};
-
-const canReuseGeneratedFile = async ({
-  outputPath,
-  sourcePaths,
-}: {
-  outputPath: string;
-  sourcePaths: string[];
-}) => {
-  const outputMtime = await getFileMtimeMs(outputPath);
-  if (outputMtime === undefined) return false;
-  const sourceMtimes = await Promise.all(sourcePaths.map(getFileMtimeMs));
-  return sourceMtimes.every(
-    (sourceMtime) =>
-      sourceMtime !== undefined && outputMtime + 1 >= sourceMtime,
-  );
-};
-
-const readJsonBlockCount = async (filePath: string) => {
-  try {
-    const parsed = JSON.parse(await readFile(filePath, "utf8")) as unknown;
-    if (typeof parsed !== "object" || parsed === null) return 0;
-    if (
-      "blockCount" in parsed &&
-      typeof (parsed as { blockCount?: unknown }).blockCount === "number"
-    ) {
-      return (parsed as { blockCount: number }).blockCount;
-    }
-    if (
-      "blocks" in parsed &&
-      Array.isArray((parsed as { blocks?: unknown }).blocks)
-    ) {
-      return (parsed as { blocks: unknown[] }).blocks.length;
-    }
-    return 0;
-  } catch {
-    return 0;
-  }
-};
-
-const restoreModuleSnapshot = async (
-  moduleDir: string,
-  snapshot: ModuleSnapshot,
-) => {
-  const assetsDir = path.join(moduleDir, "assets");
-  await Promise.all([
-    writeFile(
-      path.join(moduleDir, "fragment.html"),
-      snapshot.fragmentHtml,
-      "utf8",
-    ),
-    writeFile(
-      path.join(moduleDir, "fragment.css"),
-      snapshot.fragmentCss,
-      "utf8",
-    ),
-    writeFile(
-      path.join(moduleDir, "text-layout.json"),
-      snapshot.textLayout,
-      "utf8",
-    ),
-    writeFile(path.join(moduleDir, "manifest.json"), snapshot.manifest, "utf8"),
-  ]);
-  await rm(assetsDir, { force: true, recursive: true });
-  if (snapshot.assetsSnapshotDir) {
-    await cp(snapshot.assetsSnapshotDir, assetsDir, {
-      force: true,
-      recursive: true,
-    });
-  }
-};
-
-const hasCompleteModuleOutput = (moduleDir: string) =>
-  ["fragment.html", "fragment.css", "text-layout.json", "manifest.json"].every(
-    (fileName) => existsSync(path.join(moduleDir, fileName)),
-  );
-
-const restoreHostModuleArtifacts = async ({
-  artifactDir,
-  modules,
-  modulesRootDir,
-}: {
-  artifactDir: string;
-  modules: SvgVerticalModule[];
-  modulesRootDir: string;
-}) => {
-  await Promise.all(
-    modules.map(async (module) => {
-      const moduleDir = getModuleDir(modulesRootDir, module);
-      await mkdir(moduleDir, { recursive: true });
-      await writeHostModuleAllowedAssets({
-        artifactDir,
-        module,
-        moduleDir,
-      });
-    }),
-  );
-};
-
-const writeFailedModulePlaceholder = async ({
-  error,
+const preprocessModuleSemantic = async ({
+  design,
   module,
   moduleDir,
+  moduleSvgPath,
+  sessionId,
 }: {
-  error: string;
+  design: ResolvedDesignTarget;
   module: SvgVerticalModule;
   moduleDir: string;
+  moduleSvgPath: string;
+  sessionId: string;
 }) => {
-  if (hasCompleteModuleOutput(moduleDir)) return;
-  await mkdir(moduleDir, { recursive: true });
-  await Promise.all([
-    writeFile(path.join(moduleDir, "fragment.html"), "", "utf8"),
-    writeFile(path.join(moduleDir, "fragment.css"), "", "utf8"),
-    writeFile(
-      path.join(moduleDir, "text-layout.json"),
-      JSON.stringify({ blocks: [], rules: [] }, null, 2),
-      "utf8",
-    ),
-    writeFile(
-      path.join(moduleDir, "manifest.json"),
-      JSON.stringify(
-        {
-          error,
-          moduleId: module.id,
-          status: "failed",
-          textLayoutCoordinateSpace: "local",
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    ),
-  ]);
+  const elementAnalysis = await analyzeModuleElements({
+    module,
+    moduleDir,
+    scale: design.scale,
+    sessionId,
+  });
+  const currentSemantic = await readModuleSemanticDocument(moduleDir);
+  if (!currentSemantic) {
+    throw new Error(`module-semantic.json missing after semantic pass: ${module.id}`);
+  }
+
+  const hasCachedTextArtifacts =
+    currentSemantic.runtime.completedStages.includes("text-blocks") &&
+    currentSemantic.runtime.completedStages.includes("text-style-inference") &&
+    currentSemantic.textBlocks.length > 0;
+
+  const semanticTextHints = buildModuleSemanticTextHints(currentSemantic);
+  const textBlocksFile = hasCachedTextArtifacts
+    ? buildTextBlocksFileFromSemantic(currentSemantic)
+    : await createModuleTextBlocks({
+        moduleDir,
+        moduleId: module.id,
+        textHints: semanticTextHints,
+        moduleSvgPath,
+        region: module.region,
+        scale: design.scale,
+      });
+  const textStyleHintsFile = hasCachedTextArtifacts
+    ? buildTextStyleHintsFileFromSemantic(currentSemantic)
+    : await createModuleTextStyleHints({
+        moduleDir,
+        moduleId: module.id,
+        scale: design.scale,
+        textBlocksFile,
+      });
+
+  const moduleSemantic = await writeModuleSemanticPayload({
+    allowedAssets: currentSemantic.generatedAssets,
+    basePayload: currentSemantic as unknown as Record<string, unknown>,
+    elementAnalysis,
+    module,
+    moduleDir,
+    textHints: semanticTextHints,
+    moduleTextBlocks: textBlocksFile,
+    moduleTextStyleHints: textStyleHintsFile,
+    moduleSvgPath,
+    scale: design.scale,
+  });
+
+  return {
+    elementAnalysis,
+    moduleSemantic,
+    initialAgentGeneratedAssetCount: currentSemantic.generatedAssets.length,
+    textBlocksFile,
+    textStyleHintsFile,
+  };
 };
 
-const getModuleDir = (modulesRootDir: string, module: SvgVerticalModule) =>
-  path.join(modulesRootDir, module.id);
+const readAgentGeneratedAssetCount = async (moduleDir: string) =>
+  (await readModuleSemanticDocument(moduleDir))?.generatedAssets.length ?? 0;
 
-const getModuleSvgPath = (modulesRootDir: string, module: SvgVerticalModule) =>
-  path.join(getModuleDir(modulesRootDir, module), "module.svg");
+const SEMANTIC_CONTAINER_TAGS = new Set([
+  "a",
+  "defs",
+  "desc",
+  "g",
+  "metadata",
+  "svg",
+  "switch",
+  "symbol",
+  "title",
+]);
 
-const ensureModuleSvg = async ({
-  design,
+const moduleHasDeclaredSourceContent = (module: SvgVerticalModule) =>
+  module.sourceContainerIds.length > 0 ||
+  module.nodePaths.length > 0 ||
+  module.candidateNodeCount > 0;
+
+const semanticNodeCarriesUsableVisual = (
+  node: ModuleSemanticDocument["nodes"][number],
+) => {
+  if (!node.visible) return false;
+  const tag = node.tag.trim().toLowerCase();
+  if (SEMANTIC_CONTAINER_TAGS.has(tag)) return false;
+  if (node.bbox && node.bbox.width > 0 && node.bbox.height > 0) return true;
+  if (node.textContent?.trim()) return true;
+  return node.semantic.exportDecision !== "skip";
+};
+
+const assertModuleSemanticHasUsableInput = ({
   module,
-  modulesRootDir,
+  moduleSemantic,
+  textBlockCount,
 }: {
-  design: DesignPair;
   module: SvgVerticalModule;
-  modulesRootDir: string;
+  moduleSemantic: ModuleSemanticDocument;
+  textBlockCount: number;
 }) => {
-  const moduleSvgPath = getModuleSvgPath(modulesRootDir, module);
-  const originalSvg = await readFile(design.svgPath, "utf8");
-  const expectedVersion = `data-module-crop-version="${MODULE_SVG_CROP_VERSION}"`;
-  const expectedFingerprint = `data-module-crop-fingerprint="${createModuleSvgCropFingerprint(
-    {
-      module,
-      originalSvg,
-      scale: design.scale,
-    },
-  )}"`;
-  let needsCrop = true;
-  if (existsSync(moduleSvgPath)) {
-    const currentModuleSvg = await readFile(moduleSvgPath, "utf8");
-    needsCrop = ![expectedVersion, expectedFingerprint].every((marker) =>
-      currentModuleSvg.includes(marker),
-    );
-  }
-  if (needsCrop) {
-    await cropModuleSvg({
-      originalSvgPath: design.svgPath,
-      originalSvgSource: originalSvg,
-      module,
-      outputPath: moduleSvgPath,
-      scale: design.scale,
-    });
-  }
-  return moduleSvgPath;
+  if (!moduleHasDeclaredSourceContent(module)) return;
+  const hasTextBlocks = textBlockCount > 0;
+  const hasUsableVisibleNodes = moduleSemantic.nodes.some(
+    semanticNodeCarriesUsableVisual,
+  );
+  if (hasTextBlocks || hasUsableVisibleNodes) return;
+
+  throw new ModuleInputError(
+    `module input has source ownership markers but semantic preprocessing produced no usable text blocks or visible source nodes`,
+  );
 };
 
-const ensureScaffoldSnapshot = async ({
-  design,
-  modulesRootDir,
+const normalizeModuleAgentThreadIds = (value: unknown) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {} as Record<string, string>;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([moduleId, threadId]) => [
+        String(moduleId).trim(),
+        typeof threadId === "string" ? threadId.trim() : "",
+      ])
+      .filter(([moduleId, threadId]) => moduleId && threadId),
+  );
+};
+
+const readPersistedModuleAgentThreadIds = (sessionId: string) =>
+  normalizeModuleAgentThreadIds(
+    sessionStore.get(sessionId)?.result.moduleAgentThreadIds,
+  );
+
+const persistModuleAgentThreadId = ({
+  moduleId,
+  sessionId,
+  threadId,
 }: {
-  design: DesignPair;
-  modulesRootDir: string;
+  moduleId: string;
+  sessionId: string;
+  threadId: string;
 }) => {
-  const scaffoldHtmlPath = path.join(modulesRootDir, "modules-scaffold.html");
-  if (!existsSync(scaffoldHtmlPath)) {
-    await mkdir(modulesRootDir, { recursive: true });
-    await copyFile(design.htmlPath, scaffoldHtmlPath);
-  }
-  return scaffoldHtmlPath;
+  const normalizedModuleId = moduleId.trim();
+  const normalizedThreadId = threadId.trim();
+  if (!normalizedModuleId || !normalizedThreadId) return;
+  const current = sessionStore.get(sessionId);
+  if (!current) return;
+  const nextThreadIds = {
+    ...normalizeModuleAgentThreadIds(current.result.moduleAgentThreadIds),
+    [normalizedModuleId]: normalizedThreadId,
+  };
+  sessionStore.update(sessionId, {
+    result: {
+      ...current.result,
+      moduleAgentThreadIds: nextThreadIds,
+    },
+  });
 };
-
-const findModuleDiffRatio = (
-  verifyResult: VerifyResult,
-  module: SvgVerticalModule,
-) =>
-  verifyResult.moduleRegionStats?.find((stat) => stat.id === module.id)
-    ?.diffRatio ?? 1;
 
 export async function runModulePipelineV2(
   input: ModulePipelineV2Input,
@@ -463,24 +569,89 @@ export async function runModulePipelineV2(
   }
 
   const modulePlanPath = currentSession.result.modulePlanPath;
+  const outputFormat = normalizeOutputFormat(currentSession.outputFormat);
+  const renderEntryPath = resolveSessionRenderEntryPath({
+    design,
+    session: currentSession,
+  });
+  if (!renderEntryPath) {
+    throw new Error("Render entry path not available");
+  }
   const modulesRootDir = path.dirname(modulePlanPath);
   const artifactDir = path.dirname(modulesRootDir);
   let modulePlan = await readModulePlan(modulePlanPath);
-  if (modulePlan.textLayoutCoordinateSpace !== "local") {
+  const scaffoldHtmlPath = await ensureScaffoldSnapshot({
+    design,
+    modulesRootDir,
+  });
+  const baseComponentLibraryContext = await createComponentLibraryAgentContext({
+    modulesRootDir,
+    session: currentSession,
+  });
+  const componentLibraryPlanRef = baseComponentLibraryContext
+    ? createComponentLibraryPlanRef({
+        descriptor: baseComponentLibraryContext.descriptor,
+        descriptorPath: baseComponentLibraryContext.descriptorPath,
+        sourceDir: baseComponentLibraryContext.sourceDir,
+      })
+    : undefined;
+  const nextModulePlan = {
+    ...modulePlan,
+    componentLibrary: componentLibraryPlanRef,
+    outputFormat,
+    renderEntryPath,
+    scaffoldRenderPath: scaffoldHtmlPath,
+    sourceEntryPath:
+      currentSession.result.sourceEntryPath ??
+      currentSession.outputTarget?.sourceEntryPath,
+  };
+  if (
+    modulePlan.outputFormat !== nextModulePlan.outputFormat ||
+    modulePlan.renderEntryPath !== nextModulePlan.renderEntryPath ||
+    modulePlan.scaffoldRenderPath !== nextModulePlan.scaffoldRenderPath ||
+    modulePlan.sourceEntryPath !== nextModulePlan.sourceEntryPath ||
+    JSON.stringify(modulePlan.componentLibrary ?? null) !==
+      JSON.stringify(nextModulePlan.componentLibrary ?? null)
+  ) {
     modulePlan = {
-      ...modulePlan,
-      textLayoutCoordinateSpace: "local",
+      ...nextModulePlan,
     };
     await writeJsonFile(modulePlanPath, modulePlan);
   }
   const modules = normalizeModules(modulePlan);
 
   if (!modules.length) throw new Error("No modules found in module plan");
-
-  const scaffoldHtmlPath = await ensureScaffoldSnapshot({
-    design,
-    modulesRootDir,
-  });
+  const componentLibraryContext = baseComponentLibraryContext
+    ? {
+        ...baseComponentLibraryContext,
+        adoptionPlanPath: getComponentAdoptionPlanPath(modulesRootDir),
+      }
+    : undefined;
+  if (componentLibraryContext) {
+    const componentAdoptionPlan = await createComponentAdoptionPlan({
+      descriptor: componentLibraryContext.descriptor,
+      modules,
+      outputPath: componentLibraryContext.adoptionPlanPath,
+    });
+    const nextModulePlanWithAdoption = {
+      ...modulePlan,
+      componentAdoptionPlanPath: componentLibraryContext.adoptionPlanPath,
+    };
+    if (
+      modulePlan.componentAdoptionPlanPath !==
+      nextModulePlanWithAdoption.componentAdoptionPlanPath
+    ) {
+      modulePlan = nextModulePlanWithAdoption;
+      await writeJsonFile(modulePlanPath, modulePlan);
+    }
+    const requiredCount = componentAdoptionPlan.modules.filter(
+      (item) => item.intent === "required",
+    ).length;
+    sessionStore.addLog(
+      sessionId,
+      `[module-pipeline-v2] component adoption plan: ${componentLibraryContext.adoptionPlanPath}, requiredModules=${requiredCount}/${componentAdoptionPlan.modules.length}`,
+    );
+  }
   const moduleMergeManifestPath = path.join(
     modulesRootDir,
     "module-merge-manifest.json",
@@ -494,33 +665,49 @@ export async function runModulePipelineV2(
   const moduleValidationRuns: ModuleValidationRun[] = [];
   const bestSnapshots = new Map<string, ModuleSnapshot>();
   const failedModules = new Map<string, string>();
-  let latestModuleStats = new Map<string, ModuleValidationStat>();
+  const failedModuleKinds = new Map<string, ModuleValidationFailureKind>();
+  const persistedModuleThreadIds = readPersistedModuleAgentThreadIds(sessionId);
 
   sessionStore.addLog(
     sessionId,
     `[module-pipeline-v2] starting unified module pipeline: modules=${modules.length}, maxParallel=${maxParallelModuleAgents}`,
   );
+  if (componentLibraryContext) {
+    sessionStore.addLog(
+      sessionId,
+      `[module-pipeline-v2] component library enabled: ${componentLibraryContext.name} (${componentLibraryContext.id})`,
+    );
+  }
 
-  const runModuleRound = async ({
+  const runInitialModuleRound = async ({
     modulesToRun,
-    round,
-    verifyResult,
-    feedbackDiffByModule,
   }: {
     modulesToRun: SvgVerticalModule[];
-    round: number;
-    verifyResult?: VerifyResult;
-    feedbackDiffByModule?: Map<string, number>;
   }) => {
     sessionStore.startWorkflowNode(sessionId, "agent", {
-      detail:
-        round > 1
-          ? `正在执行第 ${round} 轮模块反馈：${modulesToRun.length} 个模块`
-          : `正在并行生成 ${modulesToRun.length} 个模块`,
-      iteration: round,
-      maxIterations: MODULE_FEEDBACK_MAX,
+      detail: `正在并行生成 ${modulesToRun.length} 个模块`,
+      iteration: 1,
+      maxIterations: 1,
     });
     sessionStore.startStep(sessionId, "agent");
+    // 串行预热 module-reference.png，避免多个模块并发 capturePage 争抢 browser instance
+    for (const module of modulesToRun) {
+      const moduleDir = getModuleDir(modulesRootDir, module);
+      await mkdir(moduleDir, { recursive: true });
+      const moduleSvgPath = await ensureModuleSvg({
+        design,
+        module,
+        modulesRootDir,
+      });
+      await ensureModuleReferenceImage({ moduleDir, moduleSvgPath, scale: design.scale });
+      await ensureModuleContextImages({
+        moduleDir,
+        module,
+        moduleSvgPath,
+        sharedLayers: modulePlan.sharedLayers ?? [],
+        scale: design.scale,
+      });
+    }
     await runWithLimit({
       items: modulesToRun,
       limit: maxParallelModuleAgents,
@@ -528,187 +715,137 @@ export async function runModulePipelineV2(
       worker: async (module) => {
         const moduleDir = getModuleDir(modulesRootDir, module);
         await mkdir(moduleDir, { recursive: true });
-        const allowedAssets = await writeHostModuleAllowedAssets({
-          artifactDir,
-          module,
-          moduleDir,
-        });
         const moduleSvgPath = await ensureModuleSvg({
           design,
           module,
           modulesRootDir,
         });
-        const moduleTextBlocksPath = path.join(
-          moduleDir,
-          "module-text-blocks.json",
-        );
-        const moduleTextBlocksReused = await canReuseGeneratedFile({
-          outputPath: moduleTextBlocksPath,
-          sourcePaths: [
-            allowedAssets.allowedAssetsPath,
-            allowedAssets.moduleOcrBlocksPath,
-            moduleSvgPath,
-          ],
-        });
-        if (!moduleTextBlocksReused) {
-          await createModuleTextBlocks({
-            moduleDir,
-            moduleId: module.id,
-            moduleOcrBlocksPath: allowedAssets.moduleOcrBlocksPath,
-            moduleSvgPath,
-            outputPath: moduleTextBlocksPath,
-            region: module.region,
-            scale: design.scale,
-          });
-        }
-        const moduleTextStyleHintsPath = path.join(
-          moduleDir,
-          "module-text-style-hints.json",
-        );
-        let moduleTextStyleHintCount = 0;
-        const moduleTextStyleHintsReused = await canReuseGeneratedFile({
-          outputPath: moduleTextStyleHintsPath,
-          sourcePaths: [moduleTextBlocksPath],
-        });
-        if (moduleTextStyleHintsReused) {
-          moduleTextStyleHintCount = await readJsonBlockCount(
-            moduleTextStyleHintsPath,
-          );
-        } else {
-          try {
-            const styleHints = await createModuleTextStyleHints({
-              moduleDir,
-              moduleId: module.id,
-              moduleTextBlocksPath,
-              outputPath: moduleTextStyleHintsPath,
-            });
-            moduleTextStyleHintCount = styleHints.blockCount;
-          } catch (error) {
-            sessionStore.addLog(
-              sessionId,
-              `[module-pipeline-v2:${module.id}] text style hint inference failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-        }
-        const moduleInputSummary = await writeModuleInputSummary({
-          allowedAssetsPath: allowedAssets.allowedAssetsPath,
+        const moduleSemanticDraft = await createModuleSemanticDraft({
           module,
           moduleDir,
-          moduleOcrBlocksPath: allowedAssets.moduleOcrBlocksPath,
-          moduleTextStyleHintsPath: existsSync(moduleTextStyleHintsPath)
-            ? moduleTextStyleHintsPath
-            : undefined,
-          moduleTextBlocksPath,
           moduleSvgPath,
           scale: design.scale,
         });
+        sessionStore.addLog(
+          sessionId,
+          `[module-pipeline-v2:${module.id}] semantic draft ready: ${moduleSemanticDraft.jsonPath}`,
+        );
+        const {
+          initialAgentGeneratedAssetCount,
+          moduleSemantic,
+          textBlocksFile,
+        } = await preprocessModuleSemantic({
+          design,
+          module,
+          moduleDir,
+          moduleSvgPath,
+          sessionId,
+        });
+        const moduleTextBlockCount = textBlocksFile.blockCount;
         const existingThread = moduleThreads.get(module.id);
+        const persistedThreadId = persistedModuleThreadIds[module.id];
         const thread =
           existingThread ??
           createAgentUnitThread({
             artifactDir,
-            moduleSvgPath,
+            componentLibrarySourceDir: componentLibraryContext?.sourceDir,
+            design,
             originalSvgPath: design.svgPath,
             reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
+            threadId: persistedThreadId,
             workingDir: moduleDir,
           });
         moduleThreads.set(module.id, thread);
 
-        const diffRatio = verifyResult
-          ? findModuleDiffRatio(verifyResult, module)
-          : feedbackDiffByModule?.get(module.id);
-        const feedbackPrompt =
-          round > 1 && diffRatio !== undefined
-            ? buildAgentUnitFeedbackPrompt({
-                module,
-                feedbackRound: round - 1,
-                diffRatio,
-                mergeError: failedModules.get(module.id),
-                threshold: MODULE_DIFF_RATIO_THRESHOLD,
-              })
-            : undefined;
-
-        if (feedbackPrompt) {
-          await writeFile(
-            path.join(moduleDir, `feedback-round-${round}.md`),
-            feedbackPrompt,
-            "utf8",
-          );
-        }
-
         sessionStore.addLog(
           sessionId,
-          `[module-pipeline-v2:${module.id}] round ${round}: ${feedbackPrompt ? "feedback" : "initial generation"}, allowedAssets=${allowedAssets.assetCount}, ocrBlocks=${allowedAssets.ocrBlockCount}, textBlocks=${moduleTextBlocksReused ? "cached" : "fresh"}, textStyleHints=${moduleTextStyleHintCount}${moduleTextStyleHintsReused ? " cached" : ""}`,
+          `[module-pipeline-v2:${module.id}] initial generation: existingAgentGeneratedAssets=${initialAgentGeneratedAssetCount}, textBlocks=${moduleTextBlockCount}`,
         );
 
         const startedAt = Date.now();
         try {
+          assertModuleSemanticHasUsableInput({
+            module,
+            moduleSemantic: await readModuleSemanticDocument(moduleDir).then(
+              (document) => {
+                if (!document) {
+                  throw new ModuleInputError(
+                    `module-semantic.json missing before agent run: ${module.id}`,
+                  );
+                }
+                return document;
+              },
+            ),
+            textBlockCount: moduleTextBlockCount,
+          });
           const result = await runAgentUnit({
             module,
             moduleSvgPath,
             originalSvgPath: design.svgPath,
             design,
             workingDir: moduleDir,
-            scaffoldHtmlPath,
             artifactDir,
             modulePlan: modulePlan as any,
             reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
             sessionId,
             controller,
-            feedbackPrompt,
-            round,
+            componentLibraryContext,
+            onThreadStarted: (threadId) => {
+              persistedModuleThreadIds[module.id] = threadId;
+              persistModuleAgentThreadId({
+                moduleId: module.id,
+                sessionId,
+                threadId,
+              });
+            },
+            round: 1,
             thread,
           });
-          if (existsSync(moduleTextStyleHintsPath)) {
-            try {
-              const applyResult = await applyModuleTextStyleHintsToLayout({
-                hintsPath: moduleTextStyleHintsPath,
-                textLayoutPath: path.join(moduleDir, "text-layout.json"),
-              });
-              sessionStore.addLog(
-                sessionId,
-                `[module-pipeline-v2:${module.id}] text style hints applied: ${applyResult.appliedBlockCount}/${applyResult.hintCount} block(s)`,
-              );
-            } catch (error) {
-              sessionStore.addLog(
-                sessionId,
-                `[module-pipeline-v2:${module.id}] text style hint apply failed: ${error instanceof Error ? error.message : String(error)}`,
-              );
-            }
-          }
-          const restoredAllowedAssets = await writeHostModuleAllowedAssets({
-            artifactDir,
-            module,
-            moduleDir,
-          });
-
+          const agentGeneratedAssetCount =
+            await readAgentGeneratedAssetCount(moduleDir);
           moduleAgentRuns.push({
-            allowedAssetCount: restoredAllowedAssets.assetCount,
+            cachedInputTokens: getCachedInputTokens(result.usage),
             durationMs: result.durationMs,
             endedAt: result.endedAt,
-            feedbackInputDiffRatio: diffRatio,
             id: module.id,
             inputTokens: result.usage?.input_tokens ?? 0,
             outputByteSizes: result.outputByteSizes,
+            agentGeneratedAssetCount,
             outputPaths: {
-              ...result.outputPaths,
-              allowedAssets: restoredAllowedAssets.allowedAssetsPath,
-              moduleInputSummaryJson: moduleInputSummary.jsonPath,
-              moduleInputSummaryMarkdown: moduleInputSummary.markdownPath,
-              moduleOcrBlocks: restoredAllowedAssets.moduleOcrBlocksPath,
-              moduleTextBlocks: moduleTextBlocksPath,
-              textStyleHints: moduleTextStyleHintsPath,
+              manifest: result.outputPaths.manifest,
+              moduleCss: result.outputPaths.moduleCss,
+              moduleSemanticJson: moduleSemantic.jsonPath,
+              moduleSvg: result.outputPaths.moduleSvg,
+              previewFragmentHtml: result.outputPaths.previewFragmentHtml,
+              ...(result.outputPaths.sourceData === undefined
+                ? {}
+                : { sourceData: result.outputPaths.sourceData }),
+              ...(result.outputPaths.sourceFragment === undefined
+                ? {}
+                : { sourceFragment: result.outputPaths.sourceFragment }),
             },
             outputTokens: result.usage?.output_tokens ?? 0,
             promptKind: result.promptKind,
             region: module.region,
-            round,
+            round: 1,
             startedAt: result.startedAt,
             status: result.success ? "completed" : "failed",
             threadId: result.threadId,
             turnSummary: result.turnSummary,
+            uncachedInputTokens: getUncachedInputTokens(result.usage),
           });
-          if (result.success) failedModules.delete(module.id);
+          if (result.success) {
+            failedModules.delete(module.id);
+            failedModuleKinds.delete(module.id);
+            try {
+              await finalizeModuleManifest({ moduleDir });
+            } catch (finalizeError) {
+              sessionStore.addLog(
+                sessionId,
+                `[module-pipeline-v2:${module.id}] finalize manifest warning: ${finalizeError instanceof Error ? finalizeError.message : String(finalizeError)}`,
+              );
+            }
+          }
         } catch (error) {
           if (controller.signal.aborted || isAbortError(error)) {
             throw error;
@@ -716,103 +853,110 @@ export async function runModulePipelineV2(
           const message =
             error instanceof Error ? error.message : String(error);
           const endedAt = Date.now();
+          const incompleteDiagnostics =
+            error instanceof ModuleOutputIncompleteError
+              ? error.diagnostics
+              : undefined;
+          const failedUsage = incompleteDiagnostics?.usage ?? null;
+          const failureKind =
+            error instanceof ModuleInputError
+              ? "module_input_failed"
+              : error instanceof ModuleOutputIncompleteError
+                ? "incomplete_output"
+                : "module_visual_failed";
           failedModules.set(module.id, message);
+          failedModuleKinds.set(module.id, failureKind);
           await writeFailedModulePlaceholder({
             error: message,
             module,
             moduleDir,
+            outputFormat,
           });
-          const restoredAllowedAssets = await writeHostModuleAllowedAssets({
-            artifactDir,
-            module,
-            moduleDir,
-          });
+          const failedStartedAt = incompleteDiagnostics?.startedAt ?? startedAt;
+          const failedEndedAt = incompleteDiagnostics?.endedAt ?? endedAt;
+          const failedDurationMs =
+            incompleteDiagnostics?.durationMs ?? failedEndedAt - failedStartedAt;
+          const failedAgentGeneratedAssetCount =
+            await readAgentGeneratedAssetCount(moduleDir).catch(
+              () => initialAgentGeneratedAssetCount,
+            );
           moduleAgentRuns.push({
-            allowedAssetCount: restoredAllowedAssets.assetCount,
-            durationMs: endedAt - startedAt,
-            endedAt,
+            cachedInputTokens: getCachedInputTokens(failedUsage),
+            durationMs: failedDurationMs,
+            endedAt: failedEndedAt,
             error: message,
-            feedbackInputDiffRatio: diffRatio,
             id: module.id,
-            inputTokens: 0,
-            outputTokens: 0,
+            inputTokens: failedUsage?.input_tokens ?? 0,
+            agentGeneratedAssetCount: failedAgentGeneratedAssetCount,
             outputPaths: {
-              allowedAssets: restoredAllowedAssets.allowedAssetsPath,
-              fragmentCss: path.join(moduleDir, "fragment.css"),
-              fragmentHtml: path.join(moduleDir, "fragment.html"),
               manifest: path.join(moduleDir, "manifest.json"),
-              moduleInputSummaryJson: moduleInputSummary.jsonPath,
-              moduleInputSummaryMarkdown: moduleInputSummary.markdownPath,
+              moduleCss: path.join(moduleDir, "module.css"),
+              moduleSemanticJson: moduleSemantic.jsonPath,
               moduleSvg: moduleSvgPath,
-              moduleOcrBlocks: restoredAllowedAssets.moduleOcrBlocksPath,
-              moduleTextBlocks: moduleTextBlocksPath,
-              textStyleHints: moduleTextStyleHintsPath,
-              textLayout: path.join(moduleDir, "text-layout.json"),
+              previewFragmentHtml: path.join(
+                moduleDir,
+                "preview.fragment.html",
+              ),
+              ...(outputFormat === "html"
+                ? {}
+                : {
+                    sourceFragment: getSourceFragmentPath(
+                      moduleDir,
+                      outputFormat,
+                    ),
+                    sourceData: path.join(moduleDir, "source-data.json"),
+                  }),
             },
-            promptKind: feedbackPrompt ? "feedback" : "initial",
+            outputTokens: failedUsage?.output_tokens ?? 0,
+            promptKind: incompleteDiagnostics?.promptKind ?? "initial",
             region: module.region,
-            round,
-            startedAt,
+            round: incompleteDiagnostics?.round ?? 1,
+            startedAt: failedStartedAt,
             status: "failed",
-            threadId: thread.id ?? "unknown",
+            threadId: incompleteDiagnostics?.threadId ?? thread.id ?? "unknown",
+            turnSummary: incompleteDiagnostics?.turnSummary,
+            uncachedInputTokens: getUncachedInputTokens(failedUsage),
           });
+          if (incompleteDiagnostics?.turnSummary.metrics) {
+            const metrics = incompleteDiagnostics.turnSummary.metrics;
+            const tracePath = metrics.runtimeTracePath
+              ? path.relative(process.cwd(), metrics.runtimeTracePath)
+              : "n/a";
+            sessionStore.addLog(
+              sessionId,
+              `[module-pipeline-v2:${module.id}] incomplete output diagnostics: inputTokens=${failedUsage?.input_tokens ?? 0}, outputTokens=${failedUsage?.output_tokens ?? 0}, textChars=${metrics.textCharCount}, thinkChars=${metrics.thinkCharCount}, finalResponseChars=${incompleteDiagnostics.finalResponseChars}, trace=${tracePath}`,
+            );
+          }
           sessionStore.addLog(
             sessionId,
-            `[module-pipeline-v2:${module.id}] round ${round} failed; continuing with placeholder: ${message}`,
+            `[module-pipeline-v2:${module.id}] initial generation failed (${failureKind}); continuing with placeholder: ${message}`,
           );
         }
       },
     });
-    const latestSession = sessionStore.get(sessionId);
-    const previousInputTokens = Number(latestSession?.result.inputTokens ?? 0);
-    const previousOutputTokens = Number(
-      latestSession?.result.outputTokens ?? 0,
-    );
-    const roundInputTokens = moduleAgentRuns
-      .filter((run) => run.round === round)
-      .reduce((sum, run) => sum + run.inputTokens, 0);
-    const roundOutputTokens = moduleAgentRuns
-      .filter((run) => run.round === round)
-      .reduce((sum, run) => sum + run.outputTokens, 0);
-    sessionStore.completeStep(sessionId, "agent", {
-      inputTokens: previousInputTokens + roundInputTokens,
-      outputTokens: previousOutputTokens + roundOutputTokens,
-      tokensUsed:
-        previousInputTokens +
-        previousOutputTokens +
-        roundInputTokens +
-        roundOutputTokens,
-    });
+    sessionStore.completeStep(sessionId, "agent");
     sessionStore.completeWorkflowNode(
       sessionId,
       "agent",
-      round > 1
-        ? `第 ${round} 轮模块反馈完成`
-        : "模块初始生成完成，准备合并校验",
+      "模块初始生成完成，准备合并校验",
     );
   };
 
-  const collectAgentLocalValidationRound = async ({
-    modulesToValidate,
-    round,
-  }: {
-    modulesToValidate: SvgVerticalModule[];
-    round: number;
-  }) => {
+  const collectAgentLocalValidation = async () => {
     sessionStore.startWorkflowNode(sessionId, "verify", {
-      detail: `正在收集第 ${round} 轮模块局部 diff 结果：${modulesToValidate.length}/${modules.length} 个模块`,
-      iteration: round,
-      maxIterations: MODULE_FEEDBACK_MAX,
+      detail: `正在收集模块局部 diff 结果：${modules.length} 个模块`,
+      iteration: 1,
+      maxIterations: 1,
     });
     sessionStore.startStep(sessionId, "verify");
     sessionStore.addLog(
       sessionId,
-      `[module-pipeline-v2] round ${round}: collect agent local module diff for ${modulesToValidate.length}/${modules.length} module(s)`,
+      `[module-pipeline-v2] collect agent local module diff for ${modules.length} module(s)`,
     );
 
     const candidateSnapshots = new Map<string, ModuleSnapshot>();
     const validatedStats = await runWithLimit({
-      items: modulesToValidate,
+      items: modules,
       limit: maxParallelModuleAgents,
       signal: controller.signal,
       worker: async (module) => {
@@ -822,69 +966,109 @@ export async function runModulePipelineV2(
           module,
           modulesRootDir,
         });
-        let mergeError = failedModules.get(module.id);
-        const hasOutput = hasCompleteModuleOutput(moduleDir);
+        let mergeError: string | undefined;
+        let failureKind: ModuleValidationFailureKind | undefined;
+        const hasOutput = hasCompleteModuleOutput(moduleDir, outputFormat);
         let localVerify = null as Awaited<
           ReturnType<typeof verifyModuleLocal>
         > | null;
-        let usedCachedVerify = false;
+        if (!hasOutput) {
+          failureKind = "incomplete_output";
+        }
 
-        if (!mergeError && hasOutput) {
+        if (hasOutput) {
           try {
-            const cached = await readCachedModuleLocalVerify({
+            localVerify = await verifyModuleLocal({
               module,
               moduleDir,
               modulePlan,
               modulePlanPath,
               moduleSvgPath,
-              round,
+              onProgress: (message) =>
+                sessionStore.addLog(
+                  sessionId,
+                  `[module-pipeline-v2:${module.id}] local verify: ${message}`,
+                ),
+              round: 1,
               scale: design.scale,
               scaffoldHtmlPath,
             });
-            if (cached) {
-              localVerify = cached;
-              usedCachedVerify = true;
-            } else {
-              localVerify = await verifyModuleLocal({
-                module,
-                moduleDir,
-                modulePlan,
-                modulePlanPath,
-                moduleSvgPath,
-                onProgress: (message) =>
-                  sessionStore.addLog(
-                    sessionId,
-                    `[module-pipeline-v2:${module.id}] local verify: ${message}`,
-                  ),
-                round,
-                scale: design.scale,
-                scaffoldHtmlPath,
-              });
-            }
           } catch (error) {
             mergeError = error instanceof Error ? error.message : String(error);
+            failureKind = "merge_failed";
             failedModules.set(module.id, mergeError);
+            failedModuleKinds.set(module.id, failureKind);
           }
         }
 
-        const diffRatio = localVerify?.diffRatio ?? 1;
+        let frameworkVerifyDiffRatio: number | undefined;
+        if (!mergeError && hasOutput && outputFormat !== "html" && componentLibraryContext) {
+          try {
+            const frameworkResult = await verifyModuleFrameworkLocal({
+              componentLibraryContext,
+              design,
+              module,
+              moduleDir,
+              moduleSvgPath,
+              onProgress: (message) =>
+                sessionStore.addLog(
+                  sessionId,
+                  `[module-pipeline-v2:${module.id}] framework verify: ${message}`,
+                ),
+              round: 1,
+            });
+            if (frameworkResult) {
+              if (frameworkResult.buildError) {
+                mergeError = `build-incompatible: ${frameworkResult.buildError}`;
+                failureKind = "module_framework_failed";
+                failedModules.set(module.id, mergeError);
+                failedModuleKinds.set(module.id, failureKind);
+              } else {
+                frameworkVerifyDiffRatio = frameworkResult.diffRatio;
+                sessionStore.addLog(
+                  sessionId,
+                  `[module-pipeline-v2:${module.id}] framework local diffRatio=${(frameworkResult.diffRatio * 100).toFixed(2)}%`,
+                );
+              }
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            mergeError = message;
+            failureKind = "module_framework_failed";
+            failedModules.set(module.id, mergeError);
+            failedModuleKinds.set(module.id, failureKind);
+            sessionStore.addLog(
+              sessionId,
+              `[module-pipeline-v2:${module.id}] framework verify error: ${message}`,
+            );
+          }
+        }
+
+        const previewDiffRatio = localVerify?.diffRatio ?? 1;
+        const diffRatio =
+          frameworkVerifyDiffRatio !== undefined
+            ? Math.max(previewDiffRatio, frameworkVerifyDiffRatio)
+            : previewDiffRatio;
         const passed =
           !mergeError &&
           hasOutput &&
           Boolean(localVerify) &&
           diffRatio <= MODULE_DIFF_RATIO_THRESHOLD;
+        if (!passed && !failureKind) {
+          failureKind = "module_visual_failed";
+        }
 
         if (!mergeError && hasOutput && localVerify) {
           candidateSnapshots.set(
             module.id,
-            await readModuleSnapshot(moduleDir, diffRatio),
+            await readModuleSnapshot(moduleDir, diffRatio, outputFormat),
           );
         }
 
         if (!hasOutput) {
           sessionStore.addLog(
             sessionId,
-            `[module-pipeline-v2:${module.id}] incomplete module output; scheduling feedback`,
+            `[module-pipeline-v2:${module.id}] incomplete module output`,
           );
         } else if (mergeError) {
           sessionStore.addLog(
@@ -894,72 +1078,80 @@ export async function runModulePipelineV2(
         } else if (!localVerify) {
           sessionStore.addLog(
             sessionId,
-            `[module-pipeline-v2:${module.id}] no module-local verify result; scheduling feedback`,
+            `[module-pipeline-v2:${module.id}] no module-local verify result`,
           );
         } else {
-          sessionStore.addLog(
+            sessionStore.addLog(
             sessionId,
-            `[module-pipeline-v2:${module.id}] module-local diffRatio=${(diffRatio * 100).toFixed(2)}%${usedCachedVerify ? " (cached)" : ""}`,
+            `[module-pipeline-v2:${module.id}] module-local diffRatio=${(diffRatio * 100).toFixed(2)}%`,
           );
         }
 
         return {
           diffPixels: localVerify?.diffPixels,
           diffRatio,
+          failureKind,
           id: module.id,
           mergeError,
           passed,
-          verifyReportPath: localVerify?.verifyReportPath,
+          renderPngPath: localVerify?.renderPngPath,
         };
       },
     });
 
     await restoreHostModuleArtifacts({
-      artifactDir,
       modules,
       modulesRootDir,
     });
     const draftHtmlPath = path.join(
       modulesRootDir,
-      `draft-round-${round}.html`,
+      "draft-round-1.html",
     );
     const draftMergeResult = await mergeModulesIntoHtml({
+      mergeSource: false,
       modulePlanPath,
-      outputHtmlPath: draftHtmlPath,
+      renderEntryPath: draftHtmlPath,
       skipInvalidModules: true,
-      scaffoldHtmlPath,
+      scaffoldRenderPath: scaffoldHtmlPath,
     });
     const statsById = new Map<string, ModuleValidationStat>(
       validatedStats.map((stat) => [stat.id, stat]),
     );
     draftMergeResult.skippedModules.forEach((skipped) => {
-      failedModules.set(skipped.id, skipped.error);
       const stat =
         statsById.get(skipped.id) ??
-        latestModuleStats.get(skipped.id) ??
         ({
           diffRatio: 1,
           id: skipped.id,
           passed: false,
         } satisfies ModuleValidationStat);
+      const failureKind = "merge_failed";
+      failedModules.set(skipped.id, skipped.error);
+      failedModuleKinds.set(skipped.id, failureKind);
       stat.mergeError = skipped.error;
+      stat.failureKind = failureKind;
       stat.passed = false;
       statsById.set(skipped.id, stat);
     });
     const moduleStats = modules.map((module) => {
       const existing =
-        statsById.get(module.id) ?? latestModuleStats.get(module.id);
+        statsById.get(module.id);
       if (existing) {
         const mergeError = failedModules.get(module.id);
+        const failureKind =
+          failedModuleKinds.get(module.id) ?? existing.failureKind;
         return mergeError
-          ? { ...existing, mergeError, passed: false }
+          ? { ...existing, failureKind, mergeError, passed: false }
           : { ...existing };
       }
       return {
         diffRatio: 1,
+        failureKind:
+          failedModuleKinds.get(module.id) ?? "module_visual_failed",
         id: module.id,
         mergeError:
-          failedModules.get(module.id) ?? "module was not validated in this run",
+          failedModules.get(module.id) ??
+          "module was not validated in this run",
         passed: false,
       } satisfies ModuleValidationStat;
     });
@@ -976,69 +1168,56 @@ export async function runModulePipelineV2(
       }
     }
 
-    const modulesNeedingFeedback = modules.filter((module) => {
+    // 清除已通过当前轮次验证的模块的旧错误
+    modules.forEach((module) => {
       const stat = moduleStats.find((candidate) => candidate.id === module.id);
-      return !stat?.passed || failedModules.has(module.id);
+      if (stat?.passed && !stat.mergeError) {
+        failedModules.delete(module.id);
+        failedModuleKinds.delete(module.id);
+      }
+    });
+
+    const failedModuleIds = modules.flatMap((module) => {
+      const stat = moduleStats.find((candidate) => candidate.id === module.id);
+      if (stat?.passed && !failedModules.has(module.id)) return [];
+
+      const failureKind =
+        failedModuleKinds.get(module.id) ?? stat?.failureKind;
+      if (failureKind === "module_input_failed") return [];
+
+      return [module.id];
     });
     const maxDiffRatio = moduleStats.reduce(
       (max, stat) => Math.max(max, stat.diffRatio),
       0,
     );
-    const feedbackDiffByModule = new Map(
-      moduleStats.map((stat) => [stat.id, stat.diffRatio]),
-    );
-    latestModuleStats = new Map(moduleStats.map((stat) => [stat.id, stat]));
 
     moduleValidationRuns.push({
       draftHtmlPath,
       diffRatio: maxDiffRatio,
+      failedModuleIds,
       moduleStats,
-      modulesNeedingFeedback: modulesNeedingFeedback.map((module) => module.id),
-      round,
+      round: 1,
       scope: "agent-local",
       threshold: MODULE_DIFF_RATIO_THRESHOLD,
     });
     sessionStore.completeWorkflowNode(
       sessionId,
       "verify",
-      `第 ${round} 轮模块局部 diff 结果已收集，需反馈 ${modulesNeedingFeedback.length} 个模块`,
+      `模块局部 diff 结果已收集，失败 ${failedModuleIds.length} 个模块`,
     );
     sessionStore.completeStep(sessionId, "verify", {
       moduleValidationRuns,
     });
 
-    return {
-      feedbackDiffByModule,
-      modulesNeedingFeedback,
-    };
+    return { failedModuleIds };
   };
 
-  await runModuleRound({ modulesToRun: modules, round: 1 });
+  await runInitialModuleRound({ modulesToRun: modules });
   throwIfRunAborted(controller);
 
-  let modulesToValidateNext = modules;
-  for (let round = 1; round <= MODULE_FEEDBACK_MAX; round++) {
-    const { feedbackDiffByModule, modulesNeedingFeedback } =
-      await collectAgentLocalValidationRound({
-        modulesToValidate: modulesToValidateNext,
-        round,
-      });
-    throwIfRunAborted(controller);
-
-    if (!modulesNeedingFeedback.length || round >= MODULE_FEEDBACK_MAX) break;
-
-    sessionStore.addLog(
-      sessionId,
-      `[module-pipeline-v2] round ${round + 1}: feedback modules=${modulesNeedingFeedback.map((module) => module.id).join(", ")}`,
-    );
-    await runModuleRound({
-      modulesToRun: modulesNeedingFeedback,
-      feedbackDiffByModule,
-      round: round + 1,
-    });
-    modulesToValidateNext = modulesNeedingFeedback;
-    throwIfRunAborted(controller);
-  }
+  await collectAgentLocalValidation();
+  throwIfRunAborted(controller);
 
   sessionStore.addLog(
     sessionId,
@@ -1049,18 +1228,56 @@ export async function runModulePipelineV2(
   }
 
   await restoreHostModuleArtifacts({
-    artifactDir,
     modules,
     modulesRootDir,
   });
+  sessionStore.addLog(
+    sessionId,
+    "[module-pipeline-v2] validating restored module snapshots",
+  );
+  await runWithLimit({
+    items: modules,
+    limit: maxParallelModuleAgents,
+    signal: controller.signal,
+    worker: async (module) => {
+      const moduleDir = getModuleDir(modulesRootDir, module);
+      const restoredSnapshot = bestSnapshots.has(module.id);
+      const preserveExistingInputFailure =
+        !restoredSnapshot &&
+        failedModuleKinds.get(module.id) === "module_input_failed";
+      if (!hasCompleteModuleOutput(moduleDir, outputFormat)) {
+        const message = "incomplete module output after restoring best snapshots";
+        if (!preserveExistingInputFailure) {
+          failedModules.set(module.id, message);
+          failedModuleKinds.set(module.id, "incomplete_output");
+        }
+        sessionStore.addLog(
+          sessionId,
+          `[module-pipeline-v2:${module.id}] restored snapshot preflight failed: ${message}`,
+        );
+        return;
+      }
+
+      if (
+        restoredSnapshot &&
+        failedModuleKinds.get(module.id) !== "module_input_failed"
+      ) {
+        failedModules.delete(module.id);
+        failedModuleKinds.delete(module.id);
+      }
+    },
+  });
   const finalMergeResult = await mergeModulesIntoHtml({
+    design,
     modulePlanPath,
-    outputHtmlPath: design.htmlPath,
+    outputTarget: design.outputTarget,
+    renderEntryPath,
     skipInvalidModules: true,
-    scaffoldHtmlPath,
+    scaffoldRenderPath: scaffoldHtmlPath,
   });
   finalMergeResult.skippedModules.forEach((skipped) => {
     failedModules.set(skipped.id, skipped.error);
+    failedModuleKinds.set(skipped.id, "merge_failed");
   });
   await writeJsonFile(moduleMergeManifestPath, finalMergeResult);
   await publishMergeReadiness({
@@ -1073,36 +1290,66 @@ export async function runModulePipelineV2(
     sessionId,
     design.svgPath,
     artifactDir,
-    MODULE_FEEDBACK_MAX + 1,
+    2,
     true,
     { mode: "full" },
   );
   moduleValidationRuns.push({
     diffRatio: finalVerifyResult.diffRatio,
-    moduleStats:
-      finalVerifyResult.moduleRegionStats?.map((stat) => ({
-        diffPixels: stat.diffPixels,
-        diffRatio: stat.diffRatio,
-        id: stat.id,
-        maxChannelDelta: stat.maxChannelDelta,
-        passed: stat.diffRatio <= MODULE_DIFF_RATIO_THRESHOLD,
-      })) ?? [],
-    modulesNeedingFeedback: [],
-    round: MODULE_FEEDBACK_MAX + 1,
+    failedModuleIds: [...failedModules.keys()].sort(),
+    moduleStats: [],
+    round: 2,
     scope: "merged-page",
     threshold: MODULE_DIFF_RATIO_THRESHOLD,
-    verifyReportPath: finalVerifyResult.verifyReportPath,
   });
+
+  // Framework-only render health check: a vue/react page can compile cleanly
+  // yet render blank if the inlined bundle throws at mount time (classic
+  // undeclared-`sourceData` symptom). The pixel diff is high but not
+  // self-explanatory; this check inspects the actual mount point and surfaces a
+  // concrete reason. Skipped for html (no framework mount point).
+  if (outputFormat !== "html") {
+    const designWidth =
+      design.width ?? modulePlan.design?.width;
+    const designHeight =
+      design.height ?? modulePlan.design?.height;
+    if (designWidth === undefined || designHeight === undefined) {
+      throw new Error(
+        "framework render health check failed: missing design viewport size",
+      );
+    }
+    const health = await checkFrameworkRenderHealth({
+      artifactDir,
+      viewportHeight: designHeight,
+      viewportWidth: designWidth,
+    });
+    if (!health.ok) {
+      const message = `framework render health check failed: ${health.reason ?? "mount point empty"}`;
+      sessionStore.addLog(
+        sessionId,
+        `[module-pipeline-v2] ${message}`,
+      );
+      // Surface as a session-level failure so the result is not silently
+      // marked completed with a blank page.
+      throw new Error(message);
+    }
+    sessionStore.addLog(
+      sessionId,
+      `[module-pipeline-v2] framework render health check passed (mount point populated)`,
+    );
+  }
   const completedAgentLocalRounds = moduleValidationRuns.filter(
     (run) => run.scope === "agent-local",
   ).length;
   await writeJsonFile(moduleAgentManifestPath, {
     concurrency: maxParallelModuleAgents,
     moduleCount: modules.length,
+    threadIds: readPersistedModuleAgentThreadIds(sessionId),
     runs: moduleAgentRuns,
     validation: {
       failedModuleIds: [...failedModules.keys()].sort(),
-      maxIterations: MODULE_FEEDBACK_MAX,
+      failedModuleKinds: Object.fromEntries(failedModuleKinds),
+      maxIterations: 1,
       rounds: completedAgentLocalRounds,
       threshold: MODULE_DIFF_RATIO_THRESHOLD,
     },
@@ -1116,7 +1363,9 @@ export async function runModulePipelineV2(
         ...latestSession.result,
         moduleAgentManifestPath,
         moduleAgentRuns,
+        moduleAgentThreadIds: readPersistedModuleAgentThreadIds(sessionId),
         moduleFailedIds: [...failedModules.keys()].sort(),
+        moduleFailureKinds: Object.fromEntries(failedModuleKinds),
         moduleFailures: Object.fromEntries(failedModules),
         moduleMergeManifestPath,
         moduleValidationRuns,
@@ -1133,6 +1382,7 @@ export async function runModulePipelineV2(
 
   return {
     failedModuleIds,
+    moduleFailureKinds: Object.fromEntries(failedModuleKinds),
     moduleAgentManifestPath,
     moduleAgentRuns,
     moduleValidationRuns,
@@ -1143,8 +1393,8 @@ export async function runModulePipelineV2(
   };
 }
 
-export async function runModuleUserFeedback(
-  input: ModuleUserFeedbackInput,
+export async function runModuleUserRevision(
+  input: ModuleUserRevisionInput,
 ): Promise<ModulePipelineV2Result> {
   const {
     artifactDir,
@@ -1157,22 +1407,91 @@ export async function runModuleUserFeedback(
     scaffoldHtmlPath,
     sessionId,
     userInstructions,
-    verifyReportPath,
   } = input;
 
-  const modulePlan = await readModulePlan(modulePlanPath);
+  let modulePlan = await readModulePlan(modulePlanPath);
+  const currentSession = sessionStore.get(sessionId);
+  const outputFormat = normalizeOutputFormat(
+    currentSession?.outputFormat ?? modulePlan.outputFormat,
+  );
+  const renderEntryPath = resolveSessionRenderEntryPath({
+    design,
+    session: currentSession,
+  });
+  if (!renderEntryPath) {
+    throw new Error("Render entry path not available");
+  }
+  const modulesRootDir = path.dirname(modulePlanPath);
+  const baseComponentLibraryContext = currentSession
+    ? await createComponentLibraryAgentContext({
+        modulesRootDir,
+        session: currentSession,
+      })
+    : undefined;
+  const componentLibraryPlanRef = baseComponentLibraryContext
+    ? createComponentLibraryPlanRef({
+        descriptor: baseComponentLibraryContext.descriptor,
+        descriptorPath: baseComponentLibraryContext.descriptorPath,
+        sourceDir: baseComponentLibraryContext.sourceDir,
+      })
+    : undefined;
+  const nextModulePlan = {
+    ...modulePlan,
+    componentLibrary: componentLibraryPlanRef,
+    outputFormat,
+    renderEntryPath,
+    scaffoldRenderPath: scaffoldHtmlPath,
+    sourceEntryPath:
+      currentSession?.result.sourceEntryPath ??
+      currentSession?.outputTarget?.sourceEntryPath,
+  };
+  if (
+    modulePlan.outputFormat !== nextModulePlan.outputFormat ||
+    modulePlan.renderEntryPath !== nextModulePlan.renderEntryPath ||
+    modulePlan.scaffoldRenderPath !== nextModulePlan.scaffoldRenderPath ||
+    modulePlan.sourceEntryPath !== nextModulePlan.sourceEntryPath ||
+    JSON.stringify(modulePlan.componentLibrary ?? null) !==
+      JSON.stringify(nextModulePlan.componentLibrary ?? null)
+  ) {
+    modulePlan = nextModulePlan;
+    await writeJsonFile(modulePlanPath, modulePlan);
+  }
   const modules = normalizeModules(modulePlan);
   const module = modules.find((candidate) => candidate.id === moduleId);
   if (!module) {
     throw new Error(`模块不存在：${moduleId}`);
   }
 
-  const modulesRootDir = path.dirname(modulePlanPath);
+  const componentLibraryContext = baseComponentLibraryContext
+    ? {
+        ...baseComponentLibraryContext,
+        adoptionPlanPath: getComponentAdoptionPlanPath(modulesRootDir),
+      }
+    : undefined;
+  if (componentLibraryContext) {
+    await createComponentAdoptionPlan({
+      descriptor: componentLibraryContext.descriptor,
+      modules,
+      outputPath: componentLibraryContext.adoptionPlanPath,
+    });
+    const nextModulePlanWithAdoption = {
+      ...modulePlan,
+      componentAdoptionPlanPath: componentLibraryContext.adoptionPlanPath,
+    };
+    if (
+      modulePlan.componentAdoptionPlanPath !==
+      nextModulePlanWithAdoption.componentAdoptionPlanPath
+    ) {
+      modulePlan = nextModulePlanWithAdoption;
+      await writeJsonFile(modulePlanPath, modulePlan);
+    }
+  }
   const moduleAgentManifestPath = path.join(
     modulesRootDir,
     "module-agent-manifest.json",
   );
   const moduleDir = getModuleDir(modulesRootDir, module);
+  const persistedModuleThreadIds = readPersistedModuleAgentThreadIds(sessionId);
   await mkdir(moduleDir, { recursive: true });
 
   sessionStore.startWorkflowNode(sessionId, "agent", {
@@ -1183,116 +1502,95 @@ export async function runModuleUserFeedback(
   sessionStore.startStep(sessionId, "agent");
   sessionStore.addLog(
     sessionId,
-    `[module-user-feedback:${module.id}] starting user-selected module turn`,
+    `[module-user-revision:${module.id}] starting user-selected module turn`,
   );
 
-  const allowedAssets = await writeHostModuleAllowedAssets({
-    artifactDir,
-    module,
-    moduleDir,
-  });
   const moduleSvgPath = await ensureModuleSvg({
     design,
     module,
     modulesRootDir,
   });
-  const moduleTextBlocksPath = path.join(moduleDir, "module-text-blocks.json");
-  const moduleTextBlocksReused = await canReuseGeneratedFile({
-    outputPath: moduleTextBlocksPath,
-    sourcePaths: [
-      allowedAssets.allowedAssetsPath,
-      allowedAssets.moduleOcrBlocksPath,
-      moduleSvgPath,
-    ],
-  });
-  if (!moduleTextBlocksReused) {
-    await createModuleTextBlocks({
-      moduleDir,
-      moduleId: module.id,
-      moduleOcrBlocksPath: allowedAssets.moduleOcrBlocksPath,
-      moduleSvgPath,
-      outputPath: moduleTextBlocksPath,
-      region: module.region,
-      scale: design.scale,
-    });
-  }
-  const moduleTextStyleHintsPath = path.join(
-    moduleDir,
-    "module-text-style-hints.json",
-  );
-  const moduleTextStyleHintsReused = await canReuseGeneratedFile({
-    outputPath: moduleTextStyleHintsPath,
-    sourcePaths: [moduleTextBlocksPath],
-  });
-  if (!moduleTextStyleHintsReused) {
-    try {
-      await createModuleTextStyleHints({
-        moduleDir,
-        moduleId: module.id,
-        moduleTextBlocksPath,
-        outputPath: moduleTextStyleHintsPath,
-      });
-    } catch (error) {
-      sessionStore.addLog(
-        sessionId,
-        `[module-user-feedback:${module.id}] text style hint inference failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  const moduleInputSummary = await writeModuleInputSummary({
-    allowedAssetsPath: allowedAssets.allowedAssetsPath,
+  const moduleSemanticDraft = await createModuleSemanticDraft({
     module,
     moduleDir,
-    moduleOcrBlocksPath: allowedAssets.moduleOcrBlocksPath,
-    moduleTextStyleHintsPath: existsSync(moduleTextStyleHintsPath)
-      ? moduleTextStyleHintsPath
-      : undefined,
-    moduleTextBlocksPath,
     moduleSvgPath,
     scale: design.scale,
+  });
+  await ensureModuleContextImages({
+    moduleDir,
+    module,
+    moduleSvgPath,
+    sharedLayers: modulePlan.sharedLayers ?? [],
+    scale: design.scale,
+  });
+  sessionStore.addLog(
+    sessionId,
+    `[module-user-revision:${module.id}] semantic draft ready: ${moduleSemanticDraft.jsonPath}`,
+  );
+  const { moduleSemantic } = await preprocessModuleSemantic({
+    design,
+    module,
+    moduleDir,
+    moduleSvgPath,
+    sessionId,
   });
 
   const thread = createAgentUnitThread({
     artifactDir,
-    moduleSvgPath,
+    componentLibrarySourceDir: componentLibraryContext?.sourceDir,
+    design,
     originalSvgPath: design.svgPath,
     reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
+    threadId: persistedModuleThreadIds[module.id],
     workingDir: moduleDir,
   });
+  const revisionPrompt = buildUserModuleRevisionPrompt({
+    module,
+    outputFormat,
+    userInstructions,
+  });
+  const revisionPath = path.join(moduleDir, `revision-round-${round}.md`);
+  await writeFile(revisionPath, revisionPrompt, "utf8");
+  await archiveSessionCheckpoint({
+    sessionId,
+    round,
+    stage: "agent",
+    note: `Module user revision ${module.id} round ${round}`,
+    materials: [
+      {
+        kind: "file" as const,
+        label: "Module User Revision",
+        sourcePath: revisionPath,
+      },
+    ],
+  });
+
   const result = await runAgentUnit({
     module,
     moduleSvgPath,
     originalSvgPath: design.svgPath,
     design,
     workingDir: moduleDir,
-    scaffoldHtmlPath,
     artifactDir,
     modulePlan: modulePlan as any,
     reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
     sessionId,
     controller,
-    feedbackPrompt: buildUserModuleFeedbackPrompt({
-      module,
-      userInstructions,
-      verifyReportPath,
-    }),
+    componentLibraryContext,
+    revisionPrompt,
+    onThreadStarted: (threadId) => {
+      persistedModuleThreadIds[module.id] = threadId;
+      persistModuleAgentThreadId({
+        moduleId: module.id,
+        sessionId,
+        threadId,
+      });
+    },
     round,
     thread,
   });
-
-  if (existsSync(moduleTextStyleHintsPath)) {
-    try {
-      await applyModuleTextStyleHintsToLayout({
-        hintsPath: moduleTextStyleHintsPath,
-        textLayoutPath: path.join(moduleDir, "text-layout.json"),
-      });
-    } catch (error) {
-      sessionStore.addLog(
-        sessionId,
-        `[module-user-feedback:${module.id}] text style hint apply failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
+  const agentGeneratedAssetCount =
+    await readAgentGeneratedAssetCount(moduleDir);
 
   const previousSession = sessionStore.get(sessionId);
   const previousRuns = Array.isArray(previousSession?.result.moduleAgentRuns)
@@ -1301,42 +1599,30 @@ export async function runModuleUserFeedback(
   const moduleAgentRuns: ModuleAgentRunRecord[] = [
     ...previousRuns,
     {
-      allowedAssetCount: allowedAssets.assetCount,
+      cachedInputTokens: getCachedInputTokens(result.usage),
       durationMs: result.durationMs,
       endedAt: result.endedAt,
       id: module.id,
       inputTokens: result.usage?.input_tokens ?? 0,
       outputByteSizes: result.outputByteSizes,
+      agentGeneratedAssetCount,
       outputPaths: {
         ...result.outputPaths,
-        allowedAssets: allowedAssets.allowedAssetsPath,
-        moduleInputSummaryJson: moduleInputSummary.jsonPath,
-        moduleInputSummaryMarkdown: moduleInputSummary.markdownPath,
-        moduleOcrBlocks: allowedAssets.moduleOcrBlocksPath,
-        moduleTextBlocks: moduleTextBlocksPath,
-        textStyleHints: moduleTextStyleHintsPath,
+        moduleSemanticJson: moduleSemantic.jsonPath,
       },
       outputTokens: result.usage?.output_tokens ?? 0,
-      promptKind: "feedback",
+      promptKind: "revision",
       region: module.region,
       round,
       startedAt: result.startedAt,
       status: result.success ? "completed" : "failed",
       threadId: result.threadId,
       turnSummary: result.turnSummary,
+      uncachedInputTokens: getUncachedInputTokens(result.usage),
     },
   ];
 
-  const previousInputTokens = Number(previousSession?.result.inputTokens ?? 0);
-  const previousOutputTokens = Number(previousSession?.result.outputTokens ?? 0);
-  const inputTokens = result.usage?.input_tokens ?? 0;
-  const outputTokens = result.usage?.output_tokens ?? 0;
-  sessionStore.completeStep(sessionId, "agent", {
-    inputTokens: previousInputTokens + inputTokens,
-    outputTokens: previousOutputTokens + outputTokens,
-    tokensUsed:
-      previousInputTokens + previousOutputTokens + inputTokens + outputTokens,
-  });
+  sessionStore.completeStep(sessionId, "agent");
   sessionStore.completeWorkflowNode(
     sessionId,
     "agent",
@@ -1345,14 +1631,25 @@ export async function runModuleUserFeedback(
   throwIfRunAborted(controller);
 
   await restoreHostModuleArtifacts({
-    artifactDir,
     modules,
     modulesRootDir,
   });
+  let selectedModuleOutputError: string | undefined;
+  let selectedModuleOutputFailureKind: ModuleValidationFailureKind | undefined;
+  if (!hasCompleteModuleOutput(moduleDir, outputFormat)) {
+    selectedModuleOutputError = "incomplete module output";
+    selectedModuleOutputFailureKind = "incomplete_output";
+    sessionStore.addLog(
+      sessionId,
+      `[module-user-revision:${module.id}] incomplete module output after user revision`,
+    );
+  }
   const mergeResult = await mergeModulesIntoHtml({
+    design,
     modulePlanPath,
-    outputHtmlPath: design.htmlPath,
-    scaffoldHtmlPath,
+    outputTarget: design.outputTarget,
+    renderEntryPath,
+    scaffoldRenderPath: scaffoldHtmlPath,
     skipInvalidModules: true,
   });
   await writeJsonFile(moduleMergeManifestPath, mergeResult);
@@ -1362,34 +1659,6 @@ export async function runModuleUserFeedback(
     sessionId,
   });
 
-  const finalVerifyResult = await runVerify(
-    sessionId,
-    design.svgPath,
-    artifactDir,
-    round,
-    true,
-    { mode: "full", reuseCachedOcr: false },
-  );
-  const moduleValidationRuns = [
-    ...((previousSession?.result.moduleValidationRuns ??
-      []) as ModuleValidationRun[]),
-    {
-      diffRatio: finalVerifyResult.diffRatio,
-      moduleStats:
-        finalVerifyResult.moduleRegionStats?.map((stat) => ({
-          diffPixels: stat.diffPixels,
-          diffRatio: stat.diffRatio,
-          id: stat.id,
-          maxChannelDelta: stat.maxChannelDelta,
-          passed: stat.diffRatio <= MODULE_DIFF_RATIO_THRESHOLD,
-        })) ?? [],
-      modulesNeedingFeedback: [],
-      round,
-      scope: "merged-page" as const,
-      threshold: MODULE_DIFF_RATIO_THRESHOLD,
-      verifyReportPath: finalVerifyResult.verifyReportPath,
-    },
-  ];
   const previousModuleFailures =
     previousSession?.result.moduleFailures &&
     typeof previousSession.result.moduleFailures === "object"
@@ -1398,32 +1667,83 @@ export async function runModuleUserFeedback(
   const mergedModuleFailures = new Map<string, string>(
     Object.entries(previousModuleFailures).filter(([id]) => id !== module.id),
   );
+  const previousModuleFailureKinds =
+    previousSession?.result.moduleFailureKinds &&
+    typeof previousSession.result.moduleFailureKinds === "object"
+      ? previousSession.result.moduleFailureKinds
+      : {};
+  const mergedModuleFailureKinds = new Map<string, ModuleValidationFailureKind>(
+    Object.entries(previousModuleFailureKinds)
+      .filter(([id]) => id !== module.id)
+      .map(([id, kind]) => [id, normalizeModuleFailureKind(kind)]),
+  );
+  if (selectedModuleOutputError) {
+    mergedModuleFailures.set(module.id, selectedModuleOutputError);
+    mergedModuleFailureKinds.set(
+      module.id,
+      selectedModuleOutputFailureKind ?? "merge_failed",
+    );
+  }
   mergeResult.skippedModules.forEach((skipped) => {
     mergedModuleFailures.set(skipped.id, skipped.error);
+    mergedModuleFailureKinds.set(
+      skipped.id,
+      "merge_failed",
+    );
   });
   const failedModuleIds = [
     ...new Set([
       ...(previousSession?.result.moduleFailedIds ?? []).filter(
         (id) => id !== module.id,
       ),
+      ...(selectedModuleOutputError ? [module.id] : []),
       ...mergeResult.skippedModuleIds,
     ]),
   ].sort();
+  const moduleFailureKinds = Object.fromEntries(
+    failedModuleIds.map((id) => [
+      id,
+      mergedModuleFailureKinds.get(id) ?? "merge_failed",
+    ]),
+  );
   const moduleFailures = Object.fromEntries(
     failedModuleIds.map((id) => [
       id,
       mergedModuleFailures.get(id) ?? "Module failed in a previous run",
     ]),
   );
+
+  const finalVerifyResult = await runVerify(
+    sessionId,
+    design.svgPath,
+    artifactDir,
+    round,
+    true,
+    { mode: "full" },
+  );
+  const moduleValidationRuns = [
+    ...((previousSession?.result.moduleValidationRuns ??
+      []) as ModuleValidationRun[]),
+    {
+      diffRatio: finalVerifyResult.diffRatio,
+      failedModuleIds,
+      moduleStats: [],
+      round,
+      scope: "merged-page" as const,
+      threshold: MODULE_DIFF_RATIO_THRESHOLD,
+    },
+  ];
   await writeJsonFile(moduleAgentManifestPath, {
     moduleCount: modules.length,
     runs: moduleAgentRuns,
-    userFeedback: {
+    threadIds: readPersistedModuleAgentThreadIds(sessionId),
+    userRevision: {
       moduleId: module.id,
       round,
     },
     validation: {
       failedModuleIds,
+      failedModuleKinds: moduleFailureKinds,
       maxIterations: round,
       threshold: MODULE_DIFF_RATIO_THRESHOLD,
     },
@@ -1437,7 +1757,9 @@ export async function runModuleUserFeedback(
         ...latestSession.result,
         moduleAgentManifestPath,
         moduleAgentRuns,
+        moduleAgentThreadIds: readPersistedModuleAgentThreadIds(sessionId),
         moduleFailedIds: failedModuleIds,
+        moduleFailureKinds,
         moduleFailures,
         moduleMergeManifestPath,
         moduleValidationRuns,
@@ -1447,6 +1769,7 @@ export async function runModuleUserFeedback(
 
   return {
     failedModuleIds,
+    moduleFailureKinds,
     moduleAgentManifestPath,
     moduleAgentRuns,
     moduleValidationRuns,

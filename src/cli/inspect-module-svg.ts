@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { inspectSvgSource } from "../pipeline/agent-runner/module-input-summary.js";
+import { inspectSvgSource } from "../core/svg-inspection.js";
 
 const VALUE_FLAGS = new Set([
   "--format",

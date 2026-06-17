@@ -54,10 +54,10 @@ const WORKFLOW_ARCHIVE_TEXT_MAX_CHARS = Number(
 );
 const HEAVY_ARCHIVE_FILE_LABELS = new Set([
   "Rendered SVG PNG",
-  "Rendered HTML PNG",
+  "Rendered Output PNG",
   "Diff PNG",
-  "HTML Snapshot",
-  "Rejected HTML Snapshot",
+  "Render Entry Snapshot",
+  "Rejected Render Entry Snapshot",
 ]);
 
 const manifestWriteQueue = new Map<string, Promise<void>>();
@@ -261,7 +261,5 @@ const archiveWorkflowCheckpoint = async ({
 
 export {
   archiveWorkflowCheckpoint,
-  getWorkflowHistoryDir,
-  getWorkflowHistoryManifestPath,
 };
 export type { WorkflowArchiveMaterial };

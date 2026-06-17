@@ -1,15 +1,27 @@
-import { areaOf, intersectionArea } from "../geometry.js";
+import {
+  areaOf,
+  bottomOf,
+  centerOf,
+  intersectionArea,
+  isPageScaleBox,
+  overlapLength,
+  pointInside,
+  rightOf,
+  round,
+  unionBoxes,
+} from "../geometry.js";
 import type { Box, Region } from "../utils.js";
+import { isRecord } from "../utils.js";
 import type {
-  CodexModuleKind,
-  CodexPlannerModule,
+  ModuleKind,
+  ModelPlannerModule,
   ModulePlanValidationIssue,
   ModulePlanValidationResult,
-  ValidateCodexPlanInput,
+  ValidateModelPlanInput,
   ValidationSourceBox,
 } from "./types.js";
 
-const ALLOWED_CODEX_KINDS = new Set<CodexModuleKind>([
+const ALLOWED_MODULE_KINDS = new Set<ModuleKind>([
   "global-shell",
   "section",
   "header",
@@ -20,35 +32,9 @@ const ALLOWED_CODEX_KINDS = new Set<CodexModuleKind>([
   "overlay",
   "model-region",
 ]);
-const LEGACY_MODEL_REGION_KIND = "codex-region";
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
-
-const rightOf = (box: Pick<Box, "width" | "x">) => box.x + box.width;
-
-const bottomOf = (box: Pick<Box, "height" | "y">) => box.y + box.height;
-
-const centerOf = (box: Box) => ({
-  x: box.x + box.width / 2,
-  y: box.y + box.height / 2,
-});
-
-const pointInside = (point: { x: number; y: number }, box: Region) =>
-  point.x >= box.x &&
-  point.x <= box.x + box.width &&
-  point.y >= box.y &&
-  point.y <= box.y + box.height;
-
-const overlapLength = (
-  leftStart: number,
-  leftEnd: number,
-  rightStart: number,
-  rightEnd: number,
-) => Math.max(0, Math.min(leftEnd, rightEnd) - Math.max(leftStart, rightStart));
 
 const overlapsEnough = ({
   edgeEnd,
@@ -65,8 +51,6 @@ const overlapsEnough = ({
   return overlapLength(edgeStart, edgeEnd, sourceStart, sourceEnd) / sourceLength >= 0.45;
 };
 
-const round = (value: number, digits = 3) => Number(value.toFixed(digits));
-
 const createIssue = (
   severity: ModulePlanValidationIssue["severity"],
   code: string,
@@ -79,16 +63,20 @@ const createIssue = (
   ...extra,
 });
 
-const normalizeKind = (kind: unknown): CodexModuleKind => {
-  if (kind === LEGACY_MODEL_REGION_KIND) return "model-region";
-  if (typeof kind === "string" && ALLOWED_CODEX_KINDS.has(kind as CodexModuleKind)) {
-    return kind as CodexModuleKind;
+const normalizeKind = (kind: unknown): ModuleKind => {
+  if (typeof kind === "string" && ALLOWED_MODULE_KINDS.has(kind as ModuleKind)) {
+    return kind as ModuleKind;
   }
   return "model-region";
 };
 
 const stripJsonMarkdown = (raw: string) => {
-  const content = raw
+  let content = raw.trim();
+  // Strip <think>...</think> tags (reasoning content from some models)
+  content = content.replace(/<think>.*?<\/think>/gs, "");
+  content = content.replace(/<think>/g, "");
+  content = content.replace(/<\/think>/g, "");
+  content = content
     .trim()
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/i, "");
@@ -97,7 +85,7 @@ const stripJsonMarkdown = (raw: string) => {
   return start >= 0 && end > start ? content.slice(start, end + 1) : content;
 };
 
-const parseCodexPlannerResponse = (raw: string) => {
+const parseModelPlannerResponse = (raw: string) => {
   const jsonText = stripJsonMarkdown(raw);
   try {
     const parsed = JSON.parse(jsonText) as unknown;
@@ -119,7 +107,7 @@ const readRegion = ({
   module,
 }: {
   index: number;
-  module: CodexPlannerModule;
+  module: ModelPlannerModule;
 }) => {
   const id = typeof module.id === "string" && module.id.trim()
     ? module.id.trim()
@@ -170,11 +158,6 @@ const readRegion = ({
   };
 };
 
-const isPageScaleBox = (box: Box, viewport: Box) => {
-  const ratio = areaOf(box) / Math.max(1, areaOf(viewport));
-  return ratio >= 0.55 || (box.width >= viewport.width * 0.95 && box.height >= viewport.height * 0.45);
-};
-
 const GRAPHIC_NODE_TAGS = new Set([
   "circle", "ellipse", "g", "image", "line",
   "path", "polygon", "polyline", "rect", "use",
@@ -213,7 +196,7 @@ const isMeaningfulBox = (box: Box, viewport: Box) =>
   box.width >= 8 &&
   box.height >= 8 &&
   areaOf(box) >= 80 &&
-  !isPageScaleBox(box, viewport);
+  !isPageScaleBox(box, viewport.width, viewport.height);
 
 const isLargeBackgroundLikeBox = (box: Box, viewport: Box) => {
   const nearFullWidth = box.width >= viewport.width * 0.85;
@@ -223,45 +206,11 @@ const isLargeBackgroundLikeBox = (box: Box, viewport: Box) => {
   return nearFullWidth && tall && (oversized || largeArea);
 };
 
-const unionBoxes = (boxes: Box[]): Box | null => {
-  if (!boxes.length) return null;
-  const left = Math.min(...boxes.map((box) => box.x));
-  const top = Math.min(...boxes.map((box) => box.y));
-  const right = Math.max(...boxes.map((box) => rightOf(box)));
-  const bottom = Math.max(...boxes.map((box) => bottomOf(box)));
-  return {
-    height: bottom - top,
-    width: right - left,
-    x: left,
-    y: top,
-  };
-};
-
 const collectValidationSourceBoxes = ({
   containerLayout,
-  ocrBlocks,
-  shellManifest,
   viewport,
-}: Pick<ValidateCodexPlanInput, "containerLayout" | "ocrBlocks" | "shellManifest" | "viewport">): ValidationSourceBox[] => {
+}: Pick<ValidateModelPlanInput, "containerLayout" | "viewport">): ValidationSourceBox[] => {
   const sourceBoxes: ValidationSourceBox[] = [];
-
-  ocrBlocks.forEach((block, index) => {
-    if (!isMeaningfulBox(block.bbox, viewport)) return;
-    sourceBoxes.push({
-      box: block.bbox,
-      id: block.id || `ocr-${index + 1}`,
-      kind: "ocr",
-    });
-  });
-
-  shellManifest.forEach((entry, index) => {
-    if (!entry.box || !isMeaningfulBox(entry.box, viewport)) return;
-    sourceBoxes.push({
-      box: entry.box,
-      id: entry.containerId || `shell-${index + 1}`,
-      kind: "shell",
-    });
-  });
 
   const containersById = new Map(
     (containerLayout?.containers ?? []).map((container) => [container.id, container] as const),
@@ -331,7 +280,7 @@ const collectCoverageIssues = ({
       createIssue(
         severity,
         "source-coverage-low",
-        `${uncovered.length}/${coverageBoxes.length} OCR/container source box(es) are not covered by any proposed module.`,
+        `${uncovered.length}/${coverageBoxes.length} container/shell source box(es) are not covered by any proposed module.`,
         {
           details: {
             uncoveredIds: uncovered.slice(0, 30).map((sourceBox) => sourceBox.id),
@@ -754,13 +703,12 @@ const collectCutIssues = ({
       ) {
         continue;
       }
-      const severity = sourceBox.kind === "ocr" ? "error" : "warning";
+      const severity =
+        sourceBox.kind === "repeat-group" ? "error" : "warning";
       const code =
-        sourceBox.kind === "ocr"
-          ? "cuts-through-text"
-          : sourceBox.kind === "repeat-group"
-            ? "cuts-through-repeat-group"
-            : "cuts-through-container";
+        sourceBox.kind === "repeat-group"
+          ? "cuts-through-repeat-group"
+          : "cuts-through-container";
       const key = `${severity}:${code}:${edge.id}:${sourceBox.id}:${edge.orientation}:${round(edge.value)}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -791,11 +739,11 @@ const validateRegionBasics = ({
   modules,
   viewport,
 }: {
-  modules: CodexPlannerModule[];
+  modules: ModelPlannerModule[];
   viewport: Box;
 }) => {
   const issues: ModulePlanValidationIssue[] = [];
-  const regions: Array<Region & { id?: string; kind: CodexModuleKind }> = [];
+  const regions: Array<Region & { id?: string; kind: ModuleKind }> = [];
   const tolerance = 4;
 
   modules.forEach((module, index) => {
@@ -844,8 +792,7 @@ const validateRegionBasics = ({
 
     if (
       typeof module.kind === "string" &&
-      module.kind !== LEGACY_MODEL_REGION_KIND &&
-      !ALLOWED_CODEX_KINDS.has(module.kind as CodexModuleKind)
+      !ALLOWED_MODULE_KINDS.has(module.kind as ModuleKind)
     ) {
       issues.push(
         createIssue(
@@ -879,13 +826,11 @@ const summarizeValidation = (
   };
 };
 
-const validateCodexPlan = ({
+const validateModelPlan = ({
   containerLayout,
-  ocrBlocks,
   response,
-  shellManifest,
   viewport,
-}: ValidateCodexPlanInput): ModulePlanValidationResult => {
+}: ValidateModelPlanInput): ModulePlanValidationResult => {
   const issues: ModulePlanValidationIssue[] = [];
   if (!isRecord(response)) {
     return summarizeValidation([
@@ -903,7 +848,7 @@ const validateCodexPlan = ({
   if (!modules.length) {
     issues.push(createIssue("error", "modules-empty", "Planner response has no modules."));
   }
-  const moduleRecords = modules.filter((module): module is CodexPlannerModule => {
+  const moduleRecords = modules.filter((module): module is ModelPlannerModule => {
     if (isRecord(module)) return true;
     issues.push(
       createIssue("error", "module-not-object", "Each module entry must be a JSON object."),
@@ -918,8 +863,6 @@ const validateCodexPlan = ({
 
   const sourceBoxes = collectValidationSourceBoxes({
     containerLayout,
-    ocrBlocks,
-    shellManifest,
     viewport,
   });
   const boundaryRepair = repairRegionsAwayFromSourceBoxes({
@@ -956,8 +899,9 @@ const validateCodexPlan = ({
 
 export {
   collectValidationSourceBoxes,
-  normalizeKind as normalizeCodexModuleKind,
-  parseCodexPlannerResponse,
+  isLargeBackgroundLikeBox,
+  normalizeKind as normalizeModuleKind,
+  parseModelPlannerResponse,
   repairRegionsAwayFromSourceBoxes,
-  validateCodexPlan,
+  validateModelPlan,
 };

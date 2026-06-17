@@ -1,5 +1,10 @@
-type AgentCommandKind = 'verify-design' | 'verify-module-design'
-type AgentVerifyQualityStatus = 'pass' | 'partial' | 'fail'
+import type { AgentTurnMetrics } from '../agent-runtime/index.js'
+
+type AgentCommandKind =
+  | 'verify-design'
+  | 'verify-module-design'
+  | 'verify-module-framework'
+  | 'browser-eval'
 
 type AgentCommandRecord = {
   command: string
@@ -8,7 +13,6 @@ type AgentCommandRecord = {
   diffRatio?: number
   exitCode: number | null
   internalRound: number
-  qualityStatus?: AgentVerifyQualityStatus
   startedAt?: number
   status: 'completed' | 'failed'
 }
@@ -30,6 +34,14 @@ type AgentInternalRound = {
 type AgentVerifyUsageSummary = {
   bestDiffRatio?: number
   verifyCount: number
+  rollbackCount?: number
+  rollbackReasons?: string[]
+}
+
+type AgentTokenUsage = {
+  cached_input_tokens?: number
+  input_tokens: number
+  output_tokens: number
 }
 
 type AgentTurnSummary = {
@@ -39,11 +51,12 @@ type AgentTurnSummary = {
   earlyStopReason?: string
   internalRounds: AgentInternalRound[]
   messages: AgentMessageRecord[]
+  metrics?: AgentTurnMetrics
   startedAt: number
   totalShellCommands?: number
   totalCommands: number
   totalInternalRounds: number
-  usage: { input_tokens: number; output_tokens: number } | null
+  usage: AgentTokenUsage | null
   verifyUsage: AgentVerifyUsageSummary
 }
 
@@ -52,7 +65,7 @@ export type {
   AgentCommandRecord,
   AgentInternalRound,
   AgentMessageRecord,
+  AgentTokenUsage,
+  AgentTurnMetrics,
   AgentTurnSummary,
-  AgentVerifyQualityStatus,
-  AgentVerifyUsageSummary,
 }

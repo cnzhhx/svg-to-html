@@ -1,21 +1,21 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="build-time" content="__BUILD_TIME__" />
-  <title>SVG → HTML</title>
+  <title>SVG → Code Toolkit</title>
   <link rel="stylesheet" href="/transformer/index.css" />
 </head>
 <body>
-  <div class="app-shell sidebar-collapsed" id="appShell">
+  <div class="app-shell" id="appShell">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
         <div class="brand-icon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="m10 13-2 2 2 2"/><path d="m14 17 2-2-2-2"/></svg>
         </div>
         <div class="brand-text">
-          <span class="brand-name">SVG → HTML</span>
+          <span class="brand-name">SVG → Code</span>
           <span class="brand-version" id="runtimeInfo"></span>
         </div>
       </div>
@@ -26,19 +26,18 @@
         <span id="uploadLabel">上传 SVG</span>
       </div>
 
+      <button class="component-library-entry" id="componentLibraryBtn" type="button" hidden>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+        <span class="component-library-entry-label">组件库</span>
+        <span class="component-library-entry-status" id="componentLibraryStatus" hidden></span>
+      </button>
+
       <div class="session-list" id="sessionList"></div>
     </aside>
 
     <main class="main-panel">
       <header class="toolbar">
         <div class="toolbar-leading">
-          <button class="icon-btn" id="sidebarToggleBtn" type="button" title="展开 Session">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <line x1="4" y1="6" x2="20" y2="6"></line>
-              <line x1="4" y1="12" x2="20" y2="12"></line>
-              <line x1="4" y1="18" x2="20" y2="18"></line>
-            </svg>
-          </button>
           <div class="toolbar-left">
             <h2 class="toolbar-title" id="sessionTitle">选择一个 session</h2>
             <p class="toolbar-meta" id="sessionMeta">上传 SVG 开始</p>
@@ -48,12 +47,6 @@
           <span class="execution-badge" id="executionBadge"></span>
           <button class="link-btn toolbar-link-btn" id="chatToggleBtn" type="button" disabled>打开聊天</button>
           <a class="link-btn toolbar-link-btn download-btn" id="downloadBtn" style="display:none" href="#">下载 Session</a>
-          <button class="icon-btn" id="pauseBtn" disabled title="暂停">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
-          </button>
-          <button class="icon-btn icon-btn-accent" id="resumeBtn" disabled title="继续">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          </button>
           <button class="icon-btn icon-btn-danger" id="deleteSessionBtn" disabled title="删除 Session">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
               <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -95,6 +88,10 @@
               <span class="result-token-badge" id="resultTokenBadge" hidden></span>
             </div>
             <div class="result-panel-controls">
+              <div class="result-view-toggle" id="resultViewToggle" role="group" aria-label="对比视图">
+                <button class="result-view-toggle-btn is-active" type="button" data-result-view-mode="split" aria-pressed="true">分列</button>
+                <button class="result-view-toggle-btn" type="button" data-result-view-mode="slider" aria-pressed="false">滑块</button>
+              </div>
               <span class="result-cache-status" id="resultCacheStatus" hidden></span>
               <label class="result-size-control" for="previewSizeRange">
                 <span>预览宽度</span>
@@ -131,6 +128,7 @@
       </div>
       <div class="module-picker-list" id="modulePickerList"></div>
     </div>
+    <div class="chat-filter-tabs" id="chatFilterTabs"></div>
     <div class="conversation-stream" id="messageList">
       <div class="empty-state">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.3"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -150,28 +148,39 @@
     <div class="upload-dialog-content">
       <h3 class="upload-dialog-title">上传设计稿</h3>
       <div class="upload-dialog-field">
-        <label class="upload-dialog-label" for="uploadScaleSelect">HTML 产出倍率</label>
+        <label class="upload-dialog-label" for="uploadScaleSelect">渲染预览倍率</label>
         <select class="upload-dialog-select" id="uploadScaleSelect">
-          <option value="1">1x — 按设计稿原始像素产出 HTML</option>
-          <option value="2">2x — 按设计稿 2x 像素产出 HTML</option>
+          <option value="1">1x — 按设计稿原始像素产出</option>
+          <option value="2">2x — 按设计稿 2x 像素产出</option>
         </select>
       </div>
       <div class="upload-dialog-field">
-        <span class="upload-dialog-label">输出格式</span>
-        <div class="upload-format-options">
+        <span class="upload-dialog-label">源码格式</span>
+        <div class="upload-format-options" id="uploadFormatOptions">
           <label class="upload-format-option">
-            <input type="checkbox" value="html" checked disabled />
+            <input type="radio" name="uploadFormat" value="html" checked />
             <span>HTML</span>
           </label>
           <label class="upload-format-option">
-            <input type="checkbox" value="react" id="uploadFormatReact" />
-            <span>React</span>
-          </label>
-          <label class="upload-format-option">
-            <input type="checkbox" value="vue" id="uploadFormatVue" />
+            <input type="radio" name="uploadFormat" value="vue" />
             <span>Vue</span>
           </label>
+          <label class="upload-format-option">
+            <input type="radio" name="uploadFormat" value="react" />
+            <span>React</span>
+          </label>
         </div>
+      </div>
+      <div class="upload-dialog-field" hidden>
+        <label class="upload-dialog-label" for="uploadComponentLibrarySelect">组件库</label>
+        <select class="upload-dialog-select" id="uploadComponentLibrarySelect">
+          <option value="">不使用组件库</option>
+        </select>
+        <div class="upload-dialog-hint" id="uploadComponentLibraryHint">仅 Vue/React 输出可选择同框架组件库</div>
+      </div>
+      <div class="upload-dialog-field">
+        <label class="upload-dialog-label" for="uploadSessionCount">并发 Session 数</label>
+        <input class="upload-dialog-input" type="number" id="uploadSessionCount" min="1" max="20" value="1" />
       </div>
       <div class="upload-dialog-field">
         <label class="upload-dialog-label">选择文件</label>
@@ -183,6 +192,38 @@
       <div class="upload-dialog-actions">
         <button class="upload-dialog-cancel" id="uploadDialogCancel" type="button">取消</button>
         <button class="upload-dialog-submit" id="uploadDialogSubmit" type="button" disabled>上传</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="upload-dialog component-library-dialog" id="componentLibraryDialog" hidden>
+    <div class="upload-dialog-content">
+      <h3 class="upload-dialog-title">组件库摘要</h3>
+      <div class="component-library-list" id="componentLibraryList"></div>
+      <div class="upload-dialog-field">
+        <label class="upload-dialog-label" for="componentLibraryFrameworkSelect">框架</label>
+        <select class="upload-dialog-select" id="componentLibraryFrameworkSelect">
+          <option value="vue">Vue</option>
+          <option value="react">React</option>
+        </select>
+      </div>
+      <div class="upload-dialog-field">
+        <label class="upload-dialog-label" for="componentLibrarySourceDirInput">本地代码库路径</label>
+        <input class="upload-dialog-input" id="componentLibrarySourceDirInput" placeholder="/path/to/component-library" />
+      </div>
+      <div class="upload-dialog-field" style="text-align:center;color:#888;font-size:12px;">— 本地代码库路径 和 Git URL 至少填写一个，都填时优先使用本地路径 —</div>
+      <div class="upload-dialog-field">
+        <label class="upload-dialog-label" for="componentLibraryUrlInput">Git URL</label>
+        <input class="upload-dialog-input" id="componentLibraryUrlInput" placeholder="https://github.com/org/repo.git" />
+      </div>
+      <label class="upload-dialog-check">
+        <input type="checkbox" id="componentLibraryForceInput" />
+        <span>同 ID 时覆盖已有组件库</span>
+      </label>
+      <div class="upload-dialog-hint" id="componentLibraryCompileStatus"></div>
+      <div class="upload-dialog-actions">
+        <button class="upload-dialog-cancel" id="componentLibraryDialogCancel" type="button">关闭</button>
+        <button class="upload-dialog-submit" id="componentLibraryCompileBtn" type="button">生成摘要</button>
       </div>
     </div>
   </dialog>

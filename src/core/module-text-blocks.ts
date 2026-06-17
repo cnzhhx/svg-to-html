@@ -1,23 +1,28 @@
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { capturePage, launchEdge } from "./cdp.js";
-import { runVisionLlm } from "../pipeline/llm-client.js";
+import { capturePage, evaluatePage, launchEdge } from "./cdp.js";
+import { areaOf, intersectionArea } from "./geometry.js";
 import type { Box, Region } from "./utils.js";
-import { writeJsonFile, writeTextFile } from "./utils.js";
+import { isRecord, parseSvgSize, writeTextFile } from "./utils.js";
 
 type ModuleTextBlock = {
   bboxIncludesIcon?: boolean;
   color?: string;
   confidence?: number;
+  geometrySource?: "semantic" | "svg-render-refined";
   id: string;
   kind?: string;
+  lineCount?: number;
+  lineRegions?: Box[];
+  lines?: Array<{ region: Box; text?: string }>;
   notes?: string;
+  renderedTextRegion?: Box;
   region: Box;
-  source?: "vision" | "ocr-fallback";
-  sourceOcrText?: string;
+  source?: "semantic";
+  sourceBlockId?: string;
+  sourceBlockText?: string;
   text: string;
   textRegion?: Box;
 };
@@ -27,97 +32,115 @@ type ModuleTextBlocksFile = {
   blocks: ModuleTextBlock[];
   coordinateSpace: "local";
   generatedAt: string;
-  generatedBy: "vision-text-extract" | "ocr-fallback";
+  generatedBy: "semantic-text-extract";
   moduleId: string;
   previewPath?: string;
   region: Region;
 };
 
-type OcrHint = {
+type SemanticTextHint = {
   bbox?: Box;
   color?: string;
   confidence?: number;
   id?: string;
+  lineCount?: number;
   role?: string;
   text?: string;
 };
 
-const readSvgOpenAttrs = async (svgPath: string) => {
-  const svg = await readFile(svgPath, "utf8");
-  const match = svg.match(/<svg\b([^>]*)>/i);
-  if (!match?.[1]) throw new Error(`Unable to locate <svg> root: ${svgPath}`);
-  return match[1];
-};
+const createSvgDomWrapper = ({
+  height,
+  svgMarkup,
+  width,
+}: {
+  height: number;
+  svgMarkup: string;
+  width: number;
+}) => `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html, body { margin: 0; width: ${width}px; height: ${height}px; overflow: hidden; background: transparent; }
+      svg { display: block; width: ${width}px; height: ${height}px; }
+    </style>
+  </head>
+  <body>
+    ${svgMarkup}
+  </body>
+</html>`;
 
-const readSvgTextPaintCandidates = async (svgPath: string): Promise<Array<{
-  box?: Box;
-  color: string;
-}>> => {
-  const svg = await readFile(svgPath, "utf8");
-  return [...svg.matchAll(/<(?:path|text|tspan|g)\b[^>]*>/gi)].flatMap((match) => {
-    const tag = match[0];
-    const fill = readSvgAttr(tag, "fill")?.trim();
-    if (!fill || fill === "none" || /^url\(/i.test(fill)) return [];
-    const d = readSvgAttr(tag, "d");
-    const numbers = d
-      ? [...d.matchAll(/-?\d+(?:\.\d+)?/g)].map((item) => Number(item[0]))
-      : [];
-    const points: Array<{ x: number; y: number }> = [];
-    for (let index = 0; index + 1 < numbers.length; index += 2) {
-      points.push({ x: numbers[index]!, y: numbers[index + 1]! });
-    }
-    const xs = points.map((point) => point.x).filter(Number.isFinite);
-    const ys = points.map((point) => point.y).filter(Number.isFinite);
-    const box =
-      xs.length && ys.length
-        ? {
-            height: Math.max(...ys) - Math.min(...ys),
-            width: Math.max(...xs) - Math.min(...xs),
-            x: Math.min(...xs),
-            y: Math.min(...ys),
-          }
-        : undefined;
-    return [{ box, color: fill }];
-  });
-};
-
-const readSvgAttr = (attrs: string, name: string) => {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = attrs.match(
-    new RegExp(`\\b${escaped}\\s*=\\s*(['"])(.*?)\\1`, "i"),
+const readSvgPaintCandidatesFromDom = async (
+  svgPath: string,
+  scale?: number,
+  port?: number,
+): Promise<Array<{ box: Box; color: string }>> => {
+  const safeScale = scale ?? 1;
+  const { height, width } = await parseSvgSize(svgPath, scale);
+  const svgMarkup = await readFile(svgPath, "utf8");
+  const wrapperPath = path.join(
+    path.dirname(svgPath),
+    ".svg-paint-candidates.html",
   );
-  return match?.[2];
-};
-
-const parseNumber = (value?: string) => {
-  const match = value?.match(/-?\d+(?:\.\d+)?/);
-  if (!match) return undefined;
-  const parsed = Number(match[0]);
-  return Number.isFinite(parsed) ? parsed : undefined;
-};
-
-const parseSvgSize = async (svgPath: string, scale = 1) => {
-  const attrs = await readSvgOpenAttrs(svgPath);
-  const width = parseNumber(readSvgAttr(attrs, "width"));
-  const height = parseNumber(readSvgAttr(attrs, "height"));
-  if (width && height) {
-    return {
-      width: Math.round(width * scale),
-      height: Math.round(height * scale),
-    };
+  await writeTextFile(
+    wrapperPath,
+    createSvgDomWrapper({ height, svgMarkup, width }),
+  );
+  const browser = port === undefined ? await launchEdge() : undefined;
+  const activePort = port ?? browser!.port;
+  try {
+    const candidates = await evaluatePage<
+      Array<{ box: Box; color: string }>
+    >({
+      deviceScaleFactor: scale,
+      expression: `(() => {
+        const svg = document.querySelector('svg');
+        if (!svg) return [];
+        const rootRect = svg.getBoundingClientRect();
+        const resourceSelector = "defs,mask,clipPath,pattern,linearGradient,radialGradient,filter,marker,symbol,style";
+        const candidateSelector = "path,text,tspan,g,rect,circle,ellipse,line,polyline,polygon";
+        const result = [];
+        for (const el of svg.querySelectorAll(candidateSelector)) {
+          if (el.closest(resourceSelector)) continue;
+          const fill = el.getAttribute('fill')?.trim();
+          if (!fill || fill === 'none' || /^url\\(/i.test(fill)) continue;
+          const rect = el.getBoundingClientRect();
+          if (!rect.width || !rect.height) continue;
+          result.push({
+            box: {
+              x: Number((rect.left - rootRect.left).toFixed(3)),
+              y: Number((rect.top - rootRect.top).toFixed(3)),
+              width: Number(rect.width.toFixed(3)),
+              height: Number(rect.height.toFixed(3)),
+            },
+            color: fill,
+          });
+        }
+        return result;
+      })()`,
+      port: activePort,
+      readyExpression: "true",
+      url: pathToFileURL(wrapperPath).href,
+      viewportHeight: height,
+      viewportWidth: width,
+    });
+    return candidates.map((candidate) => ({
+      box: {
+        x: Number((candidate.box.x / safeScale).toFixed(3)),
+        y: Number((candidate.box.y / safeScale).toFixed(3)),
+        width: Number((candidate.box.width / safeScale).toFixed(3)),
+        height: Number((candidate.box.height / safeScale).toFixed(3)),
+      },
+      color: candidate.color,
+    }));
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+    try {
+      await rm(wrapperPath);
+    } catch {}
   }
-  const viewBox = readSvgAttr(attrs, "viewBox")
-    ?.trim()
-    .split(/[\s,]+/)
-    .map(Number)
-    .filter(Number.isFinite);
-  if (viewBox && viewBox.length >= 4 && viewBox[2] && viewBox[3]) {
-    return {
-      width: Math.round(viewBox[2] * scale),
-      height: Math.round(viewBox[3] * scale),
-    };
-  }
-  throw new Error(`Unable to infer SVG size: ${svgPath}`);
 };
 
 const createSvgImageWrapper = ({
@@ -133,7 +156,7 @@ const createSvgImageWrapper = ({
   <head>
     <meta charset="UTF-8" />
     <style>
-      html, body { margin: 0; width: ${width}px; height: ${height}px; overflow: hidden; background: #000; }
+      html, body { margin: 0; width: ${width}px; height: ${height}px; overflow: hidden; background: transparent; }
       img { display: block; width: ${width}px; height: ${height}px; }
     </style>
   </head>
@@ -153,10 +176,12 @@ const renderModuleSvgPreview = async ({
   moduleDir,
   moduleSvgPath,
   scale,
+  port: externalPort,
 }: {
   moduleDir: string;
   moduleSvgPath: string;
   scale?: number;
+  port?: number;
 }) => {
   const { height, width } = await parseSvgSize(moduleSvgPath, scale);
   const wrapperPath = path.join(moduleDir, "module-text-source.html");
@@ -165,23 +190,24 @@ const renderModuleSvgPreview = async ({
     wrapperPath,
     createSvgImageWrapper({ height, svgPath: moduleSvgPath, width }),
   );
-  const browser = await launchEdge();
+  const browser = externalPort === undefined ? await launchEdge() : undefined;
+  const port = externalPort ?? browser!.port;
   try {
     await capturePage({
+      deviceScaleFactor: scale,
       outputPath: previewPath,
-      port: browser.port,
+      port,
       url: pathToFileURL(wrapperPath).href,
       viewportHeight: height,
       viewportWidth: width,
     });
   } finally {
-    await browser.close();
+    if (browser) {
+      await browser.close();
+    }
   }
   return { height, previewPath, width };
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const getNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -206,36 +232,239 @@ const readBox = (value: unknown): Box | undefined => {
 const readColor = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
 
-const areaOf = (box: Box) => Math.max(0, box.width) * Math.max(0, box.height);
+const roundedBox = (box: Box): Box => ({
+  height: Math.max(1, Math.round(box.height)),
+  width: Math.max(1, Math.round(box.width)),
+  x: Math.round(box.x),
+  y: Math.round(box.y),
+});
 
-const intersectionArea = (left: Box, right: Box) => {
-  const x1 = Math.max(left.x, right.x);
-  const y1 = Math.max(left.y, right.y);
-  const x2 = Math.min(left.x + left.width, right.x + right.width);
-  const y2 = Math.min(left.y + left.height, right.y + right.height);
-  return Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+const appendNote = (notes: string | undefined, note: string) =>
+  notes ? `${notes}; ${note}` : note;
+
+const refineTextRegionsFromSvgRender = async ({
+  blocks,
+  previewPath,
+  scale,
+  port: externalPort,
+}: {
+  blocks: ModuleTextBlock[];
+  previewPath: string;
+  scale?: number;
+  port?: number;
+}): Promise<ModuleTextBlock[]> => {
+  const safeScale = scale ?? 1;
+  const inputs = blocks.flatMap((block) => {
+    const seed = block.textRegion ?? block.region;
+    return seed
+      ? [
+          {
+            id: block.id,
+            seed: {
+              x: seed.x * safeScale,
+              y: seed.y * safeScale,
+              width: seed.width * safeScale,
+              height: seed.height * safeScale,
+            },
+          },
+        ]
+      : [];
+  });
+  if (!inputs.length) return blocks;
+
+  const browser = externalPort === undefined ? await launchEdge() : undefined;
+  const port = externalPort ?? browser!.port;
+  try {
+    const refined = await evaluatePage<
+      Array<{ box?: Box; id: string; refined: boolean }>
+    >({
+      deviceScaleFactor: scale,
+      expression: `(async () => {
+        const imageUrl = ${JSON.stringify(pathToFileURL(previewPath).href)};
+        const inputs = ${JSON.stringify(inputs)};
+        const image = await new Promise((resolve, reject) => {
+          const item = new Image();
+          item.onload = () => resolve(item);
+          item.onerror = () => reject(new Error('Unable to load text source image: ' + imageUrl));
+          item.src = imageUrl;
+        });
+        const imageWidth = Number(image.naturalWidth || image.width || 0);
+        const imageHeight = Number(image.naturalHeight || image.height || 0);
+        const canvas = document.createElement('canvas');
+        canvas.width = imageWidth;
+        canvas.height = imageHeight;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return inputs.map((input) => ({ id: input.id, refined: false }));
+        ctx.drawImage(image, 0, 0);
+        const data = ctx.getImageData(0, 0, imageWidth, imageHeight).data;
+        const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+        const median = (values) => {
+          if (!values.length) return 0;
+          values.sort((left, right) => left - right);
+          return values[Math.floor(values.length / 2)] ?? 0;
+        };
+        const percentile = (values, ratio) => {
+          if (!values.length) return 0;
+          values.sort((left, right) => left - right);
+          return values[Math.floor((values.length - 1) * ratio)] ?? 0;
+        };
+        const pixel = (x, y) => {
+          const index = (y * imageWidth + x) * 4;
+          return [data[index] ?? 0, data[index + 1] ?? 0, data[index + 2] ?? 0];
+        };
+        const colorDistance = (left, right) =>
+          Math.hypot(left[0] - right[0], left[1] - right[1], left[2] - right[2]);
+        const normalizeBox = (box) => {
+          const x = clamp(Math.floor(Number(box.x ?? 0)), 0, Math.max(0, imageWidth - 1));
+          const y = clamp(Math.floor(Number(box.y ?? 0)), 0, Math.max(0, imageHeight - 1));
+          const width = clamp(Math.ceil(Number(box.width ?? 0)), 1, imageWidth - x);
+          const height = clamp(Math.ceil(Number(box.height ?? 0)), 1, imageHeight - y);
+          return { x, y, width, height };
+        };
+        const expandBox = (box, padding) => {
+          const x = clamp(box.x - padding, 0, Math.max(0, imageWidth - 1));
+          const y = clamp(box.y - padding, 0, Math.max(0, imageHeight - 1));
+          const right = clamp(box.x + box.width + padding, x + 1, imageWidth);
+          const bottom = clamp(box.y + box.height + padding, y + 1, imageHeight);
+          return { x, y, width: right - x, height: bottom - y };
+        };
+        const estimateBackground = (box) => {
+          const red = [];
+          const green = [];
+          const blue = [];
+          const sample = (x, y) => {
+            const item = pixel(x, y);
+            red.push(item[0]);
+            green.push(item[1]);
+            blue.push(item[2]);
+          };
+          for (let x = box.x; x < box.x + box.width; x += 1) {
+            sample(x, box.y);
+            sample(x, box.y + box.height - 1);
+          }
+          for (let y = box.y + 1; y < box.y + box.height - 1; y += 1) {
+            sample(box.x, y);
+            sample(box.x + box.width - 1, y);
+          }
+          return [median(red), median(green), median(blue)];
+        };
+        const refine = (seedInput) => {
+          const seed = normalizeBox(seedInput);
+          const padding = Math.max(2, Math.min(8, Math.round(Math.max(seed.width, seed.height) * 0.18)));
+          const sampleBox = expandBox(seed, padding);
+          const background = estimateBackground(sampleBox);
+          const distances = [];
+          for (let y = seed.y; y < seed.y + seed.height; y += 1) {
+            for (let x = seed.x; x < seed.x + seed.width; x += 1) {
+              distances.push(colorDistance(pixel(x, y), background));
+            }
+          }
+          const threshold = Math.max(10, percentile(distances, 0.72) * 0.62);
+          let minX = Infinity;
+          let minY = Infinity;
+          let maxX = -Infinity;
+          let maxY = -Infinity;
+          let ink = 0;
+          for (let y = seed.y; y < seed.y + seed.height; y += 1) {
+            for (let x = seed.x; x < seed.x + seed.width; x += 1) {
+              if (colorDistance(pixel(x, y), background) < threshold) continue;
+              minX = Math.min(minX, x);
+              minY = Math.min(minY, y);
+              maxX = Math.max(maxX, x + 1);
+              maxY = Math.max(maxY, y + 1);
+              ink += 1;
+            }
+          }
+          const minInk = Math.max(4, Math.min(24, Math.round(seed.width * seed.height * 0.015)));
+          if (!Number.isFinite(minX) || ink < minInk) return undefined;
+          const box = {
+            height: Math.max(1, maxY - minY),
+            width: Math.max(1, maxX - minX),
+            x: minX,
+            y: minY,
+          };
+          const tooSmall =
+            box.width < Math.max(2, seed.width * 0.25) ||
+            box.height < Math.max(2, seed.height * 0.35);
+          return tooSmall ? undefined : box;
+        };
+        return inputs.map((input) => {
+          const box = refine(input.seed);
+          return box
+            ? { box, id: input.id, refined: true }
+            : { id: input.id, refined: false };
+        });
+      })()`,
+      port,
+      readyExpression: "true",
+      url: pathToFileURL(process.cwd()).href,
+      viewportHeight: 100,
+      viewportWidth: 100,
+    });
+
+    const refinedById = new Map(refined.map((item) => [item.id, item]));
+    return blocks.map((block) => {
+      const item = refinedById.get(block.id);
+      if (!item?.box) {
+        return {
+          ...block,
+          geometrySource: block.geometrySource ?? "semantic",
+        };
+      }
+      const rawBox = {
+        x: item.box.x / safeScale,
+        y: item.box.y / safeScale,
+        width: item.box.width / safeScale,
+        height: item.box.height / safeScale,
+      };
+      const box = roundedBox(rawBox);
+      return {
+        ...block,
+        geometrySource: "svg-render-refined" as const,
+        notes: appendNote(
+          block.notes,
+          "renderedTextRegion refined from SVG render foreground pixels",
+        ),
+        renderedTextRegion: box,
+      };
+    });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
 };
 
 const attachSvgColors = async ({
   blocks,
   moduleSvgPath,
+  scale,
+  port,
 }: {
   blocks: ModuleTextBlock[];
   moduleSvgPath: string;
+  scale?: number;
+  port?: number;
 }) => {
-  const candidates = await readSvgTextPaintCandidates(moduleSvgPath).catch(() => []);
+  const candidates = await readSvgPaintCandidatesFromDom(
+    moduleSvgPath,
+    scale,
+    port,
+  ).catch(() => []);
   if (!candidates.length) return blocks;
   const globalColor =
-    candidates.length === 1 || candidates.every((candidate) => candidate.color === candidates[0]?.color)
+    candidates.length === 1 ||
+    candidates.every((candidate) => candidate.color === candidates[0]?.color)
       ? candidates[0]?.color
       : undefined;
   return blocks.map((block) => {
     const region = block.textRegion ?? block.region;
     const matched = candidates
       .flatMap((candidate) => {
-        if (!candidate.box) return [];
         const overlap = intersectionArea(region, candidate.box);
-        const ratio = overlap / Math.max(1, Math.min(areaOf(region), areaOf(candidate.box)));
+        const ratio =
+          overlap /
+          Math.max(1, Math.min(areaOf(region), areaOf(candidate.box)));
         return [{ color: candidate.color, ratio }];
       })
       .filter((candidate) => candidate.ratio >= 0.2)
@@ -245,150 +474,48 @@ const attachSvgColors = async ({
   });
 };
 
-const stripJsonMarkdown = (raw: string) => {
-  const content = raw
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "");
-  const start = content.indexOf("{");
-  const end = content.lastIndexOf("}");
-  return start >= 0 && end > start ? content.slice(start, end + 1) : content;
-};
-
-const normalizeVisionBlocks = ({
-  fallbackOcrHints,
-  raw,
-}: {
-  fallbackOcrHints: OcrHint[];
-  raw: string;
-}) => {
-  const parsed = JSON.parse(stripJsonMarkdown(raw)) as unknown;
-  const blocks = isRecord(parsed) && Array.isArray(parsed["blocks"])
-    ? parsed["blocks"]
-    : [];
-  return blocks.flatMap((block, index): ModuleTextBlock[] => {
-    if (!isRecord(block)) return [];
-    const text = typeof block["text"] === "string" ? block["text"].trim() : "";
-    const region = readBox(block["textRegion"]) ?? readBox(block["region"]);
-    if (!text || !region) return [];
-    const sourceOcrId =
-      typeof block["sourceOcrId"] === "string" ? block["sourceOcrId"] : undefined;
-    const fallback = sourceOcrId
-      ? fallbackOcrHints.find((hint) => hint.id === sourceOcrId)
-      : fallbackOcrHints[index];
-    return [
-      {
-        bboxIncludesIcon: Boolean(block["bboxIncludesIcon"]),
-        color:
-          readColor(block["color"]) ??
-          readColor(block["textColor"]) ??
-          readColor(fallback?.color),
-        confidence: getNumber(block["confidence"]),
-        id:
-          typeof block["id"] === "string" && block["id"].trim()
-            ? block["id"].trim()
-            : fallback?.id ?? `vision-text-${index + 1}`,
-        kind: typeof block["kind"] === "string" ? block["kind"] : fallback?.role,
-        notes: typeof block["notes"] === "string" ? block["notes"] : undefined,
-        region: readBox(block["region"]) ?? region,
-        source: "vision",
-        sourceOcrText: fallback?.text,
-        text,
-        textRegion: readBox(block["textRegion"]) ?? region,
-      },
-    ];
-  });
-};
-
-const fallbackOcrBlocks = (ocrHints: OcrHint[]) =>
-  ocrHints.flatMap((hint, index): ModuleTextBlock[] => {
+const buildSemanticBlocks = (hints: SemanticTextHint[]) =>
+  hints.flatMap((hint, index): ModuleTextBlock[] => {
     const text = typeof hint.text === "string" ? hint.text.trim() : "";
     if (!text || !hint.bbox) return [];
     return [
       {
         color: hint.color,
-        confidence: typeof hint.confidence === "number" ? hint.confidence : undefined,
-        id: hint.id ?? `ocr-fallback-${index + 1}`,
+        confidence:
+          typeof hint.confidence === "number" ? hint.confidence : undefined,
+        geometrySource: "semantic",
+        id: hint.id ?? `semantic-text-${index + 1}`,
         kind: hint.role,
+        lineCount: hint.lineCount,
         region: hint.bbox,
-        source: "ocr-fallback",
-        sourceOcrText: text,
+        source: "semantic",
+        sourceBlockId: hint.id,
+        sourceBlockText: text,
         text,
         textRegion: hint.bbox,
       },
     ];
   });
 
-const buildPrompt = ({ ocrHints }: { ocrHints: OcrHint[] }) =>
-  `你是设计稿文本真值提取器。请只根据图片视觉内容确认模块里的可读 UI 文本，不要根据 OCR 盲猜。
-
-要求：
-- 输出严格 JSON，不要 markdown。
-- OCR hints 只是粗略定位和参考，可能经常错；如果图片里看起来不是 OCR 文本，以图片为准。
-- 如果一个 OCR 框包含 icon + 文本，请 text 只写真实文字，bboxIncludesIcon=true，并给出只包住文字的 textRegion。
-- 如果多个 OCR hints 分别对应同一行里的相邻文字块，请尽量按 OCR hint 拆成多个 blocks 并沿用各自 id；只有视觉上不可分或 OCR 分块明显错误时才合并。
-- 如果合并多个 OCR hints，请在 notes 里说明，并优先使用第一个相关 OCR id。
-- region/textRegion 坐标使用图片本地像素坐标，原点在左上角。
-- 不要输出装饰图标、logo 形状、头像、纯背景、无法辨认的乱码。
-- 对导航、按钮、标题、输入框 placeholder、标签等 UI 文案要尽量完整。
-- 如果能从图片中明确判断文字颜色，请输出 color，格式优先使用 #RRGGBB；不确定可省略。
-- confidence 取 0 到 1。
-
-OCR hints:
-${JSON.stringify(
-  ocrHints.map((hint) => ({
-    bbox: hint.bbox,
-    color: hint.color,
-    confidence: hint.confidence,
-    id: hint.id,
-    role: hint.role,
-    text: hint.text,
-  })),
-  null,
-  2,
-)}
-
-输出格式：
-{
-  "blocks": [
-    {
-      "id": "沿用最接近的 OCR id，或 text-1",
-      "sourceOcrId": "可选 OCR id",
-      "text": "确认后的真实文字",
-      "region": { "x": 0, "y": 0, "width": 100, "height": 30 },
-      "textRegion": { "x": 20, "y": 0, "width": 80, "height": 30 },
-      "color": "#18191C",
-      "bboxIncludesIcon": true,
-      "kind": "nav-label|title|button|placeholder|label|paragraph|other",
-      "confidence": 0.95,
-      "notes": "可选"
-    }
-  ]
-}`;
-
 const createModuleTextBlocks = async ({
   moduleDir,
   moduleId,
-  moduleOcrBlocksPath,
+  textHints,
   moduleSvgPath,
-  outputPath = path.join(moduleDir, "module-text-blocks.json"),
   region,
   scale,
 }: {
   moduleDir: string;
   moduleId: string;
-  moduleOcrBlocksPath: string;
+  textHints?: unknown;
   moduleSvgPath: string;
-  outputPath?: string;
   region: Region;
   scale?: number;
 }): Promise<ModuleTextBlocksFile> => {
-  const rawOcr = existsSync(moduleOcrBlocksPath)
-    ? (JSON.parse(await readFile(moduleOcrBlocksPath, "utf8")) as unknown)
-    : {};
-  const ocrHints = (
-    isRecord(rawOcr) && Array.isArray(rawOcr["blocks"]) ? rawOcr["blocks"] : []
-  ).flatMap((block): OcrHint[] => {
+  const rawHints = textHints ?? {};
+  const hints = (
+    isRecord(rawHints) && Array.isArray(rawHints["blocks"]) ? rawHints["blocks"] : []
+  ).flatMap((block): SemanticTextHint[] => {
     if (!isRecord(block)) return [];
     return [
       {
@@ -399,43 +526,38 @@ const createModuleTextBlocks = async ({
           readColor(block["foregroundColor"]),
         confidence: getNumber(block["confidence"]),
         id: typeof block["id"] === "string" ? block["id"] : undefined,
+        lineCount: getNumber(block["lineCount"]),
         role: typeof block["role"] === "string" ? block["role"] : undefined,
         text: typeof block["text"] === "string" ? block["text"] : undefined,
       },
     ];
   });
-  const { previewPath } = await renderModuleSvgPreview({
-    moduleDir,
-    moduleSvgPath,
-    scale,
-  });
-  let blocks: ModuleTextBlock[] = [];
-  let generatedBy: ModuleTextBlocksFile["generatedBy"] = "vision-text-extract";
-
+  const browser = await launchEdge();
   try {
-    const raw = await runVisionLlm({
-      imagePath: previewPath,
-      prompt: buildPrompt({ ocrHints }),
+    const { previewPath } = await renderModuleSvgPreview({
+      moduleDir,
+      moduleSvgPath,
+      scale,
+      port: browser.port,
     });
-    blocks = normalizeVisionBlocks({ fallbackOcrHints: ocrHints, raw });
-  } catch {
-    blocks = fallbackOcrBlocks(ocrHints);
-    generatedBy = "ocr-fallback";
-  }
-  blocks = await attachSvgColors({ blocks, moduleSvgPath });
+    let blocks = buildSemanticBlocks(hints);
+    blocks = await refineTextRegionsFromSvgRender({ blocks, previewPath, scale, port: browser.port });
+    blocks = await attachSvgColors({ blocks, moduleSvgPath, scale, port: browser.port });
 
-  const payload: ModuleTextBlocksFile = {
-    blockCount: blocks.length,
-    blocks,
-    coordinateSpace: "local",
-    generatedAt: new Date().toISOString(),
-    generatedBy,
-    moduleId,
-    previewPath,
-    region,
-  };
-  await writeJsonFile(outputPath, payload);
-  return payload;
+    const payload: ModuleTextBlocksFile = {
+      blockCount: blocks.length,
+      blocks,
+      coordinateSpace: "local",
+      generatedAt: new Date().toISOString(),
+      generatedBy: "semantic-text-extract",
+      moduleId,
+      previewPath,
+      region,
+    };
+    return payload;
+  } finally {
+    await browser.close();
+  }
 };
 
 export type { ModuleTextBlock, ModuleTextBlocksFile };

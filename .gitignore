@@ -5,9 +5,13 @@ dist/
 test/output/
 *.tsbuildinfo
 
+# Local environment files may contain secrets.
 .env
 .env.*
-config/model-provider.json
 
 .DS_Store
 **/.DS_Store
+.runtime-traces/
+
+# Local model provider config may contain API keys.
+config/model-provider.json

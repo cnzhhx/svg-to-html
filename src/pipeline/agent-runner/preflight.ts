@@ -1,22 +1,26 @@
 import path from "node:path";
 
 import { createContainerLayoutReport } from "../../core/container-layout.js";
-import { initializeDesignScaffold } from "../../core/design-scaffold.js";
+import { initializeDesignScaffolds } from "../../core/design-scaffold.js";
+import type { OutputFormat } from "../../core/output-target.js";
 import { buildSemiAutoScaffoldArtifacts } from "../../core/semi-auto-scaffold.js";
 import { createAdaptiveModulePlan } from "../../core/svg-vertical-modules.js";
 import { cropAllModuleSvgs } from "../../core/svg-vertical-modules/module-svg-crop.js";
 import { sessionStore } from "../../session-store.js";
 import { archiveSessionCheckpoint } from "./checkpoint.js";
+import { throwIfRunAborted } from "./run-control.js";
 
 const prepareStructuredSessionInputs = async ({
   artifactDir,
-  concurrencyLimit,
+  controller,
+  outputFormat,
   scale,
   sessionId,
   svgPath,
 }: {
   artifactDir: string;
-  concurrencyLimit: number;
+  controller: AbortController;
+  outputFormat: OutputFormat;
   scale?: number;
   sessionId: string;
   svgPath: string;
@@ -26,13 +30,15 @@ const prepareStructuredSessionInputs = async ({
     "[pipeline] step 1/6 resolve container-layout",
   );
   sessionStore.startWorkflowNode(sessionId, "analysis", {
-    detail: "正在解析 SVG 结构、OCR 和模块信息",
+    detail: "正在解析 SVG 结构和模块信息",
   });
 
+  throwIfRunAborted(controller);
   const containerLayout = await createContainerLayoutReport({
     inputPath: svgPath,
     scale,
   });
+  throwIfRunAborted(controller);
   if (containerLayout.visibilityPruning?.prunedNodeCount) {
     sessionStore.addLog(
       sessionId,
@@ -42,8 +48,9 @@ const prepareStructuredSessionInputs = async ({
 
   sessionStore.addLog(
     sessionId,
-    "[pipeline] step 2/6 build semi-auto scaffold (OCR + shell assets)",
+    "[pipeline] step 2/6 build semi-auto scaffold (shell assets)",
   );
+  throwIfRunAborted(controller);
   const semiAuto = await buildSemiAutoScaffoldArtifacts({
     containerLayoutReport: containerLayout.report,
     inputPath: svgPath,
@@ -51,26 +58,27 @@ const prepareStructuredSessionInputs = async ({
     svgLayoutReport: containerLayout.svgLayout,
   });
 
+  throwIfRunAborted(controller);
   sessionStore.addLog(sessionId, "[pipeline] step 3/6 scaffold initialize");
-  const design = await initializeDesignScaffold({
-    htmlContent: semiAuto.htmlScaffold,
+  const design = await initializeDesignScaffolds({
+    format: outputFormat,
     inputPath: svgPath,
+    renderContent: semiAuto.htmlScaffold,
     scale,
   });
 
+  throwIfRunAborted(controller);
   sessionStore.addLog(sessionId, "[pipeline] step 4/6 plan adaptive modules");
   const modulePlan = await createAdaptiveModulePlan({
     artifactDir,
-    concurrencyLimit,
     containerLayoutReport: containerLayout.report,
     inputPath: svgPath,
     minGap: 10,
-    ocrBlocks: semiAuto.ocrBlocks,
     scale,
-    shellManifest: semiAuto.shellManifest,
     svgLayoutReport: containerLayout.svgLayout,
   });
 
+  throwIfRunAborted(controller);
   sessionStore.addLog(
     sessionId,
     `[pipeline] step 5/6 crop module SVGs (${modulePlan.report.modules.length} module(s))`,
@@ -82,21 +90,23 @@ const prepareStructuredSessionInputs = async ({
     scale,
     sharedLayers: modulePlan.report.sharedLayers,
   });
-
-  const shellManifestPath = semiAuto.shellManifestPath;
-  const shellManifestEntries = semiAuto.shellManifest;
+  throwIfRunAborted(controller);
 
   // Publish all preflight artifacts before the first agent turn so resumed
-  // sessions can skip expensive OCR/layout work and still find every report.
+  // sessions can skip expensive analysis work and still find every report.
   const current = sessionStore.get(sessionId);
   if (current) {
     sessionStore.update(sessionId, {
       result: {
         ...current.result,
-        compareHtmlPath: design.compareHtmlPath,
+        compareEntryPath: design.outputTarget.compareEntryPath,
         containerLayoutPath: containerLayout.markdownPath,
-        htmlPath: design.htmlPath,
-        shellManifestPath,
+        designWidth: modulePlan.report.design.width,
+        designHeight: modulePlan.report.design.height,
+        outputTarget: design.outputTarget,
+        renderEntryPath: design.outputTarget.renderEntryPath,
+        sourceEntryPath: design.outputTarget.sourceEntryPath,
+        sourceStylePath: design.outputTarget.sourceStylePath,
         moduleCount: modulePlan.report.modules.length,
         moduleDiffRegionsPath: modulePlan.diffRegionsPath,
         modulePlanMode: modulePlan.report.mode,
@@ -104,14 +114,13 @@ const prepareStructuredSessionInputs = async ({
         modulePlanPath: modulePlan.jsonPath,
         modulePlanQualityMarkdownPath: modulePlan.qualityMarkdownPath,
         modulePlanQualityPath: modulePlan.qualityJsonPath,
-        moduleRegionsPath: modulePlan.regionsPath,
       },
     });
   }
 
   sessionStore.addLog(
     sessionId,
-    `[pipeline] analysis ready: container-recipes=${containerLayout.report.recipes.length}, shell-assets=${shellManifestEntries.length}, ocr-blocks=${semiAuto.ocrBlocks.length}`,
+    `[pipeline] analysis ready: container-recipes=${containerLayout.report.recipes.length}`,
   );
   sessionStore.addLog(
     sessionId,
@@ -141,27 +150,26 @@ const prepareStructuredSessionInputs = async ({
     note: "Structure analysis artifacts ready",
     metadata: {
       containerRecipeCount: containerLayout.report.recipes.length,
-      shellAssetCount: shellManifestEntries.length,
       moduleCount: modulePlan.report.modules.length,
       moduleMode: modulePlan.report.mode,
     },
     materials: [
       {
         kind: "file",
-        label: "HTML Scaffold",
-        sourcePath: design.htmlPath,
+        label: "Render Scaffold",
+        sourcePath: design.outputTarget.renderEntryPath,
+        optional: true,
+      },
+      {
+        kind: "file",
+        label: "Source Entry",
+        sourcePath: design.outputTarget.sourceEntryPath,
         optional: true,
       },
       {
         kind: "file",
         label: "Container Layout JSON",
         sourcePath: path.join(artifactDir, "container-layout.json"),
-        optional: true,
-      },
-      {
-        kind: "file",
-        label: "Shell Manifest",
-        sourcePath: shellManifestPath,
         optional: true,
       },
       {
@@ -198,10 +206,6 @@ const prepareStructuredSessionInputs = async ({
 
   return {
     design,
-    staticShells: {
-      assetDir: path.dirname(shellManifestPath),
-      manifest: shellManifestEntries,
-    },
   };
 };
 

@@ -1,11 +1,17 @@
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import { safeDecodeUri } from "../core/io.js";
-import { detectOcrSupport, runOcr, type OcrResult } from "../core/ocr.js";
 import type { Region } from "../core/utils.js";
-
-type JsonRecord = Record<string, unknown>;
+import { isRecord } from "../core/utils.js";
+import {
+  type ModuleOutputDiagnostic,
+} from "./module-output-contract.js";
+import {
+  isString,
+  normalizePathForCompare,
+  unique,
+} from "./module-merge/utils.js";
 
 type ModuleOutputAllowedAsset = {
   assetId?: null | string;
@@ -24,13 +30,13 @@ type ModuleOutputAllowedAsset = {
   jpegPath?: null | string;
   jpgPath?: null | string;
   kind?: null | string;
-  matchedOcrBlockIds?: string[];
+  matchedTextBlockIds?: string[];
   mediaType?: null | string;
   mimeType?: null | string;
   name?: null | string;
   path?: null | string;
   pngPath?: null | string;
-  overlapsOcrText?: boolean;
+  overlapsReadableText?: boolean;
   relativePath?: null | string;
   source?: null | string;
   sourcePath?: null | string;
@@ -50,18 +56,20 @@ type ModuleOutputDesign = {
 };
 
 type ModuleOutputPayload = {
-  fragmentCss: string;
-  fragmentHtml: string;
   manifest?: unknown;
   manifestRaw: string;
-  textLayoutRaw: string;
+  moduleCss: string;
+  previewFragmentHtml: string;
+  sourceDataRaw?: string;
+  sourceFragment?: string;
+  sourceFragmentLabel?: string;
+  sourceFragmentRaw?: string;
 };
 
 type ModuleOutputPolicy = {
   allowedAssets?: ModuleOutputAllowedAsset[];
   design?: ModuleOutputDesign;
-  generatedAssetOcr?: GeneratedBitmapAssetOcrResult[];
-  htmlPath?: string;
+  renderEntryPath?: string;
   moduleDir: string;
   moduleId: string;
   moduleRegion?: Region;
@@ -79,32 +87,8 @@ type GeneratedAssetDeclaration = {
   ref?: string;
 };
 
-type GeneratedBitmapAssetOcrLine = {
-  boundingBox: Region;
-  confidence: number;
-  text: string;
-};
-
-type GeneratedBitmapAssetOcrResult = {
-  error?: string;
-  fullText?: string;
-  imagePath?: string;
-  lines: GeneratedBitmapAssetOcrLine[];
-  outputPath?: string;
-  ref: string;
-  status: "checked" | "failed" | "missing" | "unsupported";
-};
-
 const SUPPORTED_MODULE_ASSET_EXTENSIONS = [
   ".svg",
-  ".png",
-  ".webp",
-  ".jpg",
-  ".jpeg",
-  ".avif",
-] as const;
-
-const GENERATED_BITMAP_OCR_EXTENSIONS = [
   ".png",
   ".webp",
   ".jpg",
@@ -119,29 +103,22 @@ const parsePositiveIntegerEnv = (name: string, fallback: number) => {
   return Number.isFinite(parsed) ? Math.max(1, Math.floor(parsed)) : fallback;
 };
 
-const MODULE_FRAGMENT_CSS_MAX_BYTES = parsePositiveIntegerEnv(
-  "MODULE_FRAGMENT_CSS_MAX_BYTES",
+const MODULE_CSS_MAX_BYTES = parsePositiveIntegerEnv(
+  "MODULE_CSS_MAX_BYTES",
   320_000,
 );
-const MODULE_FRAGMENT_CSS_MAX_GRADIENTS = parsePositiveIntegerEnv(
-  "MODULE_FRAGMENT_CSS_MAX_GRADIENTS",
+const MODULE_CSS_MAX_GRADIENTS = parsePositiveIntegerEnv(
+  "MODULE_CSS_MAX_GRADIENTS",
   80,
 );
-const MODULE_FRAGMENT_CSS_MAX_BOX_SHADOW_LAYERS = parsePositiveIntegerEnv(
-  "MODULE_FRAGMENT_CSS_MAX_BOX_SHADOW_LAYERS",
+const MODULE_CSS_MAX_BOX_SHADOW_LAYERS = parsePositiveIntegerEnv(
+  "MODULE_CSS_MAX_BOX_SHADOW_LAYERS",
   180,
 );
-const MODULE_FRAGMENT_CSS_MAX_POLYGON_POINTS = parsePositiveIntegerEnv(
-  "MODULE_FRAGMENT_CSS_MAX_POLYGON_POINTS",
+const MODULE_CSS_MAX_POLYGON_POINTS = parsePositiveIntegerEnv(
+  "MODULE_CSS_MAX_POLYGON_POINTS",
   160,
 );
-
-const isRecord = (value: unknown): value is JsonRecord =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isString = (value: unknown): value is string => typeof value === "string";
-
-const unique = <T>(items: T[]) => [...new Set(items)];
 
 const stripQueryHash = (value: string) => value.split(/[?#]/, 1)[0] ?? value;
 
@@ -149,9 +126,6 @@ const stripFileUrl = (value: string) =>
   value.startsWith("file://") ? value.slice("file://".length) : value;
 
 const normalizeSlashes = (value: string) => value.replaceAll("\\", "/");
-
-const sanitizeFileName = (value: string) =>
-  value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "asset";
 
 const cleanReference = (value: string) =>
   stripFileUrl(stripQueryHash(safeDecodeUri(value.trim())));
@@ -176,13 +150,6 @@ const isSupportedModuleAssetPath = (value: string) =>
     getReferenceExtension(
       value,
     ) as (typeof SUPPORTED_MODULE_ASSET_EXTENSIONS)[number],
-  );
-
-const isGeneratedBitmapAssetPath = (value: string) =>
-  GENERATED_BITMAP_OCR_EXTENSIONS.includes(
-    getReferenceExtension(
-      value,
-    ) as (typeof GENERATED_BITMAP_OCR_EXTENSIONS)[number],
   );
 
 const fileExists = async (filePath: string) => {
@@ -234,18 +201,45 @@ const collectMarkupAssetReferences = (content: string, source: string) => {
   return refs;
 };
 
+const JSON_ASSET_REFERENCE_KEYS = new Set([
+  "assetpath",
+  "avifpath",
+  "href",
+  "htmlref",
+  "jpegpath",
+  "jpgpath",
+  "path",
+  "pngpath",
+  "relativepath",
+  "src",
+  "sourcepath",
+  "svgpath",
+  "url",
+  "webppath",
+]);
+
+const isJsonAssetReferenceKey = (key: string) =>
+  JSON_ASSET_REFERENCE_KEYS.has(key.replace(/[-_\s]/g, "").toLowerCase());
+
 const collectJsonAssetReferences = (value: unknown, source: string) => {
   const refs: AssetReference[] = [];
-  const visit = (current: unknown) => {
+  const visit = (current: unknown, key?: string) => {
     if (Array.isArray(current)) {
-      current.forEach(visit);
+      current.forEach((item) => visit(item, key));
       return;
     }
     if (isRecord(current)) {
-      Object.values(current).forEach(visit);
+      Object.entries(current).forEach(([childKey, child]) =>
+        visit(child, childKey),
+      );
       return;
     }
-    if (isString(current) && isLocalAssetReference(current)) {
+    if (
+      key &&
+      isJsonAssetReferenceKey(key) &&
+      isString(current) &&
+      isLocalAssetReference(current)
+    ) {
       refs.push({ ref: current, source });
     }
   };
@@ -281,13 +275,13 @@ const findOriginalSvgReference = (content: string, originalRefs: string[]) => {
 const addAllowedReferenceVariants = ({
   absolutePaths,
   baseDirs = [],
-  htmlPath,
+  renderEntryPath,
   rawPath,
   strings,
 }: {
   absolutePaths: Set<string>;
   baseDirs?: string[];
-  htmlPath?: string;
+  renderEntryPath?: string;
   rawPath: string;
   strings: Set<string>;
 }) => {
@@ -311,9 +305,9 @@ const addAllowedReferenceVariants = ({
       strings.add(normalizeReferenceString(`/${repoRelative}`));
     }
 
-    if (htmlPath) {
+    if (renderEntryPath) {
       const relativeFromHtml = normalizeSlashes(
-        path.relative(path.dirname(htmlPath), cleaned),
+        path.relative(path.dirname(renderEntryPath), cleaned),
       );
       strings.add(normalizeReferenceString(relativeFromHtml));
       strings.add(normalizeReferenceString(`./${relativeFromHtml}`));
@@ -326,9 +320,11 @@ const addAllowedReferenceVariants = ({
     absolutePaths.add(normalizeAbsolutePath(path.resolve(baseDir, cleaned)));
   }
 
-  if (htmlPath && !cleaned.startsWith("/")) {
+  if (renderEntryPath && !cleaned.startsWith("/")) {
     absolutePaths.add(
-      normalizeAbsolutePath(path.resolve(path.dirname(htmlPath), cleaned)),
+      normalizeAbsolutePath(
+        path.resolve(path.dirname(renderEntryPath), cleaned),
+      ),
     );
   }
 };
@@ -352,8 +348,8 @@ const getAllowedAssetPathValues = (asset: ModuleOutputAllowedAsset) =>
 const buildAllowedLookup = ({
   allowedAssets = [],
   baseDirs = [],
-  htmlPath,
-}: Pick<ModuleOutputPolicy, "allowedAssets" | "htmlPath"> & {
+  renderEntryPath,
+}: Pick<ModuleOutputPolicy, "allowedAssets" | "renderEntryPath"> & {
   baseDirs?: string[];
 }) => {
   const strings = new Set<string>();
@@ -364,7 +360,7 @@ const buildAllowedLookup = ({
       addAllowedReferenceVariants({
         absolutePaths,
         baseDirs,
-        htmlPath,
+        renderEntryPath,
         rawPath,
         strings,
       });
@@ -376,12 +372,12 @@ const buildAllowedLookup = ({
 
 const isAllowedAssetReference = ({
   allowedLookup,
-  htmlPath,
+  renderEntryPath,
   moduleDir,
   ref,
 }: {
   allowedLookup: ReturnType<typeof buildAllowedLookup>;
-  htmlPath?: string;
+  renderEntryPath?: string;
   moduleDir?: string;
   ref: string;
 }) => {
@@ -394,10 +390,12 @@ const isAllowedAssetReference = ({
     return allowedLookup.absolutePaths.has(normalizeAbsolutePath(cleaned));
   }
 
-  if (htmlPath && !cleaned.startsWith("/")) {
+  if (renderEntryPath && !cleaned.startsWith("/")) {
     if (
       allowedLookup.absolutePaths.has(
-        normalizeAbsolutePath(path.resolve(path.dirname(htmlPath), cleaned)),
+        normalizeAbsolutePath(
+          path.resolve(path.dirname(renderEntryPath), cleaned),
+        ),
       )
     ) {
       return true;
@@ -441,12 +439,9 @@ const getAssetBox = (asset: ModuleOutputAllowedAsset) =>
 const getGeneratedAssetRef = (asset: ModuleOutputAllowedAsset) =>
   getAllowedAssetPathValues(asset).find(isSupportedModuleAssetPath);
 
-const normalizePathForContainment = (value: string) =>
-  normalizeSlashes(path.resolve(value)).toLowerCase();
-
 const isPathInside = (candidate: string, parent: string) => {
-  const normalizedCandidate = normalizePathForContainment(candidate);
-  const normalizedParent = normalizePathForContainment(parent);
+  const normalizedCandidate = normalizePathForCompare(candidate);
+  const normalizedParent = normalizePathForCompare(parent);
   return (
     normalizedCandidate === normalizedParent ||
     normalizedCandidate.startsWith(`${normalizedParent}/`)
@@ -454,11 +449,11 @@ const isPathInside = (candidate: string, parent: string) => {
 };
 
 const resolveReferenceCandidates = ({
-  htmlPath,
+  renderEntryPath,
   moduleDir,
   ref,
 }: {
-  htmlPath?: string;
+  renderEntryPath?: string;
   moduleDir?: string;
   ref: string;
 }) => {
@@ -470,70 +465,68 @@ const resolveReferenceCandidates = ({
   return unique(
     [
       moduleDir ? path.resolve(moduleDir, cleaned) : undefined,
-      htmlPath ? path.resolve(path.dirname(htmlPath), cleaned) : undefined,
+      renderEntryPath
+        ? path.resolve(path.dirname(renderEntryPath), cleaned)
+        : undefined,
     ].filter(isString),
   );
 };
 
 const isModuleLocalAssetReference = ({
-  htmlPath,
+  renderEntryPath,
   moduleDir,
   ref,
 }: {
-  htmlPath?: string;
+  renderEntryPath?: string;
   moduleDir: string;
   ref: string;
 }) => {
   if (!isLocalAssetReference(ref)) return false;
   const assetDir = path.join(moduleDir, MODULE_LOCAL_ASSET_DIR);
-  return resolveReferenceCandidates({ htmlPath, moduleDir, ref }).some(
+  return resolveReferenceCandidates({ renderEntryPath, moduleDir, ref }).some(
     (candidate) => isPathInside(candidate, assetDir),
   );
 };
 
-const collectGeneratedAssetDeclarations = (
-  manifest: unknown,
-): GeneratedAssetDeclaration[] => {
-  if (!isRecord(manifest)) return [];
-  const candidates = [
-    manifest.generatedAssets,
-    manifest.producedAssets,
-    manifest.localAssets,
-    manifest.moduleAssets,
-  ];
-  return candidates.filter(Array.isArray).flatMap((items) =>
-    items.filter(isRecord).map((raw) => {
-      const asset = raw as ModuleOutputAllowedAsset;
-      return {
-        box: getAssetBox(asset),
-        raw: asset,
-        ref: getGeneratedAssetRef(asset),
-      } satisfies GeneratedAssetDeclaration;
-    }),
-  );
+const moduleLocalAssetReferenceExists = async ({
+  renderEntryPath,
+  moduleDir,
+  ref,
+}: {
+  renderEntryPath?: string;
+  moduleDir: string;
+  ref: string;
+}) => {
+  if (!isLocalAssetReference(ref)) return false;
+  const assetDir = path.join(moduleDir, MODULE_LOCAL_ASSET_DIR);
+  for (const candidate of resolveReferenceCandidates({
+    renderEntryPath,
+    moduleDir,
+    ref,
+  })) {
+    if (isPathInside(candidate, assetDir) && await fileExists(candidate)) {
+      return true;
+    }
+  }
+  return false;
 };
 
-const flattenOcrResult = (
-  ocrResult: OcrResult,
-): GeneratedBitmapAssetOcrLine[] =>
-  ocrResult.observations.flatMap((observation) =>
-    observation.lines.flatMap((line) => {
-      const text = line.text.trim();
-      if (!text) return [];
-      return [
-        {
-          boundingBox: {
-            height: line.boundingBox.height,
-            width: line.boundingBox.width,
-            x: line.boundingBox.x,
-            y: line.boundingBox.y,
-          },
-          confidence: line.confidence,
-          text,
-        } satisfies GeneratedBitmapAssetOcrLine,
-      ];
-    }),
-  );
+const collectGeneratedAssetDeclarations = (
+  _manifest: unknown,
+  allowedAssets?: ModuleOutputAllowedAsset[],
+): GeneratedAssetDeclaration[] => {
+  return (allowedAssets ?? []).flatMap((asset) => {
+    const ref = getGeneratedAssetRef(asset);
+    if (!ref) return [];
+    return [
+      {
+        box: getAssetBox(asset),
+        raw: asset,
+        ref,
+      } satisfies GeneratedAssetDeclaration,
+    ];
+  });
+};
 
 const resolveGeneratedBitmapAssetPath = async ({
   policy,
@@ -544,7 +537,7 @@ const resolveGeneratedBitmapAssetPath = async ({
 }) => {
   const assetDir = path.join(policy.moduleDir, MODULE_LOCAL_ASSET_DIR);
   const candidates = resolveReferenceCandidates({
-    htmlPath: policy.htmlPath,
+    renderEntryPath: policy.renderEntryPath,
     moduleDir: policy.moduleDir,
     ref,
   }).filter((candidate) => isPathInside(candidate, assetDir));
@@ -553,78 +546,6 @@ const resolveGeneratedBitmapAssetPath = async ({
     if (await fileExists(candidate)) return candidate;
   }
   return candidates[0];
-};
-
-const collectGeneratedBitmapAssetOcr = async ({
-  declarations,
-  policy,
-}: {
-  declarations: GeneratedAssetDeclaration[];
-  policy: ModuleOutputPolicy;
-}): Promise<GeneratedBitmapAssetOcrResult[]> => {
-  if (policy.generatedAssetOcr) return policy.generatedAssetOcr;
-
-  const ocrSupport = detectOcrSupport();
-  const bitmapDeclarations = declarations.filter(
-    (declaration) =>
-      declaration.ref !== undefined &&
-      isGeneratedBitmapAssetPath(declaration.ref),
-  );
-  if (!bitmapDeclarations.length) return [];
-
-  const outputDir = path.join(policy.moduleDir, ".policy-ocr");
-  await mkdir(outputDir, { recursive: true });
-
-  return Promise.all(
-    bitmapDeclarations.map(async (declaration, index) => {
-      const ref = declaration.ref!;
-      const imagePath = await resolveGeneratedBitmapAssetPath({ policy, ref });
-      if (!imagePath || !(await fileExists(imagePath))) {
-        return {
-          lines: [],
-          ref,
-          status: "missing",
-        } satisfies GeneratedBitmapAssetOcrResult;
-      }
-
-      if (!ocrSupport.available) {
-        return {
-          imagePath,
-          lines: [],
-          ref,
-          status: "unsupported",
-        } satisfies GeneratedBitmapAssetOcrResult;
-      }
-
-      const outputPath = path.join(
-        outputDir,
-        `${String(index + 1).padStart(2, "0")}-${sanitizeFileName(path.basename(ref))}.json`,
-      );
-      try {
-        await runOcr({ imagePath, outputPath });
-        const result = JSON.parse(
-          await readFile(outputPath, "utf8"),
-        ) as OcrResult;
-        return {
-          fullText: result.fullText,
-          imagePath,
-          lines: flattenOcrResult(result),
-          outputPath,
-          ref,
-          status: "checked",
-        } satisfies GeneratedBitmapAssetOcrResult;
-      } catch (error) {
-        return {
-          error: error instanceof Error ? error.message : String(error),
-          imagePath,
-          lines: [],
-          outputPath,
-          ref,
-          status: "failed",
-        } satisfies GeneratedBitmapAssetOcrResult;
-      }
-    }),
-  );
 };
 
 const generatedDeclarationsToAllowedAssets = (
@@ -637,79 +558,6 @@ const generatedDeclarationsToAllowedAssets = (
     relativePath: declaration.raw.relativePath ?? declaration.ref,
     source: declaration.raw.source ?? "moduleGenerated",
   }));
-
-const getBoolean = (value: unknown) =>
-  typeof value === "boolean" ? value : undefined;
-
-const normalizeOcrText = (value: string) =>
-  value.replace(/\s+/g, "").replace(/[^\p{L}\p{N}]/gu, "");
-
-const isReadableOcrLine = (line: GeneratedBitmapAssetOcrLine) => {
-  const normalized = normalizeOcrText(line.text);
-  if (!normalized) return false;
-  if (line.confidence < 0.35 && normalized.length < 4) return false;
-  return normalized.length >= 2 || /[\p{Script=Han}]/u.test(normalized);
-};
-
-const getAssetDescriptor = (asset: ModuleOutputAllowedAsset) =>
-  [
-    asset.assetName,
-    asset.name,
-    asset.assetRole,
-    asset.assetType,
-    asset.kind,
-    asset.type,
-    asset.category,
-    asset.source,
-    asset.description,
-    asset.reason,
-    asset.textTreatment,
-  ]
-    .filter(isString)
-    .join(" ")
-    .toLowerCase();
-
-const TEXT_SCRUBBING_DESCRIPTOR_RE =
-  /\b(?:blurred|scrubbed|redacted|pixel[-_\s]?masked|mosaic(?:ked)?|masked\s+and\s+rebuilt|removed\/masked)\b|(?:文字|文本|ocr|ordinary|label|stat)s?.{0,36}\b(?:blurred|scrubbed|redacted|pixel[-_\s]?masked|mosaic(?:ked)?|masked)\b|(?:模糊|打码|马赛克|遮盖|遮住|抹掉|去除).{0,24}(?:文字|文本|ocr)|(?:文字|文本|ocr).{0,24}(?:模糊|打码|马赛克|遮盖|遮住|抹掉|去除)/i;
-
-const descriptorDeclaresTextScrubbing = (descriptor: string) =>
-  TEXT_SCRUBBING_DESCRIPTOR_RE.test(descriptor);
-
-const getTextTreatmentFlags = (asset: ModuleOutputAllowedAsset) => {
-  const textTreatment = String(asset.textTreatment ?? "").toLowerCase();
-  const declaresNoOrdinaryText =
-    /\b(?:no[-_\s]?ordinary[-_\s]?text|no[-_\s]?readable[-_\s]?text|ocr[-_\s]?checked[-_\s]?no[-_\s]?ordinary[-_\s]?text)\b/i.test(
-      textTreatment,
-    ) ||
-    /\b(?:ordinary|video[-_\s]?ui|play|comment|time|metric)s?\b[\s\S]*\b(?:removed|rebuilt|recreated)\b[\s\S]*\bhtml\b/i.test(
-      textTreatment,
-    );
-  const declaresPlainText =
-    !declaresNoOrdinaryText &&
-    /\b(?:ordinary|plain|body|paragraph|editable|dynamic|html-text|real-text)\b/i.test(
-      textTreatment,
-    );
-  const declaresStylizedText =
-    /\b(?:stylized|artistic|intertwined|fused|logo|brand|icon-text|decorative|lettering|cover|thumbnail|artwork|broadcast|atomic-svg-node-visual-text-asset)\b/i.test(
-      textTreatment,
-    );
-
-  return { declaresNoOrdinaryText, declaresPlainText, declaresStylizedText };
-};
-
-const intersectsArea = (left: Region, right: Region) => {
-  const x1 = Math.max(left.x, right.x);
-  const y1 = Math.max(left.y, right.y);
-  const x2 = Math.min(left.x + left.width, right.x + right.width);
-  const y2 = Math.min(left.y + left.height, right.y + right.height);
-  return Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-};
-
-const getModuleCoverage = (assetBox: Region, moduleRegion?: Region) => {
-  if (!moduleRegion) return undefined;
-  const moduleArea = Math.max(1, moduleRegion.width * moduleRegion.height);
-  return intersectsArea(assetBox, moduleRegion) / moduleArea;
-};
 
 const collectGeneratedAssetIssues = async ({
   declarations,
@@ -730,7 +578,7 @@ const collectGeneratedAssetIssues = async ({
     const ref = declaration.ref;
     if (!ref) {
       issues.push(
-        `${policy.moduleId}: manifest.generatedAssets[${index}] must declare a local asset path/ref`,
+        `${policy.moduleId}: generatedAssets[${index}] must declare a local asset path/ref`,
       );
       continue;
     }
@@ -743,7 +591,7 @@ const collectGeneratedAssetIssues = async ({
 
     if (
       !resolveReferenceCandidates({
-        htmlPath: policy.htmlPath,
+        renderEntryPath: policy.renderEntryPath,
         moduleDir: policy.moduleDir,
         ref,
       }).some((candidate) => isPathInside(candidate, assetDir))
@@ -756,87 +604,14 @@ const collectGeneratedAssetIssues = async ({
     const assetPath = await resolveGeneratedBitmapAssetPath({ policy, ref });
     if (!assetPath || !(await fileExists(assetPath))) {
       issues.push(
-        `${policy.moduleId}: generated asset "${label}" is declared in manifest.generatedAssets but the file does not exist: ${ref}`,
+        `${policy.moduleId}: generated asset "${label}" is declared in generatedAssets but the file does not exist: ${ref}`,
       );
     }
 
     const box = declaration.box;
     if (!box) {
       issues.push(
-        `${policy.moduleId}: generated asset "${label}" must include absolute position box metadata for OCR/layout review`,
-      );
-    }
-
-    const descriptor = getAssetDescriptor(declaration.raw);
-    const declaresAtomicSvgNodeVisualText =
-      /\b(?:atomic-svg-node-visual-text-asset|single[-_\s]?svg[-_\s]?node|module[-_\s]?svg[-_\s]?embedded[-_\s]?image|module[-_\s]?svg[-_\s]?node|embedded[-_\s]?image|cover|thumbnail|logo|icon)\b/i.test(
-        descriptor,
-      );
-    if (descriptorDeclaresTextScrubbing(descriptor)) {
-      issues.push(
-        `${policy.moduleId}: generated asset "${label}" declares ordinary text was blurred/scrubbed/masked before reuse; do not use redacted or mosaic text assets. Crop a clean visual asset, split the shell into CSS/HTML, or keep the whole readable text as real DOM.`,
-      );
-    }
-
-    const containsText =
-      getBoolean(declaration.raw.containsText) ??
-      getBoolean(declaration.raw.hasText) ??
-      getBoolean(declaration.raw.ocrTextDetected);
-    const { declaresPlainText, declaresStylizedText } = getTextTreatmentFlags(
-      declaration.raw,
-    );
-    if (
-      (containsText || declaresPlainText) &&
-      !declaresStylizedText &&
-      !declaresAtomicSvgNodeVisualText
-    ) {
-      issues.push(
-        `${policy.moduleId}: generated asset "${label}" appears to contain ordinary readable text; use HTML text unless the text is stylized/intertwined and declare textTreatment`,
-      );
-    }
-
-    if (ref && isGeneratedBitmapAssetPath(ref)) {
-      const ocrResult = policy.generatedAssetOcr?.find(
-        (result) =>
-          normalizeReferenceString(result.ref) ===
-          normalizeReferenceString(ref),
-      );
-      if (!ocrResult) {
-        issues.push(
-          `${policy.moduleId}: generated bitmap asset "${label}" must be OCR-checked before it can be accepted: ${ref}`,
-        );
-      } else if (ocrResult.status !== "checked") {
-        issues.push(
-          `${policy.moduleId}: generated bitmap asset "${label}" OCR ${ocrResult.status}${ocrResult.error ? ` (${ocrResult.error})` : ""}: ${ref}`,
-        );
-      } else {
-        const readableLines = ocrResult.lines.filter(isReadableOcrLine);
-        if (
-          readableLines.length &&
-          !declaresStylizedText &&
-          !declaresAtomicSvgNodeVisualText
-        ) {
-          const sample = readableLines
-            .slice(0, 3)
-            .map((line) => line.text.trim())
-            .join(" / ");
-          issues.push(
-            `${policy.moduleId}: generated bitmap asset "${label}" OCR detected readable text "${sample}"; ordinary text must be HTML unless textTreatment declares stylized/intertwined/logo`,
-          );
-        }
-      }
-    }
-
-    const coverage = box
-      ? getModuleCoverage(box, policy.moduleRegion)
-      : undefined;
-    const hasLargeAssetIntent =
-      /\b(?:photo|raster|bitmap|image|texture|illustration|cover|pattern|background|backdrop|underlay|logo|icon|visual-asset)\b/i.test(
-        descriptor,
-      );
-    if (coverage !== undefined && coverage >= 0.92 && !hasLargeAssetIntent) {
-      issues.push(
-        `${policy.moduleId}: generated asset "${label}" covers ${(coverage * 100).toFixed(1)}% of the module without a concrete visual asset role; avoid whole-module image fallback`,
+        `${policy.moduleId}: generated asset "${label}" must include absolute position box metadata for layout review`,
       );
     }
   }
@@ -887,15 +662,17 @@ const collectForbiddenStrategyIssues = ({
 };
 
 const collectInlineSvgIssues = ({
-  fragmentHtml,
+  content,
+  label,
   moduleId,
 }: {
-  fragmentHtml: string;
+  content: string;
+  label: string;
   moduleId: string;
 }) =>
-  /<svg\b/i.test(fragmentHtml)
+  /<svg\b/i.test(content)
     ? [
-        `${moduleId}: fragment.html contains inline <svg>; final render integrity forbids inline SVG, so use CSS/HTML shapes or write a bounded local asset file and reference it`,
+        `${moduleId}: ${label} contains inline <svg>; final render integrity forbids inline SVG, so use CSS/HTML shapes or write a bounded local asset file and reference it`,
       ]
     : [];
 
@@ -913,6 +690,105 @@ const collectDataImageIssues = ({
         ]
       : [],
   );
+
+const collectSourceFragmentBoundaryIssues = ({
+  content,
+  label,
+  moduleId,
+}: {
+  content: string;
+  label: string;
+  moduleId: string;
+}) => {
+  const issues: string[] = [];
+  if (label === "source.fragment.jsx") {
+    const forbiddenPatterns: Array<[RegExp, string]> = [
+      [/^\s*import\b/m, "import statements"],
+      [/^\s*export\b/m, "export statements"],
+      [/\b(?:function|class)\s+[A-Z][A-Za-z0-9_]*/m, "component declarations"],
+      [/\breturn\s*\(/m, "return wrappers"],
+      [/\b(?:ReactDOM|createRoot)\b/m, "React mount code"],
+    ];
+    for (const [pattern, reason] of forbiddenPatterns) {
+      if (pattern.test(content)) {
+        issues.push(
+          `${moduleId}: ${label} contains ${reason}; it must be a JSX child fragment that the host can embed directly`,
+        );
+      }
+    }
+  }
+
+  if (label === "source.fragment.vue.html") {
+    const forbiddenPatterns: Array<[RegExp, string]> = [
+      [/<\/?template\b/i, "a <template> wrapper"],
+      [/<\/?script\b/i, "script blocks"],
+      [/<\/?style\b/i, "style blocks"],
+      [/\bexport\s+default\b/i, "export default"],
+    ];
+    for (const [pattern, reason] of forbiddenPatterns) {
+      if (pattern.test(content)) {
+        issues.push(
+          `${moduleId}: ${label} contains ${reason}; it must be a Vue template body fragment that the host can embed directly`,
+        );
+      }
+    }
+  }
+
+  return unique(issues);
+};
+
+const collectFrameworkInlineDataIssues = ({
+  content,
+  label,
+  moduleId,
+}: {
+  content: string;
+  label: string;
+  moduleId: string;
+}) => {
+  const issues: string[] = [];
+  if (label === "source.fragment.vue.html") {
+    for (const match of content.matchAll(
+      /\B:([A-Za-z_][\w:-]*)\s*=\s*(["'])([\s\S]*?)\2/g,
+    )) {
+      const prop = (match[1] ?? "").toLowerCase();
+      const value = (match[3] ?? "").trim();
+      if (prop === "style" || prop === "class") continue;
+      if (/^[\[{]/.test(value) && value.length > 24) {
+        issues.push(
+          `${moduleId}: ${label} inlines structured data in bound prop ":${match[1]}"; put arrays/objects/state in source-data.json and bind to the generated variable`,
+        );
+      }
+    }
+    for (const match of content.matchAll(/\bv-for\s*=\s*(["'])([\s\S]*?)\1/g)) {
+      const value = (match[2] ?? "").trim();
+      if (/\bin\s*[\[{]/.test(value) && value.length > 24) {
+        issues.push(
+          `${moduleId}: ${label} inlines structured data in v-for; put the collection in source-data.json and iterate over the generated variable`,
+        );
+      }
+    }
+  }
+  if (label === "source.fragment.jsx") {
+    for (const match of content.matchAll(
+      /\b([A-Za-z_][\w]*)\s*=\s*\{\s*([\[{])[\s\S]*?\}/g,
+    )) {
+      const prop = (match[1] ?? "").toLowerCase();
+      if (prop === "style" || prop === "classname" || prop === "class") {
+        continue;
+      }
+      issues.push(
+        `${moduleId}: ${label} inlines structured data in prop "${match[1]}"; put arrays/objects/state in source-data.json and bind to the generated variable`,
+      );
+    }
+    if (/\{\s*\[[\s\S]{24,}?\]\s*\.map\s*\(/.test(content)) {
+      issues.push(
+        `${moduleId}: ${label} maps over an inline array; put the collection in source-data.json and map over the generated variable`,
+      );
+    }
+  }
+  return unique(issues);
+};
 
 const splitTopLevelCssList = (value: string) => {
   const items: string[] = [];
@@ -978,45 +854,45 @@ const collectFullBleedGradientBlocks = (css: string) => {
 };
 
 const collectCssComplexDrawingIssues = ({
-  fragmentCss,
+  moduleCss,
   moduleId,
 }: {
-  fragmentCss: string;
+  moduleCss: string;
   moduleId: string;
 }) => {
   const issues: string[] = [];
-  const cssBytes = Buffer.byteLength(fragmentCss, "utf8");
+  const cssBytes = Buffer.byteLength(moduleCss, "utf8");
   const gradientCount =
-    fragmentCss.match(/(?:repeating-)?(?:linear|radial|conic)-gradient\(/gi)
+    moduleCss.match(/(?:repeating-)?(?:linear|radial|conic)-gradient\(/gi)
       ?.length ?? 0;
-  const boxShadowLayers = countCssBoxShadowLayers(fragmentCss);
-  const polygonPoints = countCssPolygonPoints(fragmentCss);
+  const boxShadowLayers = countCssBoxShadowLayers(moduleCss);
+  const polygonPoints = countCssPolygonPoints(moduleCss);
 
-  if (cssBytes > MODULE_FRAGMENT_CSS_MAX_BYTES) {
+  if (cssBytes > MODULE_CSS_MAX_BYTES) {
     issues.push(
-      `${moduleId}: fragment.css is ${cssBytes.toLocaleString("en-US")} bytes; this usually means CSS is drawing complex bitmap/vector art instead of using bounded local assets`,
+      `${moduleId}: module.css is ${cssBytes.toLocaleString("en-US")} bytes; this usually means CSS is drawing complex bitmap/vector art instead of using bounded local assets`,
     );
   }
-  if (gradientCount > MODULE_FRAGMENT_CSS_MAX_GRADIENTS) {
+  if (gradientCount > MODULE_CSS_MAX_GRADIENTS) {
     issues.push(
-      `${moduleId}: fragment.css uses ${gradientCount} CSS gradients; use bitmap/vector assets for complex visual texture/cover art instead of gradient mosaics`,
+      `${moduleId}: module.css uses ${gradientCount} CSS gradients; use bitmap/vector assets for complex visual texture/cover art instead of gradient mosaics`,
     );
   }
-  if (boxShadowLayers > MODULE_FRAGMENT_CSS_MAX_BOX_SHADOW_LAYERS) {
+  if (boxShadowLayers > MODULE_CSS_MAX_BOX_SHADOW_LAYERS) {
     issues.push(
-      `${moduleId}: fragment.css uses ${boxShadowLayers} box-shadow layers; do not recreate images as CSS pixel/mosaic layers`,
+      `${moduleId}: module.css uses ${boxShadowLayers} box-shadow layers; do not recreate images as CSS pixel/mosaic layers`,
     );
   }
-  if (polygonPoints > MODULE_FRAGMENT_CSS_MAX_POLYGON_POINTS) {
+  if (polygonPoints > MODULE_CSS_MAX_POLYGON_POINTS) {
     issues.push(
-      `${moduleId}: fragment.css uses ${polygonPoints} clip-path polygon points; use a bounded vector/raster asset for complex silhouettes`,
+      `${moduleId}: module.css uses ${polygonPoints} clip-path polygon points; use a bounded vector/raster asset for complex silhouettes`,
     );
   }
 
-  const fullBleedGradientBlocks = collectFullBleedGradientBlocks(fragmentCss);
+  const fullBleedGradientBlocks = collectFullBleedGradientBlocks(moduleCss);
   if (fullBleedGradientBlocks.length) {
     issues.push(
-      `${moduleId}: fragment.css has full-bleed gradient visual layers (${fullBleedGradientBlocks.join(", ")}); avoid whole-module CSS background approximation`,
+      `${moduleId}: module.css has full-bleed gradient visual layers (${fullBleedGradientBlocks.join(", ")}); avoid whole-module CSS background approximation`,
     );
   }
 
@@ -1030,11 +906,19 @@ const collectModuleOutputPolicyIssues = async (
   const issues: string[] = [];
   const originalSvgPath = policy.originalSvgPath ?? policy.design?.svgPath;
   const originalRefs = buildOriginalSvgRefs(originalSvgPath);
+  const sourceFragmentLabel = payload.sourceFragmentLabel ?? "source fragment";
+  const sourceFragmentForPolicy =
+    payload.sourceFragmentRaw ?? payload.sourceFragment;
   const sources = [
-    ["fragment.html", payload.fragmentHtml],
-    ["fragment.css", payload.fragmentCss],
-    ["text-layout.json", payload.textLayoutRaw],
+    ["preview.fragment.html", payload.previewFragmentHtml],
+    ["module.css", payload.moduleCss],
     ["manifest.json", payload.manifestRaw],
+    ...(payload.sourceDataRaw !== undefined
+      ? ([["source-data.json", payload.sourceDataRaw]] as const)
+      : []),
+    ...(sourceFragmentForPolicy !== undefined
+      ? ([[sourceFragmentLabel, sourceFragmentForPolicy]] as const)
+      : []),
   ] as const;
 
   for (const [label, content] of sources) {
@@ -1054,7 +938,7 @@ const collectModuleOutputPolicyIssues = async (
   );
   issues.push(
     ...collectCssComplexDrawingIssues({
-      fragmentCss: payload.fragmentCss,
+      moduleCss: payload.moduleCss,
       moduleId: policy.moduleId,
     }),
   );
@@ -1066,22 +950,39 @@ const collectModuleOutputPolicyIssues = async (
   );
   issues.push(
     ...collectInlineSvgIssues({
-      fragmentHtml: payload.fragmentHtml,
+      content: payload.previewFragmentHtml,
+      label: "preview.fragment.html",
       moduleId: policy.moduleId,
     }),
   );
+  if (sourceFragmentForPolicy !== undefined) {
+    issues.push(
+      ...collectSourceFragmentBoundaryIssues({
+        content: sourceFragmentForPolicy,
+        label: sourceFragmentLabel,
+        moduleId: policy.moduleId,
+      }),
+      ...collectFrameworkInlineDataIssues({
+        content: sourceFragmentForPolicy,
+        label: sourceFragmentLabel,
+        moduleId: policy.moduleId,
+      }),
+      ...collectInlineSvgIssues({
+        content: sourceFragmentForPolicy,
+        label: sourceFragmentLabel,
+        moduleId: policy.moduleId,
+      }),
+    );
+  }
 
   const generatedAssetDeclarations = collectGeneratedAssetDeclarations(
     payload.manifest,
+    policy.allowedAssets,
   );
-  const generatedAssetOcr = await collectGeneratedBitmapAssetOcr({
-    declarations: generatedAssetDeclarations,
-    policy,
-  });
   issues.push(
     ...(await collectGeneratedAssetIssues({
       declarations: generatedAssetDeclarations,
-      policy: { ...policy, generatedAssetOcr },
+      policy,
     })),
   );
   const policyAllowedAssets = [
@@ -1091,41 +992,19 @@ const collectModuleOutputPolicyIssues = async (
   const allowedLookup = buildAllowedLookup({
     allowedAssets: policyAllowedAssets,
     baseDirs: [policy.moduleDir],
-    htmlPath: policy.htmlPath,
+    renderEntryPath: policy.renderEntryPath,
   });
   const refs = [
-    ...collectMarkupAssetReferences(payload.fragmentHtml, "fragment.html"),
-    ...collectMarkupAssetReferences(payload.fragmentCss, "fragment.css"),
+    ...collectMarkupAssetReferences(
+      payload.previewFragmentHtml,
+      "preview.fragment.html",
+    ),
+    ...collectMarkupAssetReferences(payload.moduleCss, "module.css"),
     ...collectJsonAssetReferences(payload.manifest, "manifest.json"),
+    ...(payload.sourceFragment !== undefined
+      ? collectMarkupAssetReferences(payload.sourceFragment, sourceFragmentLabel)
+      : []),
   ];
-  const mustUseAssets = (policy.allowedAssets ?? []).filter(
-    (asset) => asset.mustUse === true,
-  );
-  for (const asset of mustUseAssets) {
-    const assetLookup = buildAllowedLookup({
-      allowedAssets: [asset],
-      baseDirs: [policy.moduleDir],
-      htmlPath: policy.htmlPath,
-    });
-    const used = refs.some((ref) =>
-      isAllowedAssetReference({
-        allowedLookup: assetLookup,
-        htmlPath: policy.htmlPath,
-        moduleDir: policy.moduleDir,
-        ref: ref.ref,
-      }),
-    );
-    if (!used) {
-      const label =
-        asset.assetName ??
-        asset.name ??
-        asset.path ??
-        "asset";
-      issues.push(
-        `${policy.moduleId}: must-use asset "${label}" from allowed-assets.json was not referenced`,
-      );
-    }
-  }
   const seenRefs = new Set<string>();
   for (const ref of refs) {
     const key = `${ref.source}:${normalizeReferenceString(ref.ref)}`;
@@ -1134,7 +1013,7 @@ const collectModuleOutputPolicyIssues = async (
     if (
       isAllowedAssetReference({
         allowedLookup,
-        htmlPath: policy.htmlPath,
+        renderEntryPath: policy.renderEntryPath,
         moduleDir: policy.moduleDir,
         ref: ref.ref,
       })
@@ -1143,55 +1022,148 @@ const collectModuleOutputPolicyIssues = async (
     }
     if (
       isModuleLocalAssetReference({
-        htmlPath: policy.htmlPath,
+        renderEntryPath: policy.renderEntryPath,
         moduleDir: policy.moduleDir,
         ref: ref.ref,
       })
     ) {
+      if (
+        await moduleLocalAssetReferenceExists({
+          renderEntryPath: policy.renderEntryPath,
+          moduleDir: policy.moduleDir,
+          ref: ref.ref,
+        })
+      ) {
+        continue;
+      }
       issues.push(
-        `${policy.moduleId}: ${ref.source} references module-local asset not declared in manifest.generatedAssets: ${ref.ref}`,
+        `${policy.moduleId}: ${ref.source} references module-local asset that does not exist under assets/: ${ref.ref}`,
       );
       continue;
     }
     issues.push(
-      `${policy.moduleId}: ${ref.source} references local asset outside allowed-assets.json/generatedAssets: ${ref.ref}`,
+      `${policy.moduleId}: ${ref.source} references local asset outside the module assets/ directory or registered generatedAssets: ${ref.ref}`,
     );
   }
 
   return issues;
 };
 
-const isGeneratedAssetReadableTextPolicyIssue = (issue: string) =>
-  /generated (?:bitmap )?asset .*(?:appears to contain ordinary readable text|OCR detected readable text)/i.test(
-    issue,
-  );
+const parsePolicyMessageLocation = (message: string) => {
+  const match = message.match(/^[^:]+:\s*([^:]+?):\s/);
+  if (!match?.[1]) return {};
+  return { file: match[1].trim() };
+};
 
-const assertModuleOutputPolicy = async (
+const inferDiagnosticMetadata = (
+  message: string,
+): Omit<ModuleOutputDiagnostic, "message" | "severity"> => {
+  if (/must include absolute position box metadata/i.test(message)) {
+    return {
+      code: "generated-asset-missing-box",
+      field: "generatedAssets[].box",
+      file: "module-semantic.json",
+      fixHint:
+        "Add the asset's local rendered x/y/width/height to generatedAssets[].box.",
+    };
+  }
+  if (/must declare a local asset path\/ref/i.test(message)) {
+    return {
+      code: "generated-asset-missing-path",
+      field: "generatedAssets[].path",
+      file: "module-semantic.json",
+      fixHint: "Declare a module-local path under assets/.",
+    };
+  }
+  if (/must live under assets\//i.test(message)) {
+    return {
+      code: "generated-asset-outside-assets-dir",
+      field: "generatedAssets[].path",
+      file: "module-semantic.json",
+      fixHint: "Move the file under the module assets/ directory and update references.",
+    };
+  }
+  if (/declared in generatedAssets but the file does not exist/i.test(message)) {
+    return {
+      code: "generated-asset-file-missing",
+      field: "generatedAssets[].path",
+      file: "module-semantic.json",
+      fixHint: "Create/export the asset file or remove the manifest entry.",
+    };
+  }
+  if (/embeds data:image content/i.test(message)) {
+    return {
+      code: "data-image",
+      ...parsePolicyMessageLocation(message),
+      fixHint: "Write a bounded file under assets/ and reference that file instead.",
+    };
+  }
+  if (/contains inline <svg>/i.test(message)) {
+    return {
+      code: "inline-svg",
+      ...parsePolicyMessageLocation(message),
+      fixHint: "Export the visual as a bounded asset or rebuild it with allowed HTML/CSS.",
+    };
+  }
+  if (/references module-local asset that does not exist under assets\//i.test(message)) {
+    return {
+      code: "local-asset-missing",
+      ...parsePolicyMessageLocation(message),
+      field: "assets",
+      fixHint:
+        "Create/export the referenced file under assets/ and prefer --register-semantic so metadata is recorded.",
+    };
+  }
+  if (
+    /references local asset outside the module assets\/ directory or registered generatedAssets/i.test(
+      message,
+    )
+  ) {
+    return {
+      code: "local-asset-outside-allowed",
+      ...parsePolicyMessageLocation(message),
+      fixHint:
+        "Use a file under the module assets/ directory, or reference an asset registered in module-semantic.json generatedAssets.",
+    };
+  }
+  if (/references the original whole SVG/i.test(message)) {
+    return {
+      code: "original-svg-reference",
+      fixHint: "Do not reference the source design SVG as a render layer.",
+    };
+  }
+  return {
+    code: "module-output-policy",
+    ...parsePolicyMessageLocation(message),
+  };
+};
+
+const toPolicyDiagnostic = (message: string): ModuleOutputDiagnostic => {
+  return {
+    ...inferDiagnosticMetadata(message),
+    message,
+    severity: "warning",
+  };
+};
+
+const collectModuleOutputPolicyDiagnostics = async (
   payload: ModuleOutputPayload,
   policy: ModuleOutputPolicy,
-) => {
-  const issues = await collectModuleOutputPolicyIssues(payload, policy);
-  const hardIssues = issues.filter(
-    (issue) => !isGeneratedAssetReadableTextPolicyIssue(issue),
-  );
-  if (!hardIssues.length) return;
-  throw new Error(
-    `Module output violates isolation policy:\n${hardIssues.join("\n")}`,
-  );
-};
+): Promise<ModuleOutputDiagnostic[]> =>
+  (await collectModuleOutputPolicyIssues(payload, policy)).map(toPolicyDiagnostic);
 
 export type {
   ModuleOutputAllowedAsset,
   ModuleOutputDesign,
-  GeneratedBitmapAssetOcrResult,
+  ModuleOutputDiagnostic,
   ModuleOutputPayload,
   ModuleOutputPolicy,
 };
 export {
   MODULE_LOCAL_ASSET_DIR,
-  SUPPORTED_MODULE_ASSET_EXTENSIONS,
-  assertModuleOutputPolicy,
-  collectModuleOutputPolicyIssues,
-  isGeneratedAssetReadableTextPolicyIssue,
+  collectModuleOutputPolicyDiagnostics,
+  getAllowedAssetPathValues,
+  isPathInside,
   isSupportedModuleAssetPath,
+  normalizeSlashes,
 };

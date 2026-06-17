@@ -7,6 +7,6 @@ const agentRunQueue = createAgentRunQueue({
   runSession,
 })
 
-const { enqueueSession, pauseSession, resumeQueuedSessions } = agentRunQueue
+const { cancelSessionRun, enqueueSession, processQueuedSessions } = agentRunQueue
 
-export { enqueueSession, pauseSession, resumeQueuedSessions }
+export { cancelSessionRun, enqueueSession, processQueuedSessions }

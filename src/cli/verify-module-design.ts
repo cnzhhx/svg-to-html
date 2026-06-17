@@ -1,9 +1,11 @@
-import { existsSync } from 'node:fs'
 import path from 'node:path'
 
 import { readModulePlan } from '../pipeline/module-merge.js'
 import { verifyModuleLocal } from '../pipeline/agent-runner/module-local-verify.js'
-import type { ModulePlanModule } from '../pipeline/module-merge.js'
+import {
+  normalizePlanModules,
+  resolveRequiredPath,
+} from './module-plan-utils.js'
 
 const VALUE_FLAGS = new Set([
   '--module-dir',
@@ -64,29 +66,15 @@ const parseArgs = (args: string[]) => {
   }
 }
 
-const normalizePlanModules = (modules: unknown): ModulePlanModule[] => {
-  if (Array.isArray(modules)) return modules as ModulePlanModule[]
-  if (modules && typeof modules === 'object') {
-    return Object.entries(modules).map(([id, value]) => ({
-      ...(value && typeof value === 'object' ? value : {}),
-      id,
-    })) as ModulePlanModule[]
-  }
-  return []
-}
-
-const resolveRequiredPath = (filePath: string, baseDir: string, label: string) => {
-  const resolved = path.isAbsolute(filePath)
-    ? filePath
-    : path.resolve(baseDir, filePath)
-  if (!existsSync(resolved)) throw new Error(`${label} not found: ${resolved}`)
-  return resolved
-}
-
 const main = async () => {
   const args = parseArgs(process.argv.slice(2))
-  if (args.scale !== undefined && (!Number.isFinite(args.scale) || args.scale <= 0)) {
-    throw new Error(`Invalid value for --scale: ${args.scale} (expected a positive number)`)
+  if (
+    args.scale !== undefined &&
+    (!Number.isFinite(args.scale) || args.scale <= 0)
+  ) {
+    throw new Error(
+      `Invalid value for --scale: ${args.scale} (expected a positive number)`,
+    )
   }
   const moduleDir = path.resolve(args.moduleDir)
   const moduleId = args.moduleId ?? path.basename(moduleDir)
@@ -110,7 +98,9 @@ const main = async () => {
     (candidate) => candidate.id === moduleId,
   )
   if (!module?.region) {
-    throw new Error(`Module region not found in ${modulePlanPath}: ${moduleId}`)
+    throw new Error(
+      `Module region not found in ${modulePlanPath}: ${moduleId}`,
+    )
   }
 
   const result = await verifyModuleLocal({
@@ -128,7 +118,7 @@ const main = async () => {
     modulePlan,
     modulePlanPath,
     moduleSvgPath,
-    onProgress: (message) => console.log(`[module-verify] ${message}`),
+    onProgress: () => {},
     round: Number.isFinite(args.round) ? args.round : 0,
     scale: args.scale,
     scaffoldHtmlPath,
@@ -136,17 +126,8 @@ const main = async () => {
 
   console.log(
     JSON.stringify({
-      artifactDir: result.artifactDir,
-      diffPngPath: result.diffPngPath,
       diffRatio: result.diffRatio,
-      htmlPath: result.htmlPath,
-      htmlPngPath: result.htmlPngPath,
-      moduleId: result.moduleId,
       passed: result.passed,
-      svgPngPath: result.svgPngPath,
-      targetHtmlPath: result.targetHtmlPath,
-      targetSvgPath: result.targetSvgPath,
-      verifyReportPath: result.verifyReportPath,
     }),
   )
 }

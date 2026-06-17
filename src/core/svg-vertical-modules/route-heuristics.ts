@@ -1,12 +1,10 @@
 import type { ContainerLayoutReport } from "../container-layout/types.js";
 import type { Box } from "../utils.js";
-import type { PlannerOcrBlock } from "./types.js";
 
-export const SMALL_DESIGN_MAX_NODE_COUNT = 100;
+const SMALL_DESIGN_MAX_NODE_COUNT = 100;
 
 export const isSmallLowComplexityDesign = (input: {
   containerLayout?: ContainerLayoutReport;
-  ocrBlocks: PlannerOcrBlock[];
   svgNodeCount?: number;
   viewport: Box;
 }) => {

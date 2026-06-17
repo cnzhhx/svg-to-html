@@ -5,7 +5,10 @@ import { pathToFileURL } from "node:url";
 import { evaluatePage, launchEdge } from "./cdp.js";
 import {
   type Box,
-  type DesignPair,
+  ensureSvgViewBox,
+  parsePositiveInteger,
+  parseRootChildElements,
+  type ResolvedSvgDesign,
   writeJsonFile,
   writeTextFile,
 } from "./utils.js";
@@ -56,26 +59,9 @@ type BrowserVisibilityPruningResult = {
   thresholds: SvgVisibilityPruningSummary["thresholds"];
 };
 
-type RootChildElement = {
-  closeTag: string;
-  content: string;
-  innerContent: string;
-  nthOfType: number;
-  openTag: string;
-  pathSegment: string;
-  selfClosing: boolean;
-  tag: string;
-};
-
 const PRUNED_SVG_NAME = "svg-visible-pruned.svg";
 const PRUNING_REPORT_NAME = "svg-visible-pruning.json";
 const PRUNING_WRAPPER_NAME = "svg-visible-pruning-source.html";
-
-const parsePositiveInteger = (value: string | undefined, fallback: number) => {
-  const parsed = Number(value ?? fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.floor(parsed));
-};
 
 const MAX_PIXEL_CHECK_CANDIDATES = parsePositiveInteger(
   process.env["SVG_VISIBILITY_PRUNE_MAX_CANDIDATES"],
@@ -108,7 +94,7 @@ const createWrapper = ({
         width: ${width}px;
         height: ${height}px;
         overflow: hidden;
-        background: #000;
+        background: transparent;
       }
 
       svg {
@@ -126,141 +112,6 @@ const createWrapper = ({
   </body>
 </html>
 `;
-
-const findTagEnd = (content: string, start: number) => {
-  let quote: null | string = null;
-  for (let index = start; index < content.length; index += 1) {
-    const char = content[index];
-    if (quote) {
-      if (char === quote) quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (char === ">") return index;
-  }
-  return -1;
-};
-
-const readTag = (tagSource: string) => {
-  const match = tagSource.match(/^<\/?\s*([a-zA-Z][\w:.-]*)/);
-  return match?.[1]?.toLowerCase();
-};
-
-const isSelfClosingTag = (tagSource: string) => /\/\s*>$/.test(tagSource);
-
-const findElementEnd = ({
-  content,
-  openEnd,
-  startTag,
-}: {
-  content: string;
-  openEnd: number;
-  startTag: string;
-}) => {
-  if (isSelfClosingTag(content.slice(0, openEnd + 1))) return openEnd + 1;
-
-  let cursor = openEnd + 1;
-  let depth = 1;
-  while (cursor < content.length) {
-    const nextOpen = content.indexOf("<", cursor);
-    if (nextOpen === -1) return content.length;
-    if (content.startsWith("<!--", nextOpen)) {
-      const commentEnd = content.indexOf("-->", nextOpen + 4);
-      cursor = commentEnd === -1 ? content.length : commentEnd + 3;
-      continue;
-    }
-    if (content.startsWith("<![CDATA[", nextOpen)) {
-      const cdataEnd = content.indexOf("]]>", nextOpen + 9);
-      cursor = cdataEnd === -1 ? content.length : cdataEnd + 3;
-      continue;
-    }
-    const tagEnd = findTagEnd(content, nextOpen);
-    if (tagEnd === -1) return content.length;
-    const tagSource = content.slice(nextOpen, tagEnd + 1);
-    const tag = readTag(tagSource);
-    if (tag === startTag) {
-      if (tagSource.startsWith("</")) {
-        depth -= 1;
-        if (depth === 0) return tagEnd + 1;
-      } else if (!isSelfClosingTag(tagSource)) {
-        depth += 1;
-      }
-    }
-    cursor = tagEnd + 1;
-  }
-  return content.length;
-};
-
-const parseRootChildElements = (content: string): RootChildElement[] => {
-  const children: RootChildElement[] = [];
-  const siblingCounts = new Map<string, number>();
-  let cursor = 0;
-
-  while (cursor < content.length) {
-    const nextOpen = content.indexOf("<", cursor);
-    if (nextOpen === -1) break;
-    if (
-      content.startsWith("<!--", nextOpen) ||
-      content.startsWith("<?", nextOpen) ||
-      content.startsWith("<!", nextOpen)
-    ) {
-      const closeToken = content.startsWith("<!--", nextOpen) ? "-->" : ">";
-      const closeIndex = content.indexOf(closeToken, nextOpen + 2);
-      cursor =
-        closeIndex === -1 ? content.length : closeIndex + closeToken.length;
-      continue;
-    }
-
-    const openEnd = findTagEnd(content, nextOpen);
-    if (openEnd === -1) break;
-    const tagSource = content.slice(nextOpen, openEnd + 1);
-    if (tagSource.startsWith("</")) {
-      cursor = openEnd + 1;
-      continue;
-    }
-    const tag = readTag(tagSource);
-    if (!tag) {
-      cursor = openEnd + 1;
-      continue;
-    }
-
-    const elementEnd = findElementEnd({
-      content: content.slice(nextOpen),
-      openEnd: openEnd - nextOpen,
-      startTag: tag,
-    });
-    const rawElement = content.slice(nextOpen, nextOpen + elementEnd);
-    const openTag = content.slice(nextOpen, openEnd + 1);
-    const selfClosing = isSelfClosingTag(openTag);
-    const closeStart = selfClosing
-      ? -1
-      : rawElement.toLowerCase().lastIndexOf(`</${tag}`);
-    const innerContent =
-      !selfClosing && closeStart >= 0
-        ? rawElement.slice(openTag.length, closeStart)
-        : "";
-    const closeTag =
-      !selfClosing && closeStart >= 0 ? rawElement.slice(closeStart) : "";
-    const nthOfType = (siblingCounts.get(tag) ?? 0) + 1;
-    siblingCounts.set(tag, nthOfType);
-    children.push({
-      closeTag,
-      content: rawElement,
-      innerContent,
-      nthOfType,
-      openTag,
-      pathSegment: `${tag}:nth-of-type(${nthOfType})`,
-      selfClosing,
-      tag,
-    });
-    cursor = nextOpen + elementEnd;
-  }
-
-  return children;
-};
 
 const escapeAttribute = (value: string) =>
   value
@@ -636,16 +487,16 @@ const createPruningExpression = () => `(() => {
 })()`;
 
 const shouldPruneInvisibleSvgNodes = () =>
-  process.env["SVG_VISIBILITY_PRUNE"] !== "0";
+  process.env["SVG_VISIBILITY_PRUNE"] === "1";
 
 const pruneInvisibleSvgNodes = async ({
   artifactDir,
   design,
 }: {
   artifactDir: string;
-  design: DesignPair;
+  design: ResolvedSvgDesign;
 }): Promise<SvgVisibilityPruningResult> => {
-  const source = await readFile(design.svgPath, "utf8");
+  const source = ensureSvgViewBox(await readFile(design.svgPath, "utf8"));
   const wrapperPath = path.join(artifactDir, PRUNING_WRAPPER_NAME);
   const outputPath = path.join(artifactDir, PRUNED_SVG_NAME);
   const reportPath = path.join(artifactDir, PRUNING_REPORT_NAME);
@@ -663,6 +514,7 @@ const pruneInvisibleSvgNodes = async ({
   try {
     const browser = await launchEdge();
     browserResult = await evaluatePage<BrowserVisibilityPruningResult>({
+      deviceScaleFactor: design.scale,
       expression: createPruningExpression(),
       port: browser.port,
       url: pathToFileURL(wrapperPath).href,
@@ -721,10 +573,4 @@ const pruneInvisibleSvgNodes = async ({
   };
 };
 
-export {
-  pruneInvisibleSvgNodes,
-  shouldPruneInvisibleSvgNodes,
-  type SvgVisibilityPrunedNode,
-  type SvgVisibilityPruningResult,
-  type SvgVisibilityPruningSummary,
-};
+export { pruneInvisibleSvgNodes, shouldPruneInvisibleSvgNodes };

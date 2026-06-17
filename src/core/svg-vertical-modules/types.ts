@@ -1,6 +1,6 @@
 import type { ContainerLayoutReport } from "../container-layout/types.js";
 import type {
-  CodexModuleKind,
+  ModuleKind,
   ModulePlannerMetadata,
   ModulePlannerMode,
 } from "../module-planner/types.js";
@@ -30,43 +30,16 @@ export type SerializableRegion = Region & {
   id: string;
 };
 
-export type PlannerOcrBlock = {
-  assignedContainerId?: null | string;
-  bbox: Box;
-  id: string;
-  text?: string;
-};
-
-export type PlannerShellEntry = {
-  box?: Box;
-  containerId: string;
-  status?: string;
-};
-
-export type OcrBlocksInput =
-  | PlannerOcrBlock[]
-  | {
-      blocks?: PlannerOcrBlock[];
-    };
-
-export type ShellManifestInput =
-  | PlannerShellEntry[]
-  | {
-      entries?: PlannerShellEntry[];
-    };
-
 export type SvgVerticalModule = {
   candidateNodeCount: number;
   contentBox: Box;
   diffRegion: SerializableRegion;
   id: string;
-  kind: "single-page" | CodexModuleKind;
+  kind: "single-page" | ModuleKind;
   nodePaths: string[];
-  ocrBlockIds: string[];
   reason: string;
   region: SerializableRegion;
   score: number;
-  shellContainerIds: string[];
   sourceContainerIds: string[];
 };
 
@@ -109,7 +82,6 @@ export type SvgVerticalModuleReport = {
   sharedLayers: SvgSharedLayer[];
   sourceStats: {
     containerCount: number;
-    ocrBlockCount: number;
     shellEntryCount: number;
     svgNodeCount: number;
   };
@@ -133,16 +105,13 @@ export type SvgVerticalModuleArtifacts = {
 
 export type CreateAdaptiveModulePlanOptions = {
   artifactDir?: string;
-  concurrencyLimit?: number;
   containerLayoutReport?: ContainerLayoutReport;
   inputPath: string;
   minGap?: number;
   mode?: ModulePlanMode;
-  ocrBlocks?: OcrBlocksInput;
   planner?: ModulePlannerMode;
   plannerRetries?: number;
   scale?: number;
-  shellManifest?: ShellManifestInput;
   svgLayoutReport?: SvgLayoutResult;
 };
 

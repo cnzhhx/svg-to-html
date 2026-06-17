@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
 
-import { getWorkspaceRoot, isInsidePath } from './utils.js'
+import { getWorkspaceRoot, isInsidePath, parseNonNegativeInteger } from './utils.js'
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -22,15 +22,6 @@ const MIME_TYPES: Record<string, string> = {
 }
 
 const WORKSPACE_URL_PREFIX = '/__workspace'
-
-const parseNonNegativeInteger = (
-  value: string | undefined,
-  fallback: number,
-) => {
-  const parsed = Number(value ?? fallback)
-  if (!Number.isFinite(parsed)) return fallback
-  return Math.max(0, Math.floor(parsed))
-}
 
 const STATIC_SERVER_POOL_IDLE_MS = parseNonNegativeInteger(
   process.env['STATIC_SERVER_POOL_IDLE_MS'],

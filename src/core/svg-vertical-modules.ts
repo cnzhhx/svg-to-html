@@ -3,10 +3,10 @@ import { readdir, unlink } from "node:fs/promises";
 
 import { createContainerLayoutReport } from "./container-layout.js";
 import {
-  runCodexModulePlanner,
+  runModelPlanner,
   toValidationSummary,
-} from "./module-planner/codex-planner.js";
-import { renderCodexPlannerPreviewImages } from "./module-planner/preview-images.js";
+} from "./module-planner/model-planner.js";
+import { renderModelPlannerPreviewImages } from "./module-planner/preview-images.js";
 import type {
   ModulePlannerMetadata,
   ModulePlannerMode,
@@ -21,10 +21,6 @@ import {
   type Box,
 } from "./utils.js";
 import { createMarkdown } from "./svg-vertical-modules/markdown.js";
-import {
-  normalizeOcrBlocks,
-  normalizeShellManifest,
-} from "./svg-vertical-modules/normalizers.js";
 import { isSmallLowComplexityDesign } from "./svg-vertical-modules/route-heuristics.js";
 import { createSinglePageModule } from "./svg-vertical-modules/single-planner.js";
 import type {
@@ -64,16 +60,13 @@ const clearPlannerArtifacts = async (moduleDir: string) => {
 
 const createAdaptiveModulePlan = async ({
   artifactDir: customArtifactDir,
-  concurrencyLimit,
   containerLayoutReport,
   inputPath,
   minGap = 10,
   mode: requestedMode = "auto",
-  ocrBlocks: ocrBlocksInput,
   planner: requestedPlanner = "auto",
   plannerRetries = DEFAULT_PLANNER_RETRIES,
   scale,
-  shellManifest: shellManifestInput,
   svgLayoutReport,
 }: CreateAdaptiveModulePlanOptions): Promise<SvgVerticalModuleArtifacts> => {
   const design = await resolveSvgDesign(inputPath, { scale });
@@ -89,8 +82,6 @@ const createAdaptiveModulePlan = async ({
     x: 0,
     y: 0,
   };
-  const ocrBlocks = normalizeOcrBlocks(ocrBlocksInput);
-  const shellManifest = normalizeShellManifest(shellManifestInput);
   const warnings: string[] = [];
   const safePlannerRetries = Math.max(0, Math.floor(plannerRetries));
   const plannerConstraints = createPlannerConstraints();
@@ -119,7 +110,6 @@ const createAdaptiveModulePlan = async ({
 
   const isSingleAutoRoute = isSmallLowComplexityDesign({
     containerLayout,
-    ocrBlocks,
     svgNodeCount: svgLayout.nodeCount,
     viewport,
   });
@@ -138,9 +128,7 @@ const createAdaptiveModulePlan = async ({
     modules: [
       createSinglePageModule({
         candidateNodeCount: svgLayout.nodeCount,
-        ocrBlocks,
         reason,
-        shellManifest,
         viewport,
       }),
     ],
@@ -149,10 +137,10 @@ const createAdaptiveModulePlan = async ({
     warnings: [warning],
   });
 
-  const shouldAttemptCodex =
+  const shouldAttemptModel =
     requestedMode !== "single" &&
     requestedPlanner !== "script" &&
-    (requestedPlanner === "codex" ||
+    (requestedPlanner === "model" ||
       (requestedPlanner === "auto" &&
         requestedMode === "auto" &&
         !isSingleAutoRoute));
@@ -160,15 +148,15 @@ const createAdaptiveModulePlan = async ({
   let route: ModulePlanningRoute = "single";
   let plannerMetadata: ModulePlannerMetadata | undefined;
 
-  if (shouldAttemptCodex) {
-    const previewImages = await renderCodexPlannerPreviewImages({
+  if (shouldAttemptModel) {
+    const previewImages = await renderModelPlannerPreviewImages({
       artifactDir,
       design,
     });
     const previewImagePath =
       previewImages[0]?.imagePath ?? path.join(artifactDir, "svg.png");
 
-    const codexResult = await runCodexModulePlanner({
+    const modelResult = await runModelPlanner({
       artifactDir,
       constraints: plannerConstraints,
       containerLayout,
@@ -182,52 +170,85 @@ const createAdaptiveModulePlan = async ({
       },
       mode: requestedMode,
       moduleDir,
-      ocrBlocks,
       plannerRetries: safePlannerRetries,
-      shellManifest,
       svgLayout,
       viewport,
     });
 
-    if (codexResult.status === "success") {
-      planned = codexResult.planned;
+    if (modelResult.status === "success") {
+      planned = modelResult.planned;
       route = "model";
       plannerMetadata = {
         modelAttempted: true,
         requested: requestedPlanner,
         retries: safePlannerRetries,
         selected: "model",
-        validation: toValidationSummary(codexResult.validation),
+        validation: toValidationSummary(modelResult.validation),
       };
     } else {
-      warnings.push(codexResult.failureReason);
-      await writeJsonFile(path.join(moduleDir, "planner-failure.json"), {
-        attemptCount: codexResult.attemptCount,
-        fallback: "single-page",
-        reason: codexResult.failureReason,
+      // First attempt failed — retry the entire planner once more
+      warnings.push(
+        `[planner-retry] First planner round failed: ${modelResult.failureReason}. Retrying...`,
+      );
+      await writeJsonFile(path.join(moduleDir, "planner-failure-attempt-1.json"), {
+        attemptCount: modelResult.attemptCount,
+        reason: modelResult.failureReason,
         requestedPlanner,
-        validation: codexResult.validation
-          ? toValidationSummary(codexResult.validation)
+        validation: modelResult.validation
+          ? toValidationSummary(modelResult.validation)
           : undefined,
       });
-      planned = createSingleModulePlan({
-        reason:
-          "Model planner did not produce a usable plan; keep the whole page as module-01.",
-        strategy:
-          "Single fallback: one full-page module because model planning failed.",
-        warning:
-          "Module split fallback used one full-page module after model planner failure.",
+
+      // Clear planner artifacts before second round
+      await clearPlannerArtifacts(moduleDir);
+
+      const modelRetryResult = await runModelPlanner({
+        artifactDir,
+        constraints: plannerConstraints,
+        containerLayout,
+        design: {
+          height: design.height,
+          name: design.designName,
+          previewImagePath,
+          previewImages,
+          sourceSvgPath: design.svgPath,
+          width: design.width,
+        },
+        mode: requestedMode,
+        moduleDir,
+        plannerRetries: safePlannerRetries,
+        svgLayout,
+        viewport,
       });
-      plannerMetadata = {
-        fallbackReason: codexResult.failureReason,
-        modelAttempted: true,
-        requested: requestedPlanner,
-        retries: safePlannerRetries,
-        selected: "single-page",
-        validation: codexResult.validation
-          ? toValidationSummary(codexResult.validation)
-          : undefined,
-      };
+
+      if (modelRetryResult.status === "success") {
+        planned = modelRetryResult.planned;
+        route = "model";
+        plannerMetadata = {
+          modelAttempted: true,
+          requested: requestedPlanner,
+          retries: safePlannerRetries,
+          selected: "model",
+          validation: toValidationSummary(modelRetryResult.validation),
+        };
+      } else {
+        // Both rounds failed — throw an error instead of falling back to single module
+        await writeJsonFile(path.join(moduleDir, "planner-failure.json"), {
+          attemptCount:
+            modelResult.attemptCount + modelRetryResult.attemptCount,
+          reason: modelRetryResult.failureReason,
+          requestedPlanner,
+          retriedOnce: true,
+          validation: modelRetryResult.validation
+            ? toValidationSummary(modelRetryResult.validation)
+            : undefined,
+        });
+
+        throw new Error(
+          `Module planner failed after 2 full rounds (${modelResult.attemptCount + modelRetryResult.attemptCount} total attempts). ` +
+            `Last failure: ${modelRetryResult.failureReason}`,
+        );
+      }
     }
   } else {
     const singleReason =
@@ -239,7 +260,7 @@ const createAdaptiveModulePlan = async ({
     planned = createSingleModulePlan({
       reason: singleReason,
       strategy: "Single planner: one full-page module.",
-      warning: `Module split skipped; using one full-page module (${viewport.width}x${viewport.height}, svgNodes=${svgLayout.nodeCount}, layoutNodes=${containerLayout.nodeCount}, containers=${containerLayout.containers.length}, ocr=${ocrBlocks.length}).`,
+      warning: `Module split skipped; using one full-page module (${viewport.width}x${viewport.height}, svgNodes=${svgLayout.nodeCount}, layoutNodes=${containerLayout.nodeCount}, containers=${containerLayout.containers.length}).`,
     });
     const fallbackReason =
       requestedPlanner === "script"
@@ -287,8 +308,7 @@ const createAdaptiveModulePlan = async ({
     sharedLayers,
     sourceStats: {
       containerCount: containerLayout?.containers.length ?? 0,
-      ocrBlockCount: ocrBlocks.length,
-      shellEntryCount: shellManifest.length,
+      shellEntryCount: 0,
       svgNodeCount: svgLayout?.nodeCount ?? containerLayout?.nodeCount ?? 0,
     },
     strategy: planned.strategy,
@@ -304,16 +324,13 @@ const createAdaptiveModulePlan = async ({
   const report = buildReport();
   const quality = await createModulePlanQualityReport({
     artifactDir,
-    concurrencyLimit,
     design: {
       height: design.height,
       width: design.width,
     },
     mode: report.mode,
     modules: report.modules,
-    ocrBlocks,
     planner: report.planner,
-    shellManifest,
     sharedLayers: report.sharedLayers,
   });
 
@@ -337,8 +354,6 @@ const createAdaptiveModulePlan = async ({
   };
 };
 
-const createSvgVerticalModuleReport = createAdaptiveModulePlan;
-
 export type {
   CreateAdaptiveModulePlanOptions,
   ModuleGap,
@@ -349,4 +364,4 @@ export type {
   SvgVerticalModuleArtifacts,
   SvgVerticalModuleReport,
 };
-export { createAdaptiveModulePlan, createSvgVerticalModuleReport };
+export { createAdaptiveModulePlan };

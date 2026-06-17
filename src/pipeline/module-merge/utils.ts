@@ -1,12 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-import { getWorkspaceRoot, toAbsolutePath, type Region } from '../../core/utils.js'
-
-type JsonRecord = Record<string, unknown>
-
-const isRecord = (value: unknown): value is JsonRecord =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+import { getWorkspaceRoot, isRecord, toAbsolutePath, type Region } from '../../core/utils.js'
 
 const isString = (value: unknown): value is string => typeof value === 'string'
 
@@ -15,15 +10,20 @@ const asString = (value: unknown) => (isString(value) ? value : undefined)
 const normalizePathForCompare = (value: string) =>
   path.resolve(value).replaceAll(path.sep, '/').toLowerCase()
 
-const formatRem = (value: number) => `${(value / 100).toFixed(3)}rem`
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const unique = <T>(items: T[]) => [...new Set(items)]
+
+const formatPx = (value: number) => `${Math.round(value)}px`
 
 const formatRegionStyle = (region: Region) =>
   [
     'position:absolute',
-    `left:${formatRem(region.x)}`,
-    `top:${formatRem(region.y)}`,
-    `width:${formatRem(region.width)}`,
-    `height:${formatRem(region.height)}`,
+    `left:${formatPx(region.x)}`,
+    `top:${formatPx(region.y)}`,
+    `width:${formatPx(region.width)}`,
+    `height:${formatPx(region.height)}`,
     'overflow:hidden',
   ].join(';')
 
@@ -95,6 +95,8 @@ const normalizeRegion = (value: unknown, label: string): Region => {
 
 export {
   asString,
+  escapeRegExp,
+  formatPx,
   formatRegionStyle,
   indent,
   isRecord,
@@ -104,4 +106,5 @@ export {
   parseJsonFile,
   readRequiredText,
   resolveConfiguredPath,
+  unique,
 }

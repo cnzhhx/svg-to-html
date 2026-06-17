@@ -1,179 +1,118 @@
-import path from 'node:path'
+import path from "node:path";
 
-import {
-  injectInlineConfig,
-  injectInlineStyle,
-  renderTextLayoutCss,
-} from '../../core/text-layout.js'
-import type { TextLayoutConfig } from '../../core/text-layout.js'
-import { writeTextFile } from '../../core/utils.js'
-import { readSvgPageBackgroundPaint } from '../../core/svg-vertical-modules/module-svg-crop.js'
+import { buildFrameworkRenderEntry } from "../../core/framework-render.js";
+import { assertOutputFormat } from "../../core/output-target.js";
+import type { SessionOutputTarget } from "../../core/output-target.js";
+import type { ResolvedSvgDesign } from "../../core/utils.js";
+import { writeTextFile } from "../../core/utils.js";
 import type {
   ModuleMergeOptions,
+  ModuleMergeResolvedModule,
   ModuleMergeResult,
   ModulePlanSharedLayer,
-} from './types.js'
+  ModulePlan,
+  ModuleMergeSkippedModule,
+  ModuleSourceData,
+} from "./types.js";
 import {
   injectModuleCss,
   renderModuleCss,
   renderModuleSections,
+  renderModuleSourceSections,
   renderSharedLayerSections,
+  renderSharedLayerSourceSections,
   renderSingleModuleFastCss,
   renderSingleModuleCss,
+  rewriteModuleLocalAssetReferences,
+  rewriteModuleLocalAssetReferencesInValue,
   replaceDesignPageContent,
-} from './html-render.js'
+} from "./html-render.js";
 import {
   assertUniqueModuleIds,
   loadResolvedModule,
   normalizePlanModules,
   readModulePlan,
-} from './module-loader.js'
+} from "./module-loader.js";
 import {
   resolveModulePlanPath,
-  resolveOutputHtmlPath,
-  resolveScaffoldHtmlPath,
-} from './paths.js'
-import { mergeTextLayoutConfig } from './text-layout.js'
-import { readRequiredText, resolveConfiguredPath } from './utils.js'
+  resolveRenderEntryPath,
+  resolveScaffoldRenderPath,
+} from "./paths.js";
+import {
+  createFrameworkSourceDataPlan,
+  type FrameworkSourceDataPlan,
+} from "./source-data.js";
+import {
+  createFrameworkComponentImportPlan,
+  loadComponentLibraryForMerge,
+  type FrameworkComponentImportPlan,
+} from "./component-imports.js";
+import { formatPx, readRequiredText, resolveConfiguredPath } from "./utils.js";
+import { sanitizeFrameworkSourceEntry } from "./framework-source-sanitize.js";
 
-const escapeRegExp = (value: string) =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-const htmlContainsId = (html: string, id: string) =>
-  new RegExp(`\\bid\\s*=\\s*["']${escapeRegExp(id)}["']`, 'i').test(html)
-
-const htmlContainsClass = (html: string, className: string) => {
-  for (const match of html.matchAll(/\bclass\s*=\s*["']([^"']*)["']/gi)) {
-    if ((match[1] ?? '').split(/\s+/).includes(className)) return true
-  }
-  return false
-}
-
-const singleSelectorLikelyMatchesHtml = ({
-  html,
-  selector,
-}: {
-  html: string
-  selector: string
-}) => {
-  const idMatch =
-    selector.match(/#([A-Za-z_][\w-]*)/) ??
-    selector.match(/\[id\s*=\s*["']([^"']+)["']\]/i)
-  if (idMatch?.[1]) return htmlContainsId(html, idMatch[1])
-
-  const classNames = [...selector.matchAll(/\.([A-Za-z_-][\w-]*)/g)].map(
-    (match) => match[1],
-  )
-  if (classNames.length) {
-    return classNames.every(
-      (className) => className && htmlContainsClass(html, className),
-    )
-  }
-
-  return true
-}
-
-const selectorLikelyMatchesHtml = ({
-  html,
-  selector,
-}: {
-  html: string
-  selector: string
-}) =>
-  selector
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .some((part) => singleSelectorLikelyMatchesHtml({ html, selector: part }))
-
-const findMissingTextLayoutSelectors = ({
-  config,
-  html,
-}: {
-  config: ReturnType<typeof mergeTextLayoutConfig>
-  html: string
-}) =>
-  (config.blocks ?? []).flatMap((block) => {
-    const selectors = block.selectors ?? []
-    if (
-      selectors.length &&
-      selectors.some((selector) =>
-        selectorLikelyMatchesHtml({ html, selector }),
-      )
-    ) {
-      return []
-    }
-    return [
-      {
-        blockId: block.id,
-        selectors,
-      },
-    ]
-  })
+const normalizeOutputFormat = assertOutputFormat;
 
 const normalizeSharedLayers = ({
   modulePlan,
-  outputHtmlPath,
+  renderEntryPath,
   planDir,
 }: {
-  modulePlan: Awaited<ReturnType<typeof readModulePlan>>
-  outputHtmlPath: string
-  planDir: string
+  modulePlan: Awaited<ReturnType<typeof readModulePlan>>;
+  renderEntryPath: string;
+  planDir: string;
 }) =>
   (Array.isArray(modulePlan.sharedLayers) ? modulePlan.sharedLayers : [])
-    .filter(
-      (layer): layer is ModulePlanSharedLayer =>
-        Boolean(
-          layer &&
-            typeof layer.id === 'string' &&
-            (layer.kind === 'shared-underlay' ||
-              layer.kind === 'shared-overlay') &&
-            layer.region,
-        ),
+    .filter((layer): layer is ModulePlanSharedLayer =>
+      Boolean(
+        layer &&
+        typeof layer.id === "string" &&
+        (layer.kind === "shared-underlay" || layer.kind === "shared-overlay") &&
+        layer.region,
+      ),
     )
     .flatMap((layer) => {
       const sourceRef =
-        typeof layer.svgPath === 'string'
+        typeof layer.svgPath === "string"
           ? layer.svgPath
-          : typeof layer.relativePath === 'string'
+          : typeof layer.relativePath === "string"
             ? layer.relativePath
-            : undefined
-      if (!sourceRef) return []
-      const assetPath = resolveConfiguredPath(sourceRef, planDir)
+            : undefined;
+      if (!sourceRef) return [];
+      const assetPath = resolveConfiguredPath(sourceRef, planDir);
       const htmlRef = `./${path
-        .relative(path.dirname(outputHtmlPath), assetPath)
-        .replaceAll(path.sep, '/')}`
+        .relative(path.dirname(renderEntryPath), assetPath)
+        .replaceAll(path.sep, "/")}`;
       return [
         {
           ...layer,
           htmlRef,
           region: layer.region!,
         },
-      ]
-    })
+      ];
+    });
 
-const mergeModulesIntoHtml = async (
-  options: ModuleMergeOptions,
-): Promise<ModuleMergeResult> => {
-  const modulePlanPath = resolveModulePlanPath(options)
-  const planDir = path.dirname(modulePlanPath)
-  const modulesDir = options.modulesDir
-    ? resolveConfiguredPath(options.modulesDir, planDir)
-    : path.dirname(modulePlanPath)
-  const modulePlan = await readModulePlan(modulePlanPath)
-  const outputHtmlPath = resolveOutputHtmlPath({
-    modulePlan,
-    outputHtmlPath: options.outputHtmlPath,
-    planDir,
-  })
-  const scaffoldHtmlPath = resolveScaffoldHtmlPath({
-    modulePlan,
-    outputHtmlPath,
-    planDir,
-    scaffoldHtmlPath: options.scaffoldHtmlPath,
-  })
-  const planModules = await normalizePlanModules({ modulePlan, modulesDir })
-  assertUniqueModuleIds(planModules)
+type LoadModuleOutputsInput = {
+  modulePlan: ModulePlan;
+  modulesDir: string;
+  options: ModuleMergeOptions;
+  planDir: string;
+  renderEntryPath: string;
+};
+
+type LoadModuleOutputsResult = {
+  modules: ModuleMergeResolvedModule[];
+  skippedModules: ModuleMergeSkippedModule[];
+};
+
+const loadModuleOutputs = async ({
+  modulePlan,
+  modulesDir,
+  options,
+  planDir,
+  renderEntryPath,
+}: LoadModuleOutputsInput): Promise<LoadModuleOutputsResult> => {
+  const planModules = await normalizePlanModules({ modulePlan, modulesDir });
+  assertUniqueModuleIds(planModules);
 
   const loadResults = await Promise.all(
     planModules.map(async (planEntry) => {
@@ -182,112 +121,472 @@ const mergeModulesIntoHtml = async (
           module: await loadResolvedModule({
             modulePlan,
             modulesDir,
-            outputHtmlPath,
+            renderEntryPath,
             planDir,
             planEntry,
           }),
-        }
+        };
       } catch (error) {
-        if (!options.skipInvalidModules) throw error
+        if (!options.skipInvalidModules) throw error;
         return {
           skipped: {
             error: error instanceof Error ? error.message : String(error),
             id: planEntry.id,
           },
-        }
+        };
       }
     }),
-  )
+  );
   const loadedModules = loadResults.flatMap((result) =>
     result.module ? [result.module] : [],
-  )
+  );
   const skippedModules = loadResults.flatMap((result) =>
     result.skipped ? [result.skipped] : [],
-  )
+  );
   const modules = loadedModules.flatMap((module) => {
     try {
-      renderSingleModuleCss(module)
-      return [module]
+      renderSingleModuleCss(module);
+      return [module];
     } catch (error) {
-      if (!options.skipInvalidModules) throw error
+      if (!options.skipInvalidModules) throw error;
       skippedModules.push({
         error: `${module.id}: module CSS could not be scoped for deterministic merge: ${error instanceof Error ? error.message : String(error)}`,
         id: module.id,
-      })
-      return []
+      });
+      return [];
     }
-  })
-  const scaffoldHtml = await readRequiredText(
-    scaffoldHtmlPath,
-    'scaffold/base HTML',
-  )
-  const baseConfig: TextLayoutConfig = { blocks: [], rules: [] }
-  const mergedConfig = mergeTextLayoutConfig({ baseConfig, modules })
-  const pageBackgroundPaint =
-    typeof modulePlan.design?.svgPath === 'string'
-      ? await readSvgPageBackgroundPaint(
-          resolveConfiguredPath(modulePlan.design.svgPath, planDir),
-        ).catch(() => undefined)
-      : undefined
+  });
+
+  return { modules, skippedModules };
+};
+
+const buildMergedModuleCss = ({
+  modules,
+}: {
+  modules: ModuleMergeResolvedModule[];
+}) => {
   const moduleCss =
     modules.length === 1
       ? renderSingleModuleFastCss(modules[0]!)
-      : renderModuleCss(modules)
-  const mergedCss = pageBackgroundPaint
-    ? [
-        `/* Page background inferred from leading full-viewport SVG background. */`,
-        `.design-page {`,
-        `  background: ${pageBackgroundPaint};`,
-        `}`,
-        '',
-        moduleCss,
-      ].join('\n')
-    : moduleCss
+      : renderModuleCss(modules);
+  return moduleCss;
+};
+
+type MergePreviewDocumentResult = {
+  sharedLayers: ReturnType<typeof normalizeSharedLayers>;
+};
+
+const mergePreviewDocument = async ({
+  modulePlan,
+  modules,
+  planDir,
+  renderEntryPath,
+  scaffoldRenderPath,
+}: {
+  modulePlan: ModulePlan;
+  modules: ModuleMergeResolvedModule[];
+  planDir: string;
+  renderEntryPath: string;
+  scaffoldRenderPath: string;
+}): Promise<MergePreviewDocumentResult> => {
+  const scaffoldHtml = await readRequiredText(
+    scaffoldRenderPath,
+    "scaffold/base render HTML",
+  );
+  const mergedCss = buildMergedModuleCss({ modules });
   const sharedLayers = normalizeSharedLayers({
     modulePlan,
-    outputHtmlPath,
+    renderEntryPath,
     planDir,
-  })
+  });
   const sections = [
-    renderSharedLayerSections(sharedLayers, 'shared-underlay'),
+    renderSharedLayerSections(sharedLayers, "shared-underlay"),
     renderModuleSections(modules),
-    renderSharedLayerSections(sharedLayers, 'shared-overlay'),
+    renderSharedLayerSections(sharedLayers, "shared-overlay"),
   ]
     .filter((section) => section.trim())
-    .join('\n      ')
+    .join("\n      ");
 
-  const nextHtml = injectInlineStyle({
-    css: renderTextLayoutCss(mergedConfig),
-    html: injectInlineConfig({
-      config: mergedConfig,
-      html: injectModuleCss({
-        css: mergedCss,
-        html: replaceDesignPageContent({ html: scaffoldHtml, sections }),
-      }),
-    }),
-  })
-  const missingTextLayoutSelectors = findMissingTextLayoutSelectors({
-    config: mergedConfig,
-    html: nextHtml,
-  })
+  const nextHtml = injectModuleCss({
+    css: mergedCss,
+    html: replaceDesignPageContent({ html: scaffoldHtml, sections }),
+  });
 
-  await writeTextFile(outputHtmlPath, nextHtml)
+  await writeTextFile(renderEntryPath, nextHtml);
 
   return {
+    sharedLayers,
+  };
+};
+
+const resolveSourceDesign = ({
+  design,
+  modulePlan,
+}: {
+  design?: ResolvedSvgDesign;
+  modulePlan: ModulePlan;
+}): ResolvedSvgDesign => {
+  const width = design?.width ?? modulePlan.design?.width;
+  const height = design?.height ?? modulePlan.design?.height;
+  if (typeof width !== "number" || typeof height !== "number") {
+    throw new Error(
+      "framework source merge requires design width/height from options.design or module-plan.json",
+    );
+  }
+  return {
+    designName: design?.designName ?? modulePlan.design?.name ?? "DesignPage",
+    height,
+    scale: design?.scale ?? 1,
+    svgPath: design?.svgPath ?? modulePlan.design?.svgPath ?? "",
+    width,
+  };
+};
+
+const createFrameworkBaseCss = ({
+  design,
+  mountId,
+}: {
+  design: ResolvedSvgDesign;
+  mountId: "app" | "root";
+}) => `\
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#${mountId} {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background: transparent;
+  font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+.design-page {
+  position: relative;
+  width: ${formatPx(design.width)};
+  height: ${formatPx(design.height)};
+  overflow: hidden;
+  background: transparent;
+}
+`;
+
+const createVueSourceEntry = ({
+  componentImportPlan,
+  css,
+  sourceDataPlan,
+  sections,
+}: {
+  componentImportPlan: FrameworkComponentImportPlan;
+  css: string;
+  sourceDataPlan: FrameworkSourceDataPlan;
+  sections: string;
+}) => `\
+<template>
+  <main class="design-page">
+      ${sections}
+  </main>
+</template>
+
+<script setup lang="ts">
+${[
+  ...componentImportPlan.styleImports.map(
+    (importPath) => `import ${JSON.stringify(importPath)};`,
+  ),
+  ...componentImportPlan.imports,
+  sourceDataPlan.statement,
+]
+  .filter((line): line is string => Boolean(line))
+  .join("\n")}
+</script>
+
+<style>
+${css}
+</style>
+`;
+
+const createReactSourceEntry = ({
+  componentImportPlan,
+  cssFileName,
+  sourceDataPlan,
+  sections,
+}: {
+  componentImportPlan: FrameworkComponentImportPlan;
+  cssFileName: string;
+  sourceDataPlan: FrameworkSourceDataPlan;
+  sections: string;
+}) => `\
+${[
+  ...componentImportPlan.styleImports.map(
+    (importPath) => `import ${JSON.stringify(importPath)};`,
+  ),
+  ...componentImportPlan.imports,
+  `import "./${cssFileName}";`,
+]
+  .filter((line): line is string => Boolean(line))
+  .join("\n")}
+
+export default function DesignPage() {
+${sourceDataPlan.statement ? `  ${sourceDataPlan.statement}\n` : ""}\
+  return (
+    <main className="design-page">
+      ${sections}
+    </main>
+  );
+}
+`;
+
+const resolveEffectiveOutputTarget = ({
+  modulePlan,
+  options,
+  renderEntryPath,
+}: {
+  modulePlan: ModulePlan;
+  options: ModuleMergeOptions;
+  renderEntryPath: string;
+}): SessionOutputTarget | null => {
+  if (options.outputTarget) return options.outputTarget;
+  const outputFormat = modulePlan.outputFormat ?? "html";
+  if (outputFormat === "html") {
+    return {
+      compareEntryPath: "",
+      format: "html",
+      renderEntryPath,
+      sourceEntryPath: options.sourceEntryPath ?? modulePlan.sourceEntryPath ?? renderEntryPath,
+    };
+  }
+  throw new Error(
+    `${outputFormat} source merge requires a complete outputTarget`,
+  );
+};
+
+const rewriteModulesForSourceEntry = ({
+  modules,
+  outputTarget,
+}: {
+  modules: ModuleMergeResolvedModule[];
+  outputTarget: SessionOutputTarget;
+}) =>
+  modules.map((module) => ({
+    ...module,
+    moduleCss: rewriteModuleLocalAssetReferences({
+      allowedAssets: module.allowedAssets,
+      content: module.moduleCss,
+      moduleDir: module.dir,
+      moduleLocalAssetRefs: module.moduleLocalAssetRefs,
+      renderEntryPath: outputTarget.sourceStylePath ?? outputTarget.sourceEntryPath,
+    }),
+    sourceFragment:
+      module.sourceFragment === undefined
+        ? undefined
+        : rewriteModuleLocalAssetReferences({
+            allowedAssets: module.allowedAssets,
+            content: module.sourceFragment,
+            moduleDir: module.dir,
+            moduleLocalAssetRefs: module.moduleLocalAssetRefs,
+            renderEntryPath: outputTarget.sourceEntryPath,
+          }),
+    // source-data.json carries structured data the source fragment binds to
+    // (e.g. { image: "./assets/x.png" }). Rewrite its asset strings to the
+    // correct path relative to the source entry, mirroring what we do for
+    // preview.fragment.html / module.css — otherwise agents must guess the
+    // final relative path and routinely get it wrong.
+    sourceData:
+      module.sourceData === undefined
+        ? undefined
+        : (rewriteModuleLocalAssetReferencesInValue({
+            allowedAssets: module.allowedAssets,
+            moduleDir: module.dir,
+            moduleLocalAssetRefs: module.moduleLocalAssetRefs,
+            renderEntryPath: outputTarget.sourceEntryPath,
+            value: module.sourceData,
+          }) as ModuleSourceData),
+  }));
+
+const mergeSourceEntry = async ({
+  design,
+  modulePlan,
+  modules,
+  outputTarget,
+  sharedLayers,
+}: {
+  design?: ResolvedSvgDesign;
+  modulePlan: ModulePlan;
+  modules: ModuleMergeResolvedModule[];
+  outputTarget: SessionOutputTarget | null;
+  sharedLayers: ReturnType<typeof normalizeSharedLayers>;
+}) => {
+  if (!outputTarget) return {};
+  if (outputTarget.format === "html") {
+    return {
+      sourceEntryPath: outputTarget.sourceEntryPath,
+    };
+  }
+
+  const sourceDesign = resolveSourceDesign({ design, modulePlan });
+  const sourceModules = rewriteModulesForSourceEntry({ modules, outputTarget });
+  const sourceDataPlan = createFrameworkSourceDataPlan(sourceModules);
+  const componentLibrary = await loadComponentLibraryForMerge({
+    modulePlan,
+    outputFormat: outputTarget.format,
+  });
+  const componentImportPlan = await createFrameworkComponentImportPlan({
+    componentLibrary,
+    modules,
+    outputFormat: outputTarget.format,
+    sourceEntryPath: outputTarget.sourceEntryPath,
+  });
+  const sourceCss = [
+    createFrameworkBaseCss({
+      design: sourceDesign,
+      mountId: outputTarget.format === "vue" ? "app" : "root",
+    }),
+    buildMergedModuleCss({ modules: sourceModules }),
+  ]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const sourceSections = [
+    renderSharedLayerSourceSections(
+      sharedLayers,
+      "shared-underlay",
+      outputTarget.format,
+    ),
+    renderModuleSourceSections(sourceModules, outputTarget.format),
+    renderSharedLayerSourceSections(
+      sharedLayers,
+      "shared-overlay",
+      outputTarget.format,
+    ),
+  ]
+    .filter((section) => section.trim())
+    .join("\n      ");
+
+  if (outputTarget.format === "vue") {
+    await writeTextFile(
+      outputTarget.sourceEntryPath,
+      createVueSourceEntry({
+        componentImportPlan,
+        css: sourceCss,
+        sourceDataPlan,
+        sections: sourceSections,
+      }),
+    );
+  } else {
+    if (!outputTarget.sourceStylePath) {
+      throw new Error("React source merge requires sourceStylePath");
+    }
+    // Sanitize before writing: rewrite `React.<API>` namespace references to
+    // named imports and inject any missing React import so the merged source
+    // does not throw `ReferenceError: React is not defined` at runtime under
+    // the classic JSX runtime (the host import block above omits it).
+    const reactSource = sanitizeFrameworkSourceEntry(
+      createReactSourceEntry({
+        componentImportPlan,
+        cssFileName: path.basename(outputTarget.sourceStylePath),
+        sourceDataPlan,
+        sections: sourceSections,
+      }),
+      "react",
+    );
+    await writeTextFile(outputTarget.sourceEntryPath, reactSource);
+    await writeTextFile(outputTarget.sourceStylePath, sourceCss);
+  }
+
+  await buildFrameworkRenderEntry({
+    componentLibrary: componentImportPlan.buildContext,
+    design: sourceDesign,
+    outputTarget,
+  });
+
+  return {
+    frameworkBuildDir: outputTarget.frameworkBuildDir,
+    sourceEntryPath: outputTarget.sourceEntryPath,
+    sourceStylePath: outputTarget.sourceStylePath,
+  };
+};
+
+const mergeModulesIntoHtml = async (
+  options: ModuleMergeOptions,
+): Promise<ModuleMergeResult> => {
+  const modulePlanPath = resolveModulePlanPath(options);
+  const planDir = path.dirname(modulePlanPath);
+  const modulesDir = options.modulesDir
+    ? resolveConfiguredPath(options.modulesDir, planDir)
+    : path.dirname(modulePlanPath);
+  const modulePlan = await readModulePlan(modulePlanPath);
+  const outputFormat = normalizeOutputFormat(
+    modulePlan.outputFormat ?? options.outputTarget?.format ?? "html",
+  );
+  if (
+    modulePlan.outputFormat &&
+    options.outputTarget?.format &&
+    modulePlan.outputFormat !== options.outputTarget.format
+  ) {
+    throw new Error(
+      `module-plan outputFormat (${modulePlan.outputFormat}) does not match outputTarget format (${options.outputTarget.format})`,
+    );
+  }
+  const effectiveModulePlan: ModulePlan = {
+    ...modulePlan,
+    outputFormat,
+  };
+  const renderEntryPath = resolveRenderEntryPath({
+    modulePlan: effectiveModulePlan,
+    renderEntryPath: options.renderEntryPath,
+    planDir,
+  });
+  const scaffoldRenderPath = resolveScaffoldRenderPath({
+    modulePlan: effectiveModulePlan,
+    renderEntryPath,
+    planDir,
+    scaffoldRenderPath: options.scaffoldRenderPath,
+  });
+  const { modules, skippedModules } = await loadModuleOutputs({
+    modulePlan: effectiveModulePlan,
+    modulesDir,
+    options,
+    renderEntryPath,
+    planDir,
+  });
+  const previewResult = await mergePreviewDocument({
+    modulePlan: effectiveModulePlan,
+    modules,
+    planDir,
+    renderEntryPath,
+    scaffoldRenderPath,
+  });
+  const sourceResult =
+    options.mergeSource === false
+      ? {}
+      : await mergeSourceEntry({
+          design: options.design,
+          modulePlan: effectiveModulePlan,
+          modules,
+          outputTarget: resolveEffectiveOutputTarget({
+            modulePlan: effectiveModulePlan,
+            options,
+            renderEntryPath,
+          }),
+          sharedLayers: previewResult.sharedLayers,
+        });
+
+  return {
+    renderEntryPath,
+    ...sourceResult,
     moduleCount: modules.length,
     moduleIds: modules.map((module) => module.id),
     modulePlanPath,
     modulesDir,
-    outputHtmlPath,
-    scaffoldHtmlPath,
+    outputFormat,
+    scaffoldRenderPath,
     skippedModuleIds: skippedModules.map((module) => module.id),
     skippedModules,
-    textLayoutBlockCount: mergedConfig.blocks?.length ?? 0,
-    textLayoutMissingSelectorCount: missingTextLayoutSelectors.length,
-    textLayoutMissingSelectors: missingTextLayoutSelectors.slice(0, 50),
-    textLayoutRuleCount: mergedConfig.rules.length,
-    textLayoutSelectorCheckPassed: missingTextLayoutSelectors.length === 0,
-  }
-}
 
-export { mergeModulesIntoHtml }
+  };
+};
+
+export { mergeModulesIntoHtml };

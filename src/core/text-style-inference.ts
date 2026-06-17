@@ -7,6 +7,7 @@ type TextStyleInferenceInputBlock = {
   color?: string;
   currentDeclarations?: Record<string, string>;
   id: string;
+  lineCount?: number;
   lineHeight?: number;
   region: Box;
   renderScale?: number;
@@ -30,9 +31,9 @@ type TextStyleInferenceRecommendation = {
 };
 
 const fontFamilies = [
-  `"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif`,
-  `Inter, "PingFang SC", "Microsoft YaHei", sans-serif`,
-  `Arial, "PingFang SC", "Microsoft YaHei", sans-serif`,
+  `"Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif`,
+  `Inter, "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif`,
+  `Arial, "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif`,
 ];
 
 const visualSimilarityProfile = {
@@ -52,11 +53,26 @@ const visualSimilarityProfile = {
 
 const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
 
+const normalizeFontFamily = (value?: string) => {
+  if (!value) return "";
+  const families = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => !/pingfang|hiragino/i.test(item))
+    .filter((item) => item.length > 0);
+  const hasConcreteFamily = families.some(
+    (item) => !/^(serif|sans-serif|monospace|cursive|fantasy|system-ui)$/i.test(item),
+  );
+  return hasConcreteFamily ? families.join(", ") : "";
+};
+
 const inferTextStyles = async ({
   blocks,
+  deviceScaleFactor = 1,
   targetImagePath,
 }: {
   blocks: TextStyleInferenceInputBlock[];
+  deviceScaleFactor?: number;
   targetImagePath?: string;
 }) => {
   const browser = await launchEdge();
@@ -65,11 +81,15 @@ const inferTextStyles = async ({
 
   try {
     return await evaluatePage<TextStyleInferenceRecommendation[]>({
+      deviceScaleFactor,
       expression: `(async () => {
         const blocks = ${JSON.stringify(
           blocks.map((block) => ({
             ...block,
-            currentDeclarations: block.currentDeclarations ?? {},
+            currentDeclarations: {
+              ...(block.currentDeclarations ?? {}),
+              'font-family': normalizeFontFamily(block.currentDeclarations?.['font-family']),
+            },
             text: normalizeText(block.text),
           })),
         )};
@@ -94,6 +114,7 @@ const inferTextStyles = async ({
           const parsed = Number.parseFloat(String(value ?? ''));
           return Number.isFinite(parsed) ? parsed : null;
         };
+        const clamp01 = (value) => Math.max(0, Math.min(1, value));
         const toHex = (channel) => {
           const value = Math.max(0, Math.min(255, Math.round(channel)));
           return value.toString(16).padStart(2, '0').toUpperCase();
@@ -108,17 +129,16 @@ const inferTextStyles = async ({
           return values;
         };
         const maxAcceptedWidthOverflowRatio = 0.05;
-        const spacingRange = () => [0];
         const getRenderScale = (block) =>
           typeof block.renderScale === 'number' && Number.isFinite(block.renderScale) && block.renderScale > 0
             ? block.renderScale
             : 1;
-        const styleHeightTargets = blocks.map((block) => block.region.height / getRenderScale(block));
+        const styleHeightTargets = blocks.map((block) => block.region.height);
         const clusteredStyleHeight = (height) => {
           const peers = styleHeightTargets.filter((candidate) => Math.abs(candidate - height) <= 2);
           return peers.length >= 2 ? Math.max(...peers) : height;
         };
-        const measure = ({ family, fontSize, fontWeight, letterSpacing, text }) => {
+        const measure = ({ family, fontSize, fontWeight, text }) => {
           ctx.font = fontWeight + ' ' + fontSize + 'px ' + family;
           ctx.textBaseline = 'alphabetic';
           const metrics = ctx.measureText(text);
@@ -126,13 +146,49 @@ const inferTextStyles = async ({
           const right = Number(metrics.actualBoundingBoxRight ?? metrics.width ?? 0);
           const ascent = Number(metrics.actualBoundingBoxAscent ?? fontSize * 0.8);
           const descent = Number(metrics.actualBoundingBoxDescent ?? fontSize * 0.2);
-          const glyphWidth = Math.max(0, left + right);
-          const spacingWidth = Math.max(0, text.length - 1) * letterSpacing;
           return {
             height: Math.max(1, ascent + descent),
-            width: Math.max(1, glyphWidth + spacingWidth),
+            width: Math.max(1, left + right),
           };
         };
+        const wrapText = ({ family, fontSize, fontWeight, maxWidth, text }) => {
+          ctx.font = fontWeight + ' ' + fontSize + 'px ' + family;
+          const chars = Array.from(text);
+          const lines = [];
+          let line = '';
+          for (const char of chars) {
+            const nextLine = line + char;
+            const nextWidth = ctx.measureText(nextLine).width;
+            if (line && nextWidth > maxWidth) {
+              lines.push(line);
+              line = char.trimStart();
+            } else {
+              line = nextLine;
+            }
+          }
+          if (line) lines.push(line);
+          return lines.length ? lines : [text];
+        };
+        const measureLines = ({ family, fontSize, fontWeight, lineHeight, lines }) => {
+          const measures = lines.map((line) =>
+            measure({ family, fontSize, fontWeight, text: line }),
+          );
+          const maxHeight = Math.max(1, ...measures.map((item) => item.height));
+          return {
+            height: lines.length > 1
+              ? Math.max(1, lineHeight * (lines.length - 1) + maxHeight)
+              : maxHeight,
+            lineHeight: maxHeight,
+            width: Math.max(1, ...measures.map((item) => item.width)),
+          };
+        };
+        const CJK_TEXT_RE = /[\\u3400-\\u9fff\\uf900-\\ufaff\\u3040-\\u30ff\\uac00-\\ud7af]/u;
+        const COMPACT_METRIC_TEXT_RE = /^[\\s\\d.,:;+\\-\\u2212\\u00a5\\uffe5\\u0024\\u20ac\\u00a3\\u20a9%/()[\\]{}]+$/u;
+        const COMPACT_METRIC_SIGNAL_RE = /[\\d\\u00a5\\uffe5\\u0024\\u20ac\\u00a3\\u20a9]/u;
+        const usesCompactMetricSizing = (text) =>
+          !CJK_TEXT_RE.test(text) &&
+          COMPACT_METRIC_TEXT_RE.test(text) &&
+          COMPACT_METRIC_SIGNAL_RE.test(text);
         const cropTarget = (region) => {
           if (!targetImage) return null;
           const x = Math.max(0, Math.floor(region.x));
@@ -209,9 +265,31 @@ const inferTextStyles = async ({
             return values[Math.floor(values.length / 2)] ?? bg[channel];
           };
           const fg = [foregroundMedian(0), foregroundMedian(1), foregroundMedian(2)];
-          return { bg, data, fg, height, ink, mask, width };
+          const foregroundDistance =
+            Math.hypot(fg[0] - bg[0], fg[1] - bg[1], fg[2] - bg[2]) /
+            visualSimilarityProfile.channelMaxDistance;
+          const coverage = ink / Math.max(1, width * height);
+          const hasUsableSignal =
+            foregroundDistance >= 0.16 ||
+            coverage >= 0.012 ||
+            (foregroundDistance >= 0.08 && coverage >= 0.004);
+          const signalStrength = hasUsableSignal
+            ? clamp01(foregroundDistance * 2.4 + coverage * 20)
+            : 0;
+          return {
+            bg,
+            data,
+            fg,
+            foregroundDistance,
+            hasUsableSignal,
+            height,
+            ink,
+            mask,
+            signalStrength,
+            width,
+          };
         };
-        const renderCandidate = ({ family, fontSize, fontWeight, height, letterSpacing, text, width }) => {
+        const renderCandidate = ({ family, fontSize, fontWeight, height, lineHeight, lines, text, width }) => {
           const renderCanvas = document.createElement('canvas');
           renderCanvas.width = width;
           renderCanvas.height = height;
@@ -221,13 +299,26 @@ const inferTextStyles = async ({
           renderCtx.fillStyle = '#000';
           renderCtx.font = fontWeight + ' ' + fontSize + 'px ' + family;
           renderCtx.textBaseline = 'alphabetic';
-          const metrics = renderCtx.measureText(text);
-          const left = Number(metrics.actualBoundingBoxLeft ?? 0);
-          const right = Number(metrics.actualBoundingBoxRight ?? metrics.width ?? 0);
-          const ascent = Number(metrics.actualBoundingBoxAscent ?? fontSize * 0.8);
-          const descent = Number(metrics.actualBoundingBoxDescent ?? fontSize * 0.2);
-          const measuredWidth = Math.max(1, left + right + Math.max(0, text.length - 1) * letterSpacing);
-          const measuredHeight = Math.max(1, ascent + descent);
+          const renderLines = Array.isArray(lines) && lines.length ? lines : [text];
+          const lineMetrics = renderLines.map((line) => {
+            const metrics = renderCtx.measureText(line);
+            const left = Number(metrics.actualBoundingBoxLeft ?? 0);
+            const right = Number(metrics.actualBoundingBoxRight ?? metrics.width ?? 0);
+            const ascent = Number(metrics.actualBoundingBoxAscent ?? fontSize * 0.8);
+            const descent = Number(metrics.actualBoundingBoxDescent ?? fontSize * 0.2);
+            return {
+              ascent,
+              descent,
+              left,
+              text: line,
+              width: Math.max(1, left + right),
+            };
+          });
+          const measuredWidth = Math.max(1, ...lineMetrics.map((item) => item.width));
+          const maxLineHeight = Math.max(1, ...lineMetrics.map((item) => item.ascent + item.descent));
+          const measuredHeight = renderLines.length > 1
+            ? Math.max(1, Number(lineHeight ?? maxLineHeight) * (renderLines.length - 1) + maxLineHeight)
+            : maxLineHeight;
           const alphaFromImage = () => {
             const data = renderCtx.getImageData(0, 0, width, height).data;
             const alpha = new Float32Array(width * height);
@@ -241,15 +332,13 @@ const inferTextStyles = async ({
           };
           const drawText = (offsetX, offsetY) => {
             renderCtx.clearRect(0, 0, width, height);
-            if (letterSpacing === 0) {
-              renderCtx.fillText(text, offsetX - left, offsetY + ascent);
-            } else {
-              let cursor = offsetX - left;
-              for (const char of text) {
-                renderCtx.fillText(char, cursor, offsetY + ascent);
-                cursor += renderCtx.measureText(char).width + letterSpacing;
-              }
-            }
+            lineMetrics.forEach((metrics, index) => {
+              renderCtx.fillText(
+                metrics.text,
+                offsetX - metrics.left,
+                offsetY + metrics.ascent + Number(lineHeight ?? maxLineHeight) * index,
+              );
+            });
             return alphaFromImage();
           };
           return { drawText, measuredHeight, measuredWidth };
@@ -311,6 +400,15 @@ const inferTextStyles = async ({
           return best;
         };
 
+        const hexLuminance = (hex) => {
+          if (!hex || hex.length < 4) return 0;
+          const h = hex.startsWith('#') ? hex.slice(1) : hex;
+          const r = parseInt(h.length >= 6 ? h.slice(0, 2) : h[0] + h[0], 16);
+          const g = parseInt(h.length >= 6 ? h.slice(2, 4) : h[1] + h[1], 16);
+          const b = parseInt(h.length >= 6 ? h.slice(4, 6) : h[2] + h[2], 16);
+          return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        };
+
         return blocks.map((block) => {
           const target = block.visualRegion ?? block.region;
           const styleTarget = block.region;
@@ -321,26 +419,43 @@ const inferTextStyles = async ({
           const currentWeight = block.currentDeclarations['font-weight'] ?? '';
           const currentFamily = block.currentDeclarations['font-family'] ?? '';
           const currentColor = block.currentDeclarations['color'] ?? block.color ?? '';
+          const weightColorFactor = 1 + hexLuminance(currentColor) * 3;
           const styleMetricWeight =
             typeof block.styleMetricWeight === 'number' && Number.isFinite(block.styleMetricWeight)
               ? Math.max(0, block.styleMetricWeight)
               : 0;
+          const lineCount =
+            typeof block.lineCount === 'number' && Number.isFinite(block.lineCount) && block.lineCount >= 1
+              ? Math.round(block.lineCount)
+              : 1;
           const lineHeightTarget =
             typeof block.lineHeight === 'number' && Number.isFinite(block.lineHeight)
               ? block.lineHeight
-              : null;
+              : lineCount > 1
+                ? Math.round(block.region.height / lineCount)
+                : null;
+          const styleTargetHeight = lineCount > 1
+            ? styleTarget.height / lineCount
+            : styleTarget.height;
+          const fontSizeTarget = lineCount > 1
+            ? Math.max(8, Math.round((lineHeightTarget ?? styleTargetHeight) * 0.84))
+            : styleTargetHeight;
+          const compactMetricSizing = lineCount === 1 && usesCompactMetricSizing(text);
           const families = currentFamily
             ? [currentFamily, ...fontFamilies.filter((family) => family !== currentFamily)]
             : fontFamilies;
           const weights = ['400', '500', '600', '650', '700', '750', '800', '900', '950'];
-          const targetCrop = cropTarget(target);
-          const targetLikelyIncludesNonText =
-            target.width > target.height * Math.max(1, text.length) * 1.35;
-          const widthWeight = targetLikelyIncludesNonText ? 0.25 : 1.35;
+          const targetPhysical = {
+            x: target.x * renderScale,
+            y: target.y * renderScale,
+            width: target.width * renderScale,
+            height: target.height * renderScale,
+          };
+          const targetCrop = cropTarget(targetPhysical);
           if (currentWeight && !weights.includes(String(currentWeight))) {
             weights.unshift(String(currentWeight));
           }
-          const sizes = sizeRange(styleTarget.height / renderScale);
+          const sizes = sizeRange(fontSizeTarget);
           if (currentSize && !sizes.includes(Math.round(currentSize))) {
             sizes.push(Math.round(currentSize));
             sizes.sort((left, right) => left - right);
@@ -350,98 +465,141 @@ const inferTextStyles = async ({
             !best || candidate.fit.score < best.fit.score;
           const buildCandidate = ({ family, fontSize, fontWeight }) => {
             const renderFontSize = Math.max(1, fontSize * renderScale);
-            const base = measure({
-              family,
-              fontSize: renderFontSize,
-              fontWeight,
-              letterSpacing: 0,
-              text,
-            });
-            let bestForStyle = null;
-            for (const letterSpacing of spacingRange(target.width, base.width, text.length)) {
-              const measured = letterSpacing === 0
-                ? base
-                : measure({ family, fontSize: renderFontSize, fontWeight, letterSpacing, text });
-              const widthDelta = measured.width - target.width;
-              if (widthDelta > target.width * maxAcceptedWidthOverflowRatio) {
-                continue;
+            const targetPhysicalWidth = target.width * renderScale;
+            const targetPhysicalBlockHeight = target.height * renderScale;
+            const styleTargetPhysicalWidth = styleTarget.width * renderScale;
+            const targetLineHeightPhysical =
+              Math.max(1, (lineHeightTarget ?? styleTargetHeight) * renderScale);
+            const targetPhysicalHeight = targetPhysicalBlockHeight;
+            const styleTargetPhysicalHeight = styleTarget.height * renderScale;
+            const targetCssHeight = clusteredStyleHeight(fontSizeTarget);
+            const measuredFontSizeTarget = (() => {
+              if (!compactMetricSizing) return targetCssHeight;
+              const reference = measure({
+                family,
+                fontSize: 100,
+                fontWeight,
+                text,
+              });
+              const heightRatio = reference.height / 100;
+              if (!Number.isFinite(heightRatio) || heightRatio <= 0) {
+                return targetCssHeight;
               }
-              const heightDelta = measured.height - target.height;
-              const styleWidthDelta = measured.width - styleTarget.width;
-              const styleHeightDelta = measured.height - styleTarget.height;
-              const rawTargetCssHeight = styleTarget.height / renderScale;
-              const targetCssHeight = clusteredStyleHeight(rawTargetCssHeight);
-              const idealFontSize =
-                targetCssHeight + (targetCssHeight <= 26 ? 2 : 1);
-              const visualFontSizePrior =
-                Math.abs(fontSize - targetCssHeight) * 5 +
-                Math.max(0, fontSize - targetCssHeight) * 1.5;
-              const familyIndex = Math.max(0, families.indexOf(family));
-              const familyPrior = familyIndex * 2;
-              const weightPrior =
-                Math.abs(Number(fontWeight) - Number(neutralWeight)) / 100 * 0.2;
-              const visual = compareVisual(
-                targetCrop,
-                renderCandidate({
+              return Math.max(
+                targetCssHeight,
+                targetCssHeight / Math.max(0.55, Math.min(1.05, heightRatio)),
+              );
+            })();
+            const candidateLines = lineCount > 1
+              ? wrapText({
                   family,
                   fontSize: renderFontSize,
                   fontWeight,
-                  height: Math.max(1, Math.ceil(targetCrop?.height ?? target.height)),
-                  letterSpacing,
+                  maxWidth: targetPhysicalWidth,
                   text,
-                  width: Math.max(1, Math.ceil(targetCrop?.width ?? target.width)),
-                }),
-              );
-              const score = visual
-                ? visual.score +
-                  Math.abs(styleWidthDelta) * styleMetricWeight +
-                  Math.abs(styleHeightDelta) * styleMetricWeight +
-                  visualFontSizePrior +
-                  familyPrior +
-                  weightPrior +
-                  Math.abs(letterSpacing) * 3
-                : Math.abs(widthDelta) * widthWeight +
-                  Math.abs(heightDelta) * 1.1 +
-                  Math.abs(styleWidthDelta) * styleMetricWeight +
-                  Math.abs(styleHeightDelta) * styleMetricWeight +
-                  Math.abs(fontSize - idealFontSize) * 0.7 +
-                  familyPrior +
-                  weightPrior +
-                  Math.abs(letterSpacing) * 3 +
-                  Math.max(0, letterSpacing) * 1.2;
-              const candidate = {
-                declarations: {
-                  ...(currentColor || targetCrop?.fg
-                    ? { 'color': currentColor || rgbToHex(targetCrop.fg) }
-                    : {}),
-                  'font-family': family,
-                  'font-size': fontSize + 'px',
-                  'font-weight': String(fontWeight),
-                  'letter-spacing': letterSpacing === 0 ? '0' : letterSpacing + 'px',
-                  'line-height': Math.max(
-                    fontSize,
-                    Math.round(lineHeightTarget ?? targetCssHeight),
-                  ) + 'px',
-                },
-                fit: {
-                  heightDelta: round(heightDelta),
-                  score: round(score),
-                  visualDensityDelta: visual ? round(visual.visualDensityDelta) : undefined,
-                  visualIou: visual ? round(visual.visualIou) : undefined,
-                  widthDelta: round(widthDelta),
-                },
-              };
-              if (betterCandidate(candidate, bestForStyle)) {
-                bestForStyle = candidate;
-              }
+                })
+              : [text];
+            const base = lineCount > 1
+              ? measureLines({
+                  family,
+                  fontSize: renderFontSize,
+                  fontWeight,
+                  lineHeight: targetLineHeightPhysical,
+                  lines: candidateLines,
+                })
+              : measure({
+                  family,
+                  fontSize: renderFontSize,
+                  fontWeight,
+                  text,
+                });
+            const widthDelta = base.width - targetPhysicalWidth;
+            if (widthDelta > targetPhysicalWidth * maxAcceptedWidthOverflowRatio) {
+              return null;
             }
-            return bestForStyle;
+            const heightDelta = lineCount > 1 ? 0 : base.height - targetPhysicalHeight;
+            const styleWidthDelta = base.width - styleTargetPhysicalWidth;
+            const styleHeightDelta = lineCount > 1 ? 0 : base.height - styleTargetPhysicalHeight;
+            const lineCountDelta = lineCount > 1
+              ? Math.abs(candidateLines.length - lineCount)
+              : 0;
+            const visualFontSizePrior =
+              Math.abs(fontSize - measuredFontSizeTarget) * (compactMetricSizing ? 2.8 : 4.5) +
+              Math.max(0, measuredFontSizeTarget - fontSize) * (compactMetricSizing ? 1.2 : 2) +
+              Math.max(0, fontSize - measuredFontSizeTarget) * (compactMetricSizing ? 0.9 : 1.25);
+            const widthFitPrior =
+              (Math.abs(widthDelta) / Math.max(1, targetPhysicalWidth)) * 14;
+            const familyIndex = Math.max(0, families.indexOf(family));
+            const familyPrior = familyIndex * 2;
+            const visualSignalStrength = Number(targetCrop?.signalStrength ?? 0);
+            const weightPrior =
+              (Math.abs(Number(fontWeight) - Number(neutralWeight)) / 100 * 1.5 +
+              Math.max(0, Number(fontWeight) - Number(neutralWeight)) / 100 * 2.5) *
+              weightColorFactor *
+              (visualSignalStrength > 0
+                ? Math.max(0.25, 1 - visualSignalStrength * 0.65)
+                : 1);
+            const visual =
+              targetCrop?.hasUsableSignal
+                ? compareVisual(
+                    targetCrop,
+                    renderCandidate({
+                      family,
+                      fontSize: renderFontSize,
+                      fontWeight,
+                      height: Math.max(1, Math.ceil(targetCrop?.height ?? targetPhysicalHeight)),
+                      lineHeight: targetLineHeightPhysical,
+                      lines: candidateLines,
+                      text,
+                      width: Math.max(1, Math.ceil(targetCrop?.width ?? targetPhysicalWidth)),
+                    }),
+                  )
+                : null;
+            const score = visual
+              ? visual.score +
+                widthFitPrior +
+                Math.abs(styleWidthDelta) * styleMetricWeight +
+                Math.abs(styleHeightDelta) * styleMetricWeight +
+                visualFontSizePrior +
+                lineCountDelta * 80 +
+                familyPrior +
+                weightPrior
+              : Math.abs(widthDelta) * 1.1 +
+                Math.abs(heightDelta) * 1.1 +
+                widthFitPrior +
+                Math.abs(styleWidthDelta) * styleMetricWeight +
+                Math.abs(styleHeightDelta) * styleMetricWeight +
+                visualFontSizePrior +
+                lineCountDelta * 80 +
+                familyPrior +
+                weightPrior;
+            return {
+              declarations: {
+                ...(currentColor || targetCrop?.fg
+                  ? { 'color': currentColor || rgbToHex(targetCrop.fg) }
+                  : {}),
+                'font-family': family,
+                'font-size': fontSize + 'px',
+                'font-weight': String(fontWeight),
+                'line-height': Math.max(
+                  1,
+                  Math.round(lineHeightTarget ?? targetCssHeight),
+                ) + 'px',
+              },
+              fit: {
+                heightDelta: round(heightDelta),
+                score: round(score),
+                visualDensityDelta: visual ? round(visual.visualDensityDelta) : undefined,
+                visualIou: visual ? round(visual.visualIou) : undefined,
+                widthDelta: round(widthDelta),
+              },
+            };
           };
 
           const neutralWeight = currentWeight && weights.includes(String(currentWeight))
             ? String(currentWeight)
             : '400';
-          let bestSize = null;
+          const sizePassCandidates = [];
           for (const family of families) {
             for (const fontSize of sizes) {
               const candidate = buildCandidate({
@@ -449,26 +607,67 @@ const inferTextStyles = async ({
                 fontSize,
                 fontWeight: neutralWeight,
               });
-              if (candidate && betterCandidate(candidate, bestSize)) {
-                bestSize = candidate;
+              if (candidate) {
+                sizePassCandidates.push({
+                  candidate,
+                  family,
+                  fontSize,
+                });
               }
             }
           }
 
+          const bestSizeCandidate = sizePassCandidates.sort(
+            (left, right) => left.candidate.fit.score - right.candidate.fit.score,
+          )[0];
           const selectedFontSize =
-            parsePx(bestSize?.declarations?.['font-size']) ?? currentSize ?? sizes[0];
+            parsePx(bestSizeCandidate?.candidate.declarations?.['font-size']) ??
+            currentSize ??
+            sizes[0];
+          const selectedFontSizes = [...new Set([
+            selectedFontSize,
+            selectedFontSize - 1,
+            selectedFontSize + 1,
+            ...sizePassCandidates
+              .slice(0, 6)
+              .map((item) => item.fontSize),
+          ])]
+            .filter((value) => Number.isFinite(value) && sizes.includes(value))
+            .sort((left, right) => left - right);
           let best = null;
           for (const family of families) {
-            for (const fontWeight of weights) {
-              const candidate = buildCandidate({
-                family,
-                fontSize: selectedFontSize,
-                fontWeight,
-              });
-              if (candidate && betterCandidate(candidate, best)) {
-                best = candidate;
+            for (const fontSize of selectedFontSizes) {
+              for (const fontWeight of weights) {
+                const candidate = buildCandidate({
+                  family,
+                  fontSize,
+                  fontWeight,
+                });
+                if (candidate && betterCandidate(candidate, best)) {
+                  best = candidate;
+                }
               }
             }
+          }
+
+          if (!best) {
+            const fallbackSize = selectedFontSize ?? sizes[0] ?? 16;
+            const fallbackLineHeight = Math.max(
+              fallbackSize,
+              Math.round(lineHeightTarget ?? styleTarget.height ?? fallbackSize),
+            );
+            return {
+              id: block.id,
+              text,
+              region: target,
+              declarations: {
+                'font-family': families[0] ?? 'sans-serif',
+                'font-size': fallbackSize + 'px',
+                'font-weight': String(weights[0] ?? '400'),
+                'line-height': fallbackLineHeight + 'px',
+              },
+              fit: { score: 0 },
+            };
           }
 
           return {

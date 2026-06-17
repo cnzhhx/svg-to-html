@@ -56,4 +56,3 @@ const archiveSessionCheckpoint = async ({
 }
 
 export { archiveSessionCheckpoint }
-export type { ArchiveSessionCheckpointStage }
