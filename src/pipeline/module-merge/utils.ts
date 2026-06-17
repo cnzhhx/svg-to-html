@@ -1,9 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { isString } from '../../core/type-guards.js'
 import { getWorkspaceRoot, isRecord, toAbsolutePath, type Region } from '../../core/utils.js'
-
-const isString = (value: unknown): value is string => typeof value === 'string'
 
 const asString = (value: unknown) => (isString(value) ? value : undefined)
 

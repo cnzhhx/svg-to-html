@@ -1,17 +1,6 @@
 import type { Region } from "../core/utils.js";
 import { normalizeAssetRole } from "../core/asset-role.js";
 
-type ModuleOutputDiagnosticSeverity = "error" | "warning";
-
-type ModuleOutputDiagnostic = {
-  code: string;
-  field?: string;
-  file?: string;
-  fixHint?: string;
-  message: string;
-  severity: ModuleOutputDiagnosticSeverity;
-};
-
 type GeneratedAssetManifestEntry = {
   assetRole: string;
   box: Region;
@@ -57,8 +46,4 @@ const createGeneratedAssetManifestEntry = ({
 export {
   GENERATED_ASSET_NO_ORDINARY_TEXT_TREATMENT,
   createGeneratedAssetManifestEntry,
-};
-export type {
-  GeneratedAssetManifestEntry,
-  ModuleOutputDiagnostic,
 };

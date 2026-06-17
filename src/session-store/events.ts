@@ -1,5 +1,6 @@
 import type { EventEmitter } from 'node:events'
 
+import { truncate } from '../core/string-utils.js'
 import type { Session, SessionEvent } from './types.js'
 
 const MAX_SESSION_LOG_CHARS = Number(process.env['SESSION_LOG_MAX_CHARS'] ?? 12000)
@@ -13,10 +14,8 @@ const MAX_AGENT_REASONING_EVENT_CHARS = Number(
   process.env['SESSION_AGENT_REASONING_EVENT_MAX_CHARS'] ?? 4000,
 )
 
-const truncateText = (value: string, maxChars: number) => {
-  if (value.length <= maxChars) return value
-  return `${value.slice(0, maxChars)}\n[truncated ${value.length - maxChars} chars]`
-}
+const truncateText = (value: string, maxChars: number) =>
+  truncate(value, maxChars, (v, m) => `\n[truncated ${v.length - m} chars]`)
 
 const sampleText = (value: string, maxChars: number) => {
   if (maxChars <= 0) return ''

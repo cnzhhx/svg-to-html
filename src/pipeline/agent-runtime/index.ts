@@ -49,7 +49,6 @@ const getAgentRuntime = (
 export { getAgentRuntime };
 export type {
   AgentInput,
-  AgentRuntime,
   AgentRunStreamedResult,
   AgentThread,
   AgentThreadEvent,

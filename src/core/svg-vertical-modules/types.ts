@@ -16,7 +16,7 @@ export type ModuleBox = Box & {
   right: number;
 };
 
-export type ModuleGap = {
+type ModuleGap = {
   cutY: number;
   fromY: number;
   height: number;

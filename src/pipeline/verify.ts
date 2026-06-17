@@ -4,7 +4,26 @@ import {
   resolveArtifactDir,
   resolveRenderTarget,
 } from "../core/utils.js";
-import type { VerifyOptions, VerifyResult } from "./verify/types.js";
+
+type VerifyMode = "full" | "fast";
+
+type VerifyResult = {
+  artifactDir: string;
+  diffRatio: number;
+  renderPngPath: string;
+  svgPngPath: string;
+  mode?: VerifyMode;
+  sourceBasis?: string;
+  sourceRenderMode?: "svg-image" | "html";
+};
+
+type VerifyOptions = {
+  mode?: VerifyMode;
+  renderEntryPath: string;
+  scale?: number;
+  sourceBasis?: string;
+  sourceHtmlPath?: string;
+};
 
 const createPixelDiffWithRetry = async (
   options: Parameters<typeof createPixelDiff>[0],
@@ -82,5 +101,5 @@ const verifyDesign = async (
   return result;
 };
 
-export type { VerifyResult };
+export type { VerifyMode, VerifyResult };
 export { verifyDesign };

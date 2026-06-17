@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { isRecord, writeJsonFile } from "../utils.js";
+import { isRecord } from "../utils.js";
+import { writeJsonFile } from "../file-io.js";
 import {
   COMPONENT_LIBRARY_INSTALL_REGISTRY,
   COMPONENT_LIBRARY_INSTALL_TIMEOUT_MS,
@@ -255,11 +256,6 @@ const ensureComponentLibraryDependenciesInstalled = async (id: string) => {
 
 const writeComponentLibraryMeta = writeMeta;
 
-const writeTextFile = async (filePath: string, content: string) => {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, content, "utf8");
-};
-
 export {
   deleteComponentLibrary,
   ensureComponentLibraryDependenciesInstalled,
@@ -268,5 +264,4 @@ export {
   loadComponentLibraryDescriptor,
   writeComponentLibraryDescriptor,
   writeComponentLibraryMeta,
-  writeTextFile,
 };

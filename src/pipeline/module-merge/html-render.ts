@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import { safeDecodeUri } from "../../core/io.js";
+import { safeDecodeUri } from "../../core/file-io.js";
 import {
   MODULE_LOCAL_ASSET_DIR,
   getAllowedAssetPathValues,

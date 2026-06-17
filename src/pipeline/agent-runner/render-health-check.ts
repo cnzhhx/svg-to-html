@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { evaluatePage, launchEdge } from "../../core/cdp.js";
-import startStaticServer from "../../core/static-server.js";
+import { startStaticServer } from "../../core/static-server.js";
 
 /**
  * Post-merge render health check for framework (vue/react) output.

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
+import { isString } from "../core/type-guards.js";
 import {
   getWorkspaceRoot,
   isRecord,
@@ -12,8 +13,6 @@ import {
 type JsonRecord = Record<string, unknown>;
 
 const VALUE_FLAGS = new Set(["--output-dir"]);
-
-const isString = (value: unknown): value is string => typeof value === "string";
 
 const asNumber = (value: unknown) => {
   if (typeof value === "number" && Number.isFinite(value)) return value;

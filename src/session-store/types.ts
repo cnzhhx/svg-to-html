@@ -230,13 +230,11 @@ type SessionEvent =
     }
 
 export type {
-  OutputFormat,
   PipelineStep,
   Session,
   SessionEvent,
   SessionMessage,
   SessionMessageRole,
-  SessionOutputTarget,
   PendingUserMessage,
   SessionPersistenceState,
   SessionResult,

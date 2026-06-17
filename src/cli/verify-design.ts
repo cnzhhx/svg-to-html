@@ -1,4 +1,4 @@
-import type { VerifyMode } from "../pipeline/verify/types.js";
+import type { VerifyMode } from "../pipeline/verify.js";
 
 const MODE_FLAGS = new Set(["--mode"]);
 const MODE_INLINE_PREFIXES = ["--mode="];

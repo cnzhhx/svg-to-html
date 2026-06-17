@@ -560,5 +560,5 @@ const createModuleTextBlocks = async ({
   }
 };
 
-export type { ModuleTextBlock, ModuleTextBlocksFile };
+export type { ModuleTextBlocksFile };
 export { createModuleTextBlocks };

@@ -251,9 +251,3 @@ export {
   createComponentAdoptionPlan,
   getComponentAdoptionPlanPath,
 };
-export type {
-  ComponentAdoptionCandidate,
-  ComponentAdoptionIntent,
-  ComponentAdoptionPlan,
-  ComponentAdoptionPlanModule,
-};

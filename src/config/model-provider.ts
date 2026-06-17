@@ -387,5 +387,4 @@ export { resolveModelConfigForRole };
 export type {
   ModelConfigRole,
   ModelProviderConfig,
-  ModelWireApi,
 };

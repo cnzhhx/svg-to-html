@@ -481,5 +481,4 @@ export { createFrameworkComponentImportPlan, loadComponentLibraryForMerge };
 export type {
   ComponentImportModule,
   FrameworkComponentImportPlan,
-  ResolvedComponentImport,
 };

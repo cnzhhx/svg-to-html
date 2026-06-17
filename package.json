@@ -6,6 +6,7 @@
   "scripts": {
     "build:mcp": "node scripts/build-mcp.mjs",
     "doctor": "node scripts/doctor.mjs",
+    "lint:types": "tsc --noEmit",
     "start": "tsx src/server.ts",
     "task:generate": "tsx src/cli/generate-design.ts",
     "task:resolve-container-layout": "tsx src/cli/resolve-container-layout.ts",
@@ -21,15 +22,12 @@
     "task:verify-module-framework": "tsx src/cli/verify-module-framework.ts"
   },
   "dependencies": {
-    "@openai/codex-sdk": "^0.120.0",
     "@vitejs/plugin-react": "^6.0.2",
     "@vitejs/plugin-vue": "^6.0.7",
     "archiver": "^7.0.1",
     "express": "^5.1.0",
     "multer": "^1.4.5-lts.2",
     "nanoid": "^5.1.5",
-    "openai": "^4.104.0",
-    "prettier": "^3.5.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "vite": "^8.0.16",
@@ -39,9 +37,8 @@
   "devDependencies": {
     "@types/archiver": "^7.0.0",
     "@types/express": "^5.0.2",
+    "@types/express-serve-static-core": "^5.0.2",
     "@types/multer": "^1.4.12",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },

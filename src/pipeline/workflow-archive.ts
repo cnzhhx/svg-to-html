@@ -2,6 +2,7 @@ import path from "node:path";
 import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
+import { truncate } from "../core/string-utils.js";
 import { writeJsonFile, writeTextFile } from "../core/utils.js";
 
 import type {
@@ -115,10 +116,12 @@ const withManifestWriteLock = async <T>(
   }
 };
 
-const truncateArchiveText = (value: string) => {
-  if (value.length <= WORKFLOW_ARCHIVE_TEXT_MAX_CHARS) return value;
-  return `${value.slice(0, WORKFLOW_ARCHIVE_TEXT_MAX_CHARS)}\n[archive text truncated ${value.length - WORKFLOW_ARCHIVE_TEXT_MAX_CHARS} chars]`;
-};
+const truncateArchiveText = (value: string) =>
+  truncate(
+    value,
+    WORKFLOW_ARCHIVE_TEXT_MAX_CHARS,
+    (v, m) => `\n[archive text truncated ${v.length - m} chars]`,
+  );
 
 const shouldWriteFullMaterials = ({
   round,

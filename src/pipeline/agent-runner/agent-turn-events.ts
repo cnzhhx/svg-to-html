@@ -1,3 +1,4 @@
+import { truncate } from '../../core/string-utils.js'
 import { sessionStore } from '../../session-store.js'
 import type {
   AgentThreadEvent,
@@ -44,9 +45,7 @@ const MAX_EVENT_METRIC_THINK_SAMPLES = Math.max(
 )
 
 const truncateLine = (line: string) =>
-  line.length > MAX_AGENT_STDOUT_LOG_LINE_CHARS
-    ? `${line.slice(0, MAX_AGENT_STDOUT_LOG_LINE_CHARS)}…`
-    : line
+  truncate(line, MAX_AGENT_STDOUT_LOG_LINE_CHARS, '…')
 
 const logCommandOutputPreview = (sessionId: string, output: string) => {
   const trimmed = output.trim()
@@ -71,11 +70,8 @@ const logCommandOutputPreview = (sessionId: string, output: string) => {
   }
 }
 
-const truncateForEvent = (value: string, maxChars: number) => {
-  if (maxChars <= 0) return ''
-  if (value.length <= maxChars) return value
-  return value.slice(0, maxChars)
-}
+const truncateForEvent = (value: string, maxChars: number) =>
+  truncate(value, maxChars, '')
 
 const compactUnknownForEvent = (value: unknown, maxChars: number) => {
   if (value === undefined) return undefined

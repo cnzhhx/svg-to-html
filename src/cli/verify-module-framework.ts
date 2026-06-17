@@ -6,7 +6,7 @@ import type { SvgVerticalModule } from "../core/svg-vertical-modules/types.js";
 import {
   normalizePlanModules,
   resolveRequiredPath,
-} from "./module-plan-utils.js";
+} from "./cli-utils.js";
 
 const VALUE_FLAGS = new Set([
   "--module-dir",

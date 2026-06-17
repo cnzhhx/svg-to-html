@@ -6,6 +6,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 import type { ModelProviderConfig } from "../../config/model-provider.js";
+import { truncate } from "../../core/string-utils.js";
 import type {
   AgentInput,
   AgentRuntime,
@@ -64,9 +65,11 @@ const compactSample = (value: string, maxChars: number) =>
   value.length <= maxChars ? value : `${value.slice(0, maxChars)}...`;
 
 const truncateReasoningForEvent = (text: string) =>
-  text.length <= MAX_REASONING_EVENT_CHARS
-    ? text
-    : `${text.slice(0, MAX_REASONING_EVENT_CHARS)}\n[reasoning truncated for session event: ${text.length} chars total]`;
+  truncate(
+    text,
+    MAX_REASONING_EVENT_CHARS,
+    (value) => `\n[reasoning truncated for session event: ${value.length} chars total]`,
+  );
 
 const appendTailSample = (
   current: string,

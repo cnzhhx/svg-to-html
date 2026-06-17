@@ -5,6 +5,8 @@ type Box = {
   y: number
 }
 
+type Region = Box & { id?: string }
+
 type BoxSize = Pick<Box, 'height' | 'width'>
 
 const areaOf = (box: BoxSize) => box.width * box.height
@@ -84,7 +86,7 @@ const unionBoxes = (boxes: Box[]): Box | null => {
 
 const uniqueStrings = (strings: string[]): string[] => [...new Set(strings)]
 
-export type { Box }
+export type { Box, Region }
 export {
   areaOf,
   bottomOf,

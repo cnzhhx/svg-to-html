@@ -1,41 +1,123 @@
 # SVG to HTML Toolkit
 
-这是一个把 SVG 设计稿还原成真实 HTML/CSS（也支持 Vue / React）的工具链。流程会读取 `workspace/sessions/...` 下的设计 SVG，做结构解析、资源识别、模块规划、模块裁剪和模块语义预处理，然后调用大模型 agent 逐模块还原页面，再通过截图 diff 验证，最后把模块片段合并成最终页面。
+将 SVG 设计稿还原为真实 HTML/CSS（同时支持 Vue / React）的自动化工具链。它读取 `workspace/sessions/...` 下的设计 SVG，经过结构解析、资源识别、模块规划、模块裁剪、语义预处理，再调用大模型 agent 逐模块还原页面，最后通过截图像素 diff 验证并合并为最终页面。
 
-服务端是 TypeScript ESM 应用。HTTP 入口在 `src/server.ts`，所有路由挂在 `/transformer` 前缀下，默认端口 `81`（可用 `PORT` 环境变量覆盖，工作目录可用 `WORKSPACE` 覆盖）。CLI 工具集中在 `src/cli/`。会话状态、设计稿、产物和报告统一写入 `workspace/`。Agent 提示词在 `src/prompts/`，模型与运行时选择在 `config/model-provider.json`。
+服务端是 TypeScript ESM 应用，HTTP 入口为 `src/server.ts`，所有业务路由挂在 `/transformer` 前缀下，默认端口 `81`（可用 `PORT` 覆盖，工作目录可用 `WORKSPACE` 覆盖）。CLI 工具集中在 `src/cli/`。会话状态、设计稿、产物与报告统一写入 `workspace/`。Agent 提示词位于 `src/prompts/`，模型与运行时选择配置在 `config/model-provider.json`。
+
+## 目录
+
+- [功能与输出格式](#功能与输出格式)
+- [环境要求](#环境要求)
+- [快速开始](#快速开始)
+- [常用命令](#常用命令)
+- [CLI 工具](#cli-工具)
+- [整体流程](#整体流程)
+- [模块拆分策略](#模块拆分策略)
+- [模块语义预处理与还原](#模块语义预处理与还原)
+- [验证](#验证)
+- [浏览器 / CDP 基础设施](#浏览器--cdp-基础设施)
+- [MCP browser_eval Server](#mcp-browsereval-server)
+- [多运行时与模型配置](#多运行时与模型配置)
+- [HTTP API](#http-api)
+- [目录结构](#目录结构)
+- [关键模块](#关键模块)
+- [输出原则](#输出原则)
+- [模块产物策略](#模块产物策略)
+- [相关文档](#相关文档)
+
+## 功能与输出格式
+
+- **HTML**：最终产物为 `<design>.html`，source entry 与 render entry 相同。
+- **Vue**：source entry 为 `<design>.vue`，产物经 Vite 构建后输出到 `artifacts/framework-render/vue/`，最终 render entry 仍为 `<design>.html`。
+- **React**：source entry 为 `<design>.tsx`，样式为 `<design>.css`，构建输出到 `artifacts/framework-render/react/`，最终 render entry 为 `<design>.html`。
+
+模块内的 source fragment 命名：
+
+- Vue：`source.fragment.vue.html`
+- React：`source.fragment.jsx`
+- HTML：`preview.fragment.html`
+
+## 环境要求
+
+- Node.js（建议 20+）
+- pnpm（项目使用 `packageManager: pnpm@10.11.0`）
+- Chrome / Chromium / Edge 浏览器二进制（用于截图、diff、MCP `browser_eval`）
+- 可选：opencode CLI（用于 `opencode` runtime）
+
+安装 Linux 环境 Chrome 可使用 `scripts/install-linux.sh`。
+
+## 快速开始
+
+```bash
+# 1. 安装依赖
+pnpm install
+
+# 2. 检查运行环境（Node / pnpm / 浏览器 / MCP 构建产物）
+pnpm run doctor
+
+# 3. 配置模型
+# 复制示例配置并按需填写：
+cp config/model-provider.example.json config/model-provider.json
+
+# 4. 打包 MCP browser-eval server（首次或 src/mcp 变更后需要）
+pnpm run build:mcp
+
+# 5. 启动 HTTP 服务
+pnpm start
+# 默认访问 http://localhost:81/transformer
+```
+
+然后可通过前端页面上传 SVG，或调用 `/transformer/api/upload` 创建 session。
 
 ## 常用命令
 
 ```bash
-pnpm install
-pnpm start                # 启动 HTTP 服务（默认 http://localhost:81/transformer）
-pnpm run build:mcp        # 打包 MCP browser-eval server -> dist/browser-mcp-server.mjs
-pnpm exec tsc --noEmit    # 类型检查
+pnpm install                # 安装依赖
+pnpm start                  # 启动 HTTP 服务（默认 http://localhost:81/transformer）
+pnpm run doctor             # 运行环境检查
+pnpm run build:mcp          # 打包 MCP browser-eval server -> dist/browser-mcp-server.mjs
+pnpm exec tsc --noEmit      # 类型检查
 ```
 
 ## CLI 工具
 
-`src/cli/` 下提供了一组命令行入口，既可以单独调试预处理步骤，也可以跑完整 preflight / verify：
+`src/cli/` 下提供了一组命令行入口，可单独调试预处理步骤，也可跑完整 preflight / verify。
 
-| 命令 | 说明 | 常用参数 |
-|------|------|----------|
-| `generate-design.ts` | 确定性 preflight：container-layout → semi-auto scaffold → 初始化格式入口 | `<svg-path>` `--format html\|vue\|react` `--scale <n>` `--force` |
-| `verify-design.ts` | 页面级像素 diff | `<svg-path>` `--render-entry <html>` `--mode fast\|full` `--fast` `--scale <n>` |
+| 命令文件 | 说明 | 常用参数 |
+|----------|------|----------|
+| `generate-design.ts` | 确定性 preflight：container-layout → semi-auto scaffold → 初始化格式入口 | `<svg-path>` `--format html\|vue\|react` `[--force\|force]` `--scale <n>` |
+| `verify-design.ts` | 页面级像素 diff | `<svg-path>` `--render-entry <html>` `[--fast\|--mode fast\|full]` `--scale <n>` |
 | `verify-module-design.ts` | 模块级 local verify（封装 `module-local-verify`） | `--module-dir <dir>` `--module-id <id>` `--module-plan <path>` `--module-svg <path>` `--scaffold/--scaffold-html <path>` `--round <n>` `--scale <n>` |
-| `split-svg-modules.ts` | 独立模块规划 | `<svg-path>` `--mode auto\|single\|vertical` `--planner auto\|script\|model` `--planner-retries <n>` `--min-gap <px>` `--scale <n>` `--artifact-dir <dir>` |
+| `verify-module-framework.ts` | 框架模块本地构建校验（Vue / React） | `--module-dir <dir>` `--module-id <id>` `--format vue\|react` `--module-plan <path>` `--module-svg <path>` `--scaffold/--scaffold-html <path>` `--round <n>` `--scale <n>` |
+| `split-svg-modules.ts` | 独立模块规划 | `<svg-path>` `--mode auto\|single\|vertical` `--planner auto\|script\|model` `--planner-retries <n>` `--min-gap <px>` `--scale <n>` `--container-layout <json>` `--artifact-dir <dir>` |
 | `resolve-container-layout.ts` | 只跑 container-layout 解析 | `<svg-path>` `--scale <n>` |
-| `compile-component-library.ts` | 编译 Vue / React 组件库 | `--source-dir <path>` **或** `--url <git-url>` `--framework vue\|react` `--force` `--skip-install` |
-| `extract-module-text.ts` | 抽取模块文本块并写入 `module-semantic.json` | `--module-dir <dir>` `--module-id <id>` `--module-semantic <json>` `--module-svg <path>` `--scale <n>` |
-| `inspect-module-svg.ts` | SVG 源码轻量检查 | `--module-dir <dir>` `--module-svg <path>` `--format json\|text` `--max-elements <n>` `--tag <tag,...>` |
-| `export-svg-node-asset.ts` | 从 `module.svg` 导出单个/多个节点为 PNG 资产 | `--module-dir <dir>` `--output <assets/name.png>` `--index <n>` / `--selector <css>` / `--node-id <id>` `--padding <px>` `--scale <n>` `--asset-role <role>` `--register-semantic` |
+| `compile-component-library.ts` | 编译 Vue / React 组件库 | `--source-dir <path>` **或** `--url <git-url>` `--framework vue\|react` `[--force]` |
+| `extract-module-text.ts` | 抽取模块文本块并写回 `module-semantic.json` | `--module-dir <dir>` `--module-id <id>` `--semantic/--module-semantic <json>` `--module-svg <path>` `--scale <n>` |
+| `inspect-module-svg.ts` | SVG 源码轻量检查 | `--module-dir <dir>` `--module-svg <path>` `--format json\|text` `--max-elements <n>` `--from-index <n>` `--tag <tag,...>` |
+| `export-svg-node-asset.ts` | 从 `module.svg` 导出单个/多个节点为 PNG 资产 | `--module-dir <dir>` `--output <assets/name.png>` `--index <n>` / `--selector <css>` / `--node-id <id>` `[--register-semantic]` `[--allow-text]` `[--padding <px>]` `--scale <n>` `--asset-role <role>` `--text-treatment <treatment>` |
 | `browser-query.ts` | 开发调试：对模块渲染后的 fragment 执行 DOM 查询 | `<module-dir>` `--script '<js>'` `--script-file <file>` |
 | `analyze-session-cost.ts` | 聚合多 session 的 token / 时间 / diff 指标 | `[session-id-or-dir...]` `--output-dir <dir>` |
 
-`package.json` 提供对应的 `task:*` 脚本（如 `task:generate`、`task:verify`、`task:compile-component-library` 等），可直接 `pnpm run task:<name>` 调用。
+`package.json` 提供了对应的 `task:*` 脚本，可直接调用：
+
+```bash
+pnpm run task:generate
+pnpm run task:verify
+pnpm run task:verify-module
+pnpm run task:verify-module-framework
+pnpm run task:split-svg-modules
+pnpm run task:resolve-container-layout
+pnpm run task:compile-component-library
+pnpm run task:extract-module-text
+pnpm run task:inspect-module-svg
+pnpm run task:export-svg-node-asset
+pnpm run task:browser-query
+pnpm run task:analyze-session-cost
+```
 
 `generate-design.ts` 是确定性的 preflight：它只生成结构产物和初始 scaffold，不是完成态还原。完整的 agent 还原通过 HTTP 服务的 session 流水线驱动。
 
-`verify-design.ts` 只接受 `--render-entry` / `--render-entry-path`、`--mode fast|full`、`--fast`、`--scale`。它把 SVG 与 render entry 渲染成 PNG 并输出页面级像素 `diffRatio`。模块级区域 diff 在模块流水线内部完成（`agent-runner/module-local-verify.ts`、`module-framework-local-verify.ts`），verify CLI 不接受 `--regions`，传入会被当作未知参数报错。
+`verify-design.ts` 只接受 `--render-entry` / `--render-entry-path`、`--mode fast|full`、`--fast`、`--scale`。它把 SVG 与 render entry 渲染成 PNG 并输出页面级像素 `diffRatio`。模块级区域 diff 在模块流水线内部完成（`agent-runner/module-local-verify.ts`、`module-framework-local-verify.ts`），该 CLI 不接受 `--regions`，传入会被当作未知参数报错。
 
 ## 整体流程
 
@@ -58,7 +140,7 @@ flowchart TD
 ```
 
 - preflight 由 `src/pipeline/agent-runner/preflight.ts` 编排，包含 6 步：`resolve container-layout` → `build semi-auto scaffold` → `scaffold initialize` → `plan adaptive modules` → `crop module svgs` → `publish preflight artifacts`。完成后会把所有产物路径写入 session result，便于中断恢复。
-- 模块还原由 `src/pipeline/agent-runner/module-pipeline-v2.ts` 编排，模块之间并行执行，受 `MAX_PARALLEL_MODULE_AGENTS` 限制；受 `run-queue.ts` 全局 session 队列约束。
+- 模块还原由 `src/pipeline/agent-runner/module-pipeline-v2.ts` 编排，模块之间并行执行，受 `MAX_PARALLEL_MODULE_AGENTS` 限制，并受 `run-queue.ts` 全局 session 队列约束。
 - 每个模块 agent turn 内支持 `verify-design` / `verify-module-design` / MCP `browser_eval` 命令，并自动根据 diff 改善/退化做备份与回滚。
 - 若上传时指定了 `componentLibraryId`（仅 `vue`/`react`），会生成组件库上下文与采纳计划，模块产物需通过框架本地构建校验。
 
@@ -119,14 +201,6 @@ flowchart TD
 - 环境开关：`BROWSER_POOL_DISABLED`、`BROWSER_POOL_IDLE_MS`、`STATIC_SERVER_POOL_DISABLED`、`STATIC_SERVER_POOL_IDLE_MS`、`CDP_SEND_TIMEOUT_MS`、`CDP_READY_TIMEOUT_MS`。
 - SVG 可见性剪枝：`SVG_VISIBILITY_PRUNE=1` 开启，`SVG_VISIBILITY_PRUNE_MAX_CANDIDATES` 控制候选数量。
 
-## 多格式输出
-
-- `html`：最终产物为 `<design>.html`，source entry 与 render entry 相同。
-- `vue`：source entry 为 `<design>.vue`，产物经 Vite 构建后输出到 `artifacts/framework-render/vue/`，最终 render entry 仍是 `<design>.html`。
-- `react`：source entry 为 `<design>.tsx`，样式为 `<design>.css`，构建输出到 `artifacts/framework-render/react/`，最终 render entry 为 `<design>.html`。
-
-模块内的 source fragment 命名：`source.fragment.vue.html`（Vue） / `source.fragment.jsx`（React） / `preview.fragment.html`（HTML）。
-
 ## MCP browser_eval Server
 
 `src/mcp/browser-mcp-server.ts` 构建后生成 `dist/browser-mcp-server.mjs`，由 opencode runtime 作为 MCP server 启动：
@@ -148,18 +222,18 @@ pnpm run build:mcp
 
 角色区分：`moduleAgent`（模块生成/修复）、`text`（其它文本任务）和 `vision`（其它视觉相关任务）。可用以下 `MODULE_AGENT_*` / `TEXT_*` / `VISION_*` 环境变量覆盖对应角色的配置：
 
-- `MODULE_AGENT_MODEL_CONFIG_ID` / `TEXT_MODEL_CONFIG_ID` / `VISION_MODEL_CONFIG_ID`（或 `MODEL_CONFIG_ID`）
-- `MODULE_AGENT_MODEL_PROVIDER` / `TEXT_MODEL_PROVIDER` / `VISION_MODEL_PROVIDER`
-- `MODULE_AGENT_MODEL_API_KEY` / `TEXT_MODEL_API_KEY` / `VISION_MODEL_API_KEY`
-- `MODULE_AGENT_MODEL_BASE_URL` / `TEXT_MODEL_BASE_URL` / `VISION_MODEL_BASE_URL`
-- `MODULE_AGENT_MODEL_ID` / `TEXT_MODEL_ID` / `VISION_MODEL_ID`
-- `MODULE_AGENT_MODEL_CLI_ID` / `TEXT_MODEL_CLI_ID` / `VISION_MODEL_CLI_ID`
-- `MODULE_AGENT_MODEL_CONTEXT_WINDOW` / `TEXT_MODEL_CONTEXT_WINDOW` / `VISION_MODEL_CONTEXT_WINDOW`
-- `MODULE_AGENT_MODEL_MAX_OUTPUT_TOKENS` / `TEXT_MODEL_MAX_OUTPUT_TOKENS` / `VISION_MODEL_MAX_OUTPUT_TOKENS`
-- `MODULE_AGENT_MODEL_RUNTIME` / `TEXT_MODEL_RUNTIME` / `VISION_MODEL_RUNTIME`（当前固定为 `opencode`）
-- `MODULE_AGENT_MODEL_REASONING_EFFORT` / `TEXT_MODEL_REASONING_EFFORT` / `VISION_MODEL_REASONING_EFFORT`（`low` / `medium` / `high` / `xhigh`）
-- `MODULE_AGENT_MODEL_RUNTIME_TRACE` / `TEXT_MODEL_RUNTIME_TRACE` / `VISION_MODEL_RUNTIME_TRACE`
-- `MODULE_AGENT_MODEL_RUNTIME_TRACE_SAMPLE_CHARS` / `TEXT_MODEL_RUNTIME_TRACE_SAMPLE_CHARS` / `VISION_MODEL_RUNTIME_TRACE_SAMPLE_CHARS`
+- `*_MODEL_CONFIG_ID`（或 `MODEL_CONFIG_ID`）
+- `*_MODEL_PROVIDER`
+- `*_MODEL_API_KEY`
+- `*_MODEL_BASE_URL`
+- `*_MODEL_ID`
+- `*_MODEL_CLI_ID`
+- `*_MODEL_CONTEXT_WINDOW`
+- `*_MODEL_MAX_OUTPUT_TOKENS`
+- `*_MODEL_RUNTIME`（当前固定为 `opencode`）
+- `*_MODEL_REASONING_EFFORT`（`none` / `minimal` / `low` / `medium` / `high` / `xhigh`）
+- `*_MODEL_RUNTIME_TRACE`
+- `*_MODEL_RUNTIME_TRACE_SAMPLE_CHARS`
 
 推理努力程度默认值：`agentUnit=high`、`support=low`，可用 `AGENT_UNIT_REASONING_EFFORT`、`SUPPORT_AGENT_REASONING_EFFORT`、`DEFAULT_AGENT_REASONING_EFFORT` 调整。`OPENCODE_CLI_PATH` 可指定 opencode CLI 路径。
 
@@ -170,7 +244,7 @@ pnpm run build:mcp
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | ALL | `/transformer/health` | 健康检查，返回 `ok` |
-| POST | `/transformer/api/upload` | 上传 SVG，创建 session。字段：`svg`（文件）、`outputFormat`、`scale`、`sessionCount`、`componentLibraryId` |
+| POST | `/transformer/api/upload` | 上传 SVG，创建 session。字段：`svg`（文件）、`outputFormat`、`scale`（1 或 2）、`sessionCount`（1-20）、`componentLibraryId` |
 | GET | `/transformer/api/sessions` | 列出 sessions |
 | GET | `/transformer/api/sessions/:id` | 查询单个 session |
 | POST | `/transformer/api/sessions/:id/start` | 启动/重跑还原流水线 |
@@ -181,7 +255,7 @@ pnpm run build:mcp
 | GET | `/transformer/api/runtime` | 运行时信息：浏览器路径、并发数、阈值等 |
 | GET | `/transformer/api/component-libraries` | 列出组件库 |
 | GET | `/transformer/api/component-libraries/:id` | 查询单个组件库 |
-| POST | `/transformer/api/component-libraries/compile` | 同步编译组件库（`framework`、`sourceDir`/`url`、`force`/`overwrite`、`skipInstall`） |
+| POST | `/transformer/api/component-libraries/compile` | 同步编译组件库（`framework`、`sourceDir`/`url`、`force`/`overwrite`） |
 | POST | `/transformer/api/component-libraries/compile-jobs` | 异步编译任务，返回 202 + job |
 | GET | `/transformer/api/component-libraries/compile-jobs` | 列出编译任务 |
 | GET | `/transformer/api/component-libraries/compile-jobs/:jobId` | 查询单个编译任务 |
@@ -212,6 +286,8 @@ src/
 public/                   前端资源
 config/                   model-provider 配置
 workspace/                session 状态与产物
+scripts/                  安装脚本、MCP 构建脚本、doctor
+example/                  示例对比图与产物
 dist/                     MCP server 构建产物
 ```
 
@@ -284,4 +360,4 @@ dist/                     MCP server 构建产物
 - `AGENTS.md`：给大模型 agent 的项目约束与还原规则（主参考）。
 - `src/prompts/`：还原 prompt 主体规则与提示词构造器。
 - `config/model-provider.example.json`：模型与运行时配置示例（复制为 `config/model-provider.json` 后按需填写）。
-- `docs/`：设计文档与分析报告。
+- `example/`：示例对比图与产物。

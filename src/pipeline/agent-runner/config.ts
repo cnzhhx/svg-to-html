@@ -1,10 +1,10 @@
 const MAX_CONCURRENT_AGENTS = Number(
   process.env['MAX_CONCURRENT_AGENTS'] ??
-    (process.env['NODE_ENV'] === 'production' ? 1 : 1),
+    (process.env['NODE_ENV'] === 'production' ? 1 : 2),
 )
 
 const MAX_PARALLEL_MODULE_AGENTS = Number(
-  process.env['MAX_PARALLEL_MODULE_AGENTS'] ?? 3,
+  process.env['MAX_PARALLEL_MODULE_AGENTS'] ?? 10,
 )
 
 const MAX_AGENT_TURN_COMMANDS = Number(

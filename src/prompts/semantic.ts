@@ -149,4 +149,4 @@ export {
   LAYOUT_TARGET_RULE,
   INPUT_CONTRACT_INSTRUCTION,
 };
-export type { SemanticProbeNode, SemanticProbeSheetCell };
+export type { SemanticProbeSheetCell };
