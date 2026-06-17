@@ -112,6 +112,7 @@ flowchart TD
 截图、diff、MCP `browser_eval` 都依赖 Chrome / Edge 浏览器二进制：
 
 - 浏览器二进制按 `CHROMIUM_PATH` → `CHROME_PATH` → `BROWSER_PATH` → 自动探测的顺序解析。
+- Linux x64 环境建议使用官方 `google-chrome-stable`，`scripts/install-linux.sh` 会优先安装官方 Chrome；也可以手动设置 `CHROMIUM_PATH=/usr/bin/google-chrome-stable`。部分发行版仓库 Chromium 可能对 SVG `<defs>`/`pattern` 资源节点返回非预期 bbox，导致语义 probe 误判资源节点为可渲染节点。
 - `src/core/cdp.ts` 负责 CDP 客户端、浏览器进程池与页面截图。
 - `src/core/browser-session.ts` 为每个模块维护持久 CDP tab，用于低延迟 DOM 探测。
 - `src/core/static-server.ts` 提供本地静态文件服务池，供渲染与 diff 使用。

@@ -7,6 +7,8 @@ OS_NAME="$(uname -s)"
 NODE_VERSION="${NODE_VERSION:-22.16.0}"
 PNPM_VERSION="${PNPM_VERSION:-10.11.0}"
 OPENCODE_VERSION="${OPENCODE_VERSION:-1.17.7}"
+GOOGLE_CHROME_DEB_URL="${GOOGLE_CHROME_DEB_URL:-https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb}"
+GOOGLE_CHROME_RPM_URL="${GOOGLE_CHROME_RPM_URL:-https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm}"
 
 SKIP_SYSTEM_DEPS="${SKIP_SYSTEM_DEPS:-0}"
 SKIP_NODE_INSTALL="${SKIP_NODE_INSTALL:-0}"
@@ -114,7 +116,7 @@ detect_browser() {
   fi
 
   local candidate
-  for candidate in chromium chromium-browser google-chrome google-chrome-stable chrome microsoft-edge microsoft-edge-stable; do
+  for candidate in google-chrome-stable google-chrome chrome chromium chromium-browser microsoft-edge microsoft-edge-stable; do
     if command -v "$candidate" >/dev/null 2>&1; then
       return 0
     fi
@@ -168,17 +170,26 @@ install_linux_apt_deps() {
     packages+=(fonts-noto-cjk)
   fi
 
+  run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+
   if [ "$SKIP_BROWSER_INSTALL" != "1" ]; then
-    if apt-cache show chromium >/dev/null 2>&1; then
-      packages+=(chromium)
-    elif apt-cache show chromium-browser >/dev/null 2>&1; then
-      packages+=(chromium-browser)
+    if browser_env_configured; then
+      log "browser path is configured by env; skip browser installation"
+    elif detect_official_chrome; then
+      log "official Google Chrome is already installed"
+    elif [ "$(node_arch)" = "x64" ]; then
+      local chrome_deb
+      chrome_deb="$(mktemp -t google-chrome-stable.XXXXXX.deb)"
+      log "installing official Google Chrome stable"
+      curl -fsSL "$GOOGLE_CHROME_DEB_URL" -o "$chrome_deb"
+      run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$chrome_deb"
+      rm -f "$chrome_deb"
+    elif detect_browser; then
+      log "official Google Chrome stable DEB is only available for x64; using existing browser from PATH"
     else
-      log "no chromium package found in apt; install Chrome/Chromium manually and set CHROMIUM_PATH"
+      log "official Google Chrome stable DEB is only available for x64; install Chrome/Chromium manually and set CHROMIUM_PATH"
     fi
   fi
-
-  run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
 }
 
 rpm_package_available() {
@@ -186,6 +197,14 @@ rpm_package_available() {
   local package="$2"
 
   "$manager" -q "$package" >/dev/null 2>&1 || "$manager" list --available "$package" >/dev/null 2>&1
+}
+
+browser_env_configured() {
+  [ -n "${CHROMIUM_PATH:-}" ] || [ -n "${CHROME_PATH:-}" ] || [ -n "${BROWSER_PATH:-}" ]
+}
+
+detect_official_chrome() {
+  command -v google-chrome-stable >/dev/null 2>&1 || command -v google-chrome >/dev/null 2>&1
 }
 
 install_linux_rpm_deps() {
@@ -219,23 +238,22 @@ install_linux_rpm_deps() {
     fi
   fi
 
-  if [ "$SKIP_BROWSER_INSTALL" != "1" ]; then
-    local browser_package=""
-    for candidate in chromium google-chrome-stable; do
-      if rpm_package_available "$manager" "$candidate"; then
-        browser_package="$candidate"
-        break
-      fi
-    done
+  run_as_root "$manager" install -y "${packages[@]}"
 
-    if [ -n "$browser_package" ]; then
-      packages+=("$browser_package")
+  if [ "$SKIP_BROWSER_INSTALL" != "1" ]; then
+    if browser_env_configured; then
+      log "browser path is configured by env; skip browser installation"
+    elif detect_official_chrome; then
+      log "official Google Chrome is already installed"
+    elif [ "$(node_arch)" = "x64" ]; then
+      log "installing official Google Chrome stable"
+      run_as_root "$manager" install -y "$GOOGLE_CHROME_RPM_URL"
+    elif detect_browser; then
+      log "official Google Chrome stable RPM is only available for x64; using existing browser from PATH"
     else
-      log "no Chrome/Chromium package found in $manager repos; install Chrome/Chromium manually and set CHROMIUM_PATH"
+      log "official Google Chrome stable RPM is only available for x64; install Chrome/Chromium manually and set CHROMIUM_PATH"
     fi
   fi
-
-  run_as_root "$manager" install -y "${packages[@]}"
 }
 
 brew_install_if_missing() {

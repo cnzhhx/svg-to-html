@@ -54,7 +54,7 @@ detect_browser() {
   fi
 
   local candidate
-  for candidate in chromium chromium-browser google-chrome google-chrome-stable chrome microsoft-edge microsoft-edge-stable; do
+  for candidate in google-chrome-stable google-chrome chrome chromium chromium-browser microsoft-edge microsoft-edge-stable; do
     if command -v "$candidate" >/dev/null 2>&1; then
       export CHROMIUM_PATH="$(command -v "$candidate")"
       return
@@ -281,7 +281,7 @@ Common env:
   PORT=81
   WORKSPACE=$ROOT_DIR/workspace
   ENV_FILE=$ROOT_DIR/.env
-  CHROMIUM_PATH=/usr/bin/chromium
+  CHROMIUM_PATH=/usr/bin/google-chrome-stable
   MAX_CONCURRENT_AGENTS=1
   MAX_PARALLEL_MODULE_AGENTS=3
   MAX_RESTARTS=10
