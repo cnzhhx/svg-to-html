@@ -27,3 +27,14 @@ export const PNG_RASTER_SCALE_MULTIPLIER =
   parsedPngRasterScaleMultiplier > 0
     ? parsedPngRasterScaleMultiplier
     : 2
+
+const isTruthyFlag = (raw: string | undefined) => {
+  if (raw === undefined || raw === '') return false
+  return /^(1|true|yes|on)$/i.test(raw.trim())
+}
+
+// 前端是否把 session 快照写入 localStorage / 把产物缓存进 IndexedDB。
+// 默认关闭；通过环境变量 SESSION_LOCAL_STORAGE_ENABLED=1 开启。
+export const SESSION_LOCAL_STORAGE_ENABLED = isTruthyFlag(
+  process.env['SESSION_LOCAL_STORAGE_ENABLED'],
+)
