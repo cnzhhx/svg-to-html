@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import archiver from "archiver";
 
-import { DIFF_RATIO_THRESHOLD } from "../config/runtime.js";
+import { DIFF_RATIO_THRESHOLD, SESSION_LOCAL_STORAGE_ENABLED } from "../config/runtime.js";
 import { truncate } from "../core/string-utils.js";
 import { getWorkspaceRoot } from "../core/utils.js";
 import { cancelSessionRun, enqueueSession } from "../pipeline/agent-runner.js";
@@ -316,6 +316,7 @@ router.get("/runtime", (_req, res) => {
     release: os.release(),
     diffRatioThreshold: DIFF_RATIO_THRESHOLD,
     workspaceRoot: getWorkspaceRoot(),
+    enableSessionLocalStorage: SESSION_LOCAL_STORAGE_ENABLED,
   });
 });
 

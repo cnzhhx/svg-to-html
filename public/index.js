@@ -122,7 +122,6 @@ const COMPONENT_LIBRARY_COMPILE_JOB_KEY = 'svg2html:componentLibraryCompileJobId
 const DEFAULT_DIFF_RATIO_THRESHOLD = 0.15
 const DEFAULT_MODULE_CONCURRENCY_LIMIT = 5
 const urlParams = new URLSearchParams(location.search)
-const isDevMode = urlParams.has('dev')
 const urlSessionId = urlParams.get('session')
 const WORKFLOW_NODE_ORDER = ['upload', 'analysis', 'agent', 'verify', 'done']
 const LEGACY_ANALYSIS_NODE_KEY = 'pre' + 'process'
@@ -1110,10 +1109,6 @@ setInterval(() => {
 // ── Bootstrap ──
 
 async function bootstrap() {
-  if (isDevMode) {
-    document.title = '[Dev] ' + document.title
-    downloadBtn.style.display = ''
-  }
   await loadRuntimeInfo()
   await Promise.all([
     componentLibraryFeatureEnabled ? loadComponentLibraries() : Promise.resolve(),
