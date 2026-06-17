@@ -69,6 +69,8 @@ pnpm start
 
 然后可通过前端页面上传 SVG，或调用 `/transformer/api/upload` 创建 session。
 
+> 前端默认不把 session 写入浏览器本地存储；如需离线兜底恢复，请在服务端设置 `SESSION_LOCAL_STORAGE_ENABLED=1`。
+
 ## 常用命令
 
 ```bash
@@ -179,6 +181,7 @@ agent 单元（`src/pipeline/agent-runner/agent-unit.ts`）按模块持有独立
 - `DIFF_RATIO_THRESHOLD`（默认 0.05，环境变量覆盖）
 - `MODULE_DIFF_RATIO_THRESHOLD`（默认 0.05，环境变量覆盖）
 - `PNG_RASTER_SCALE_MULTIPLIER`（默认 2）
+- `SESSION_LOCAL_STORAGE_ENABLED`（默认 0）：是否允许前端把 session 快照（localStorage）与产物缓存（IndexedDB）写入浏览器。默认关闭，前端将只从服务端读取 session；开启后行为同 v0.1.x（含本地兜底恢复）。
 
 ```mermaid
 flowchart TD

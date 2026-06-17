@@ -4,6 +4,10 @@ const basePath = '/transformer'
 // Frontend-only feature switch. Set to true to show component library controls again.
 const componentLibraryFeatureEnabled = false
 
+// Frontend runtime flag, sourced from /api/runtime via loadRuntimeInfo().
+// Default OFF; backend enables it via SESSION_LOCAL_STORAGE_ENABLED.
+let enableSessionLocalStorage = false
+
 const fileInput = $('#fileInput')
 const uploadZone = $('#uploadZone')
 const uploadZoneLabel = $('#uploadLabel')
@@ -158,6 +162,7 @@ function getLocalSessionIds() {
 }
 
 function saveLocalSessionId(id) {
+  if (!enableSessionLocalStorage) return
   if (!id) return
   const ids = getLocalSessionIds().filter((item) => item !== id)
   ids.unshift(id)
@@ -194,6 +199,7 @@ function readLocalSessionSnapshots() {
 }
 
 function writeLocalSessionSnapshots(snapshots) {
+  if (!enableSessionLocalStorage) return
   try {
     localStorage.setItem(LOCAL_SESSION_SNAPSHOT_KEY, JSON.stringify(snapshots))
   } catch (error) {
@@ -391,6 +397,7 @@ function createLocalSessionSnapshot(session) {
 }
 
 function saveLocalSessionSnapshot(session, options = {}) {
+  if (!enableSessionLocalStorage) return
   const snapshot = createLocalSessionSnapshot(session)
   if (!snapshot) return
   const ids = getLocalSessionIds()
@@ -413,6 +420,7 @@ function saveLocalSessionSnapshot(session, options = {}) {
 }
 
 function saveServerSessionsToLocal(serverSessions) {
+  if (!enableSessionLocalStorage) return
   const validSessions = Array.isArray(serverSessions)
     ? serverSessions.filter((session) => session?.id)
     : []
@@ -1131,9 +1139,20 @@ async function loadRuntimeInfo() {
       renderSessionList()
       renderCurrentSession()
     }
+    const nextFlag = Boolean(data.enableSessionLocalStorage)
+    if (nextFlag !== enableSessionLocalStorage) {
+      enableSessionLocalStorage = nextFlag
+      if (nextFlag) {
+        void loadSessions()
+      } else {
+        sessions = sessions.filter((s) => !isLocalOnlySession(s))
+        renderSessionList()
+      }
+    }
     syncComponentLibraryFeatureUi()
     runtimeInfo.textContent = ''
   } catch {
+    enableSessionLocalStorage = false
     syncComponentLibraryFeatureUi()
     runtimeInfo.textContent = ''
   } finally {
@@ -1333,7 +1352,7 @@ async function loadSessions() {
     serverSessionsLoaded = false
   }
 
-  if (isDevMode) {
+  if (!enableSessionLocalStorage) {
     sessions = serverSessionsLoaded ? serverSessions : []
   } else {
     const snapshotIds = getLocalSessionSnapshotIds()
@@ -1430,12 +1449,16 @@ async function loadSessions() {
     }
   }
 
-  await hydrateLocalArtifactCacheMetadataForSessions(sessions)
+  if (enableSessionLocalStorage) {
+    await hydrateLocalArtifactCacheMetadataForSessions(sessions)
+  }
   scheduleAutoCacheCompletedSessionArtifacts()
 
-  sessions
-    .filter((session) => !isLocalOnlySession(session))
-    .forEach((session) => saveLocalSessionSnapshot(session, { touch: false }))
+  if (enableSessionLocalStorage) {
+    sessions
+      .filter((session) => !isLocalOnlySession(session))
+      .forEach((session) => saveLocalSessionSnapshot(session, { touch: false }))
+  }
 
   if (urlSessionId && !sessions.find((s) => s.id === urlSessionId)) {
     try {
@@ -1445,7 +1468,7 @@ async function loadSessions() {
         sessions.unshift(session)
         saveLocalSessionSnapshot(session)
       }
-      else if (res.status === 404) {
+      else if (res.status === 404 && enableSessionLocalStorage) {
         const localSession = reviveLocalSessionSnapshot(
           getLocalSessionSnapshot(urlSessionId),
           'server-reset',
@@ -3161,6 +3184,7 @@ async function maybeAutoCacheSessionArtifacts(session) {
 }
 
 function scheduleAutoCacheCompletedSessionArtifacts() {
+  if (!enableSessionLocalStorage) return
   if (!runtimeInfoLoaded) return
   if (autoArtifactCacheSweepPromise) return
   autoArtifactCacheSweepPromise = Promise.resolve()
@@ -3190,11 +3214,19 @@ async function autoCacheCompletedSessionArtifacts() {
 }
 
 async function cacheCurrentSessionArtifacts(options = {}) {
+  if (!enableSessionLocalStorage) {
+    if (!options.silent) alert('本地产物缓存已由服务端配置关闭')
+    return null
+  }
   return cacheSessionArtifactsForSession(currentSession, options)
 }
 
 async function cacheSessionArtifactsForSession(targetSession, options = {}) {
   if (!targetSession?.id) return null
+  if (!enableSessionLocalStorage) {
+    if (!options.silent) alert('本地产物缓存已由服务端配置关闭')
+    return null
+  }
   if (isLocalOnlySession(targetSession)) {
     if (!options.silent) alert('本地归档记录不能重新从后端缓存文件')
     return null
