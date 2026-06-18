@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import archiver from "archiver";
 
-import { DIFF_RATIO_THRESHOLD, MAX_CONCURRENT_AGENTS, SESSION_LOCAL_STORAGE_ENABLED } from "../config/index.js";
+import { DIFF_RATIO_THRESHOLD, MAX_CONCURRENT_AGENTS, SESSION_DELETE_DISABLED, SESSION_LOCAL_STORAGE_ENABLED } from "../config/index.js";
 import { detectBrowserBinary } from "../core/cdp.js";
 import { truncate } from "../core/string-utils.js";
 import { getWorkspaceRoot } from "../core/paths.js";
@@ -280,6 +280,11 @@ router.post("/sessions/:id/messages", async (req, res) => {
 });
 
 router.delete("/sessions/:id", async (req, res) => {
+  if (SESSION_DELETE_DISABLED) {
+    res.status(403).json({ error: "Session deletion is disabled" });
+    return;
+  }
+
   const session = sessionStore.get(String(req.params["id"] ?? ""));
   if (!session) {
     res.status(404).json({ error: "Session not found" });
@@ -314,6 +319,7 @@ router.get("/runtime", (_req, res) => {
     diffRatioThreshold: DIFF_RATIO_THRESHOLD,
     workspaceRoot: getWorkspaceRoot(),
     enableSessionLocalStorage: SESSION_LOCAL_STORAGE_ENABLED,
+    sessionDeleteDisabled: SESSION_DELETE_DISABLED,
   });
 });
 

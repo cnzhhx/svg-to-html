@@ -9,6 +9,12 @@ export const SESSION_LOCAL_STORAGE_ENABLED = isTruthyFlag(
   process.env['SESSION_LOCAL_STORAGE_ENABLED'],
 )
 
+// ─── Session 删除控制 ────────────────────────────────────────
+// 是否禁用 session 删除功能（1 = 禁用删除，前后端同时生效）
+export const SESSION_DELETE_DISABLED = isTruthyFlag(
+  process.env['SESSION_DELETE_DISABLED'],
+)
+
 // ─── 超时配置 ────────────────────────────────────────────────
 // 视觉文字识别超时（毫秒）
 export const VISION_TEXT_TIMEOUT_MS = Number(
