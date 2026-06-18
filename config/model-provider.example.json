@@ -1,8 +1,8 @@
 {
-  "moduleAgentModel": "your-module-agent-model",
-  "otherModel": "your-support-model",
+  "moduleAgentModel": "your-model",
+  "otherModel": "your-model",
   "models": {
-    "your-module-agent-model": {
+    "your-model": {
       "runtime": "opencode",
       "provider": "your-provider",
       "baseURL": "https://api.example.com/v1",
@@ -12,13 +12,6 @@
         "input": ["text", "image"],
         "output": ["text"]
       }
-    },
-    "your-support-model": {
-      "runtime": "opencode",
-      "provider": "your-provider",
-      "baseURL": "https://api.example.com/v1",
-      "apiKeyEnv": "YOUR_PROVIDER_API_KEY",
-      "model": "your-model-id"
     }
   }
 }
