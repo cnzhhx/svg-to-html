@@ -15,6 +15,14 @@ export const SESSION_DELETE_DISABLED = isTruthyFlag(
   process.env['SESSION_DELETE_DISABLED'],
 )
 
+// ─── Session 聊天修复控制 ────────────────────────────────────
+// 是否禁用 session 聊天修复功能（默认禁用；设为 0/false/no/off 可开启）
+export const SESSION_CHAT_DISABLED =
+  process.env['SESSION_CHAT_DISABLED'] === undefined ||
+  process.env['SESSION_CHAT_DISABLED'] === ''
+    ? true
+    : isTruthyFlag(process.env['SESSION_CHAT_DISABLED'])
+
 // ─── 超时配置 ────────────────────────────────────────────────
 // 视觉文字识别超时（毫秒）
 export const VISION_TEXT_TIMEOUT_MS = Number(

@@ -4,7 +4,13 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import archiver from "archiver";
 
-import { DIFF_RATIO_THRESHOLD, MAX_CONCURRENT_AGENTS, SESSION_DELETE_DISABLED, SESSION_LOCAL_STORAGE_ENABLED } from "../config/index.js";
+import {
+  DIFF_RATIO_THRESHOLD,
+  MAX_CONCURRENT_AGENTS,
+  SESSION_CHAT_DISABLED,
+  SESSION_DELETE_DISABLED,
+  SESSION_LOCAL_STORAGE_ENABLED,
+} from "../config/index.js";
 import { detectBrowserBinary } from "../core/cdp.js";
 import { truncate } from "../core/string-utils.js";
 import { getWorkspaceRoot } from "../core/paths.js";
@@ -243,6 +249,11 @@ router.post("/sessions/:id/start", async (req, res) => {
 });
 
 router.post("/sessions/:id/messages", async (req, res) => {
+  if (SESSION_CHAT_DISABLED) {
+    res.status(403).json({ error: "Session chat is disabled" });
+    return;
+  }
+
   const session = sessionStore.get(String(req.params["id"] ?? ""));
   const text = String(req.body?.text ?? "").trim();
   const moduleId = String(req.body?.moduleId ?? "").trim();
@@ -320,6 +331,7 @@ router.get("/runtime", (_req, res) => {
     workspaceRoot: getWorkspaceRoot(),
     enableSessionLocalStorage: SESSION_LOCAL_STORAGE_ENABLED,
     sessionDeleteDisabled: SESSION_DELETE_DISABLED,
+    sessionChatDisabled: SESSION_CHAT_DISABLED,
   });
 });
 
