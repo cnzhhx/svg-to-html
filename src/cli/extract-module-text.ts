@@ -8,31 +8,26 @@ import {
   buildModuleSemanticTextHints,
   type ModuleSemanticDocument,
 } from "../pipeline/agent-runner/module-semantic.js";
+import { parseCliFlags } from "./cli-utils.js";
+
+const VALUE_FLAGS = new Set([
+  "--module-dir",
+  "--module-id",
+  "--module-svg",
+  "--scale",
+  "--semantic",
+  "--module-semantic",
+]);
 
 const parseArgs = (args: string[]) => {
-  const values = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (!arg) continue;
-    const inline = arg.match(/^(--[^=]+)=(.*)$/);
-    if (inline) {
-      values.set(inline[1]!, inline[2]!);
-      continue;
-    }
-    if (arg.startsWith("--")) {
-      const value = args[index + 1];
-      if (!value || value.startsWith("--")) throw new Error(`Missing value for ${arg}`);
-      values.set(arg, value);
-      index += 1;
-    }
-  }
+  const { flags } = parseCliFlags(args, VALUE_FLAGS);
   return {
-    moduleDir: values.get("--module-dir") ?? ".",
-    moduleId: values.get("--module-id"),
+    moduleDir: flags.get("--module-dir") ?? ".",
+    moduleId: flags.get("--module-id"),
     moduleSemanticPath:
-      values.get("--semantic") ?? values.get("--module-semantic"),
-    moduleSvgPath: values.get("--module-svg") ?? "module.svg",
-    scale: values.get("--scale") ? Number(values.get("--scale")) : undefined,
+      flags.get("--semantic") ?? flags.get("--module-semantic"),
+    moduleSvgPath: flags.get("--module-svg") ?? "module.svg",
+    scale: flags.get("--scale") ? Number(flags.get("--scale")) : undefined,
   };
 };
 

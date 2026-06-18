@@ -2,11 +2,14 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  SVG_VISIBILITY_PRUNE_ENABLED,
+  SVG_VISIBILITY_PRUNE_MAX_CANDIDATES,
+} from "../config/runtime.js";
 import { evaluatePage, launchEdge } from "./cdp.js";
 import {
   type Box,
   ensureSvgViewBox,
-  parsePositiveInteger,
   parseRootChildElements,
   type ResolvedSvgDesign,
   writeJsonFile,
@@ -63,10 +66,7 @@ const PRUNED_SVG_NAME = "svg-visible-pruned.svg";
 const PRUNING_REPORT_NAME = "svg-visible-pruning.json";
 const PRUNING_WRAPPER_NAME = "svg-visible-pruning-source.html";
 
-const MAX_PIXEL_CHECK_CANDIDATES = parsePositiveInteger(
-  process.env["SVG_VISIBILITY_PRUNE_MAX_CANDIDATES"],
-  32,
-);
+const MAX_PIXEL_CHECK_CANDIDATES = SVG_VISIBILITY_PRUNE_MAX_CANDIDATES;
 
 const THRESHOLDS = {
   channelDelta: 8,
@@ -486,8 +486,7 @@ const createPruningExpression = () => `(() => {
   })();
 })()`;
 
-const shouldPruneInvisibleSvgNodes = () =>
-  process.env["SVG_VISIBILITY_PRUNE"] === "1";
+const shouldPruneInvisibleSvgNodes = () => SVG_VISIBILITY_PRUNE_ENABLED;
 
 const pruneInvisibleSvgNodes = async ({
   artifactDir,

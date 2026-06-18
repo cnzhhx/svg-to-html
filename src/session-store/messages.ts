@@ -1,13 +1,8 @@
 import type { Session, SessionMessage } from './types.js'
-
-const AGENT_MESSAGE_SAMPLE_CHARS = Math.max(
-  0,
-  Number(process.env['SESSION_AGENT_MESSAGE_SAMPLE_CHARS'] ?? 100),
-)
-const AGENT_REASONING_MESSAGE_CHARS = Math.max(
-  0,
-  Number(process.env['SESSION_AGENT_REASONING_MESSAGE_CHARS'] ?? 4_000),
-)
+import {
+  AGENT_MESSAGE_SAMPLE_CHARS,
+  AGENT_REASONING_MESSAGE_CHARS,
+} from '../config/runtime.js'
 
 const sampleText = (value: string, maxChars = AGENT_MESSAGE_SAMPLE_CHARS) => {
   if (maxChars <= 0) return ''

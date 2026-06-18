@@ -6,7 +6,12 @@ import { createServer, type Server } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
-import { parseNonNegativeInteger, parsePositiveInteger } from "./utils.js";
+import {
+  BROWSER_POOL_DISABLED,
+  BROWSER_POOL_IDLE_MS,
+  CDP_READY_TIMEOUT_MS,
+  CDP_SEND_TIMEOUT_MS,
+} from "../config/runtime.js";
 
 type ServerWithEvents = Server & {
   on(event: "error", listener: (error: Error) => void): Server;
@@ -101,20 +106,6 @@ const toCdpScreenshotClip = ({
   x: Math.max(0, Math.floor(Number.isFinite(x) ? x : 0)),
   y: Math.max(0, Math.floor(Number.isFinite(y) ? y : 0)),
 });
-
-const CDP_SEND_TIMEOUT_MS = parsePositiveInteger(
-  process.env["CDP_SEND_TIMEOUT_MS"],
-  120000,
-);
-const CDP_READY_TIMEOUT_MS = parsePositiveInteger(
-  process.env["CDP_READY_TIMEOUT_MS"],
-  60000,
-);
-const BROWSER_POOL_IDLE_MS = parseNonNegativeInteger(
-  process.env["BROWSER_POOL_IDLE_MS"],
-  1000,
-);
-const BROWSER_POOL_DISABLED = process.env["BROWSER_POOL_DISABLED"] === "1";
 
 class CdpClient {
   private readonly listeners = new Map<string, ((params: unknown) => void)[]>();

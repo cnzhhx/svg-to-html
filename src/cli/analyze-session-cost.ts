@@ -9,6 +9,7 @@ import {
   writeJsonFile,
   writeTextFile,
 } from "../core/utils.js";
+import { parseCliFlags } from "./cli-utils.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -35,27 +36,8 @@ const readJsonIfExists = async <T = unknown>(filePath: string) => {
 };
 
 const parseArgs = (args: string[]) => {
-  const paths: string[] = [];
-  const values = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (!arg) continue;
-    const inline = [...VALUE_FLAGS].find((flag) => arg.startsWith(`${flag}=`));
-    if (inline) {
-      values.set(inline, arg.slice(inline.length + 1));
-      continue;
-    }
-    if (VALUE_FLAGS.has(arg)) {
-      const value = args[index + 1];
-      if (!value || value.startsWith("--"))
-        throw new Error(`Missing value for ${arg}`);
-      values.set(arg, value);
-      index += 1;
-      continue;
-    }
-    paths.push(arg);
-  }
-  return { outputDir: values.get("--output-dir"), paths };
+  const { flags, positionals } = parseCliFlags(args, VALUE_FLAGS);
+  return { outputDir: flags.get("--output-dir"), paths: positionals };
 };
 
 const resolveSessionDir = (input: string) => {
