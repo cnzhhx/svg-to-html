@@ -1,0 +1,43 @@
+const isTruthyFlag = (raw: string | undefined) => {
+  if (raw === undefined || raw === '') return false
+  return /^(1|true|yes|on)$/i.test(raw.trim())
+}
+
+// ─── 前端缓存 ────────────────────────────────────────────────
+// 是否把 session 产物缓存到 localStorage
+export const SESSION_LOCAL_STORAGE_ENABLED = isTruthyFlag(
+  process.env['SESSION_LOCAL_STORAGE_ENABLED'],
+)
+
+// ─── 超时配置 ────────────────────────────────────────────────
+// 视觉文字识别超时（毫秒）
+export const VISION_TEXT_TIMEOUT_MS = Number(
+  process.env['VISION_TEXT_TIMEOUT_MS'] ?? 300_000,
+)
+// 组件库 pnpm install 超时（毫秒）
+export const COMPONENT_LIBRARY_INSTALL_TIMEOUT_MS = Number(
+  process.env['COMPONENT_LIBRARY_INSTALL_TIMEOUT_MS'] ?? 300_000,
+)
+
+// ─── 组件库 ─────────────────────────────────────────────────
+// 组件库安装时使用的 npm registry
+export const COMPONENT_LIBRARY_INSTALL_REGISTRY =
+  process.env['COMPONENT_LIBRARY_INSTALL_REGISTRY'] ??
+  'https://registry.npmjs.org/'
+
+// ─── Session 消息格式化 ──────────────────────────────────────
+// agent 消息采样字符数
+export const AGENT_MESSAGE_SAMPLE_CHARS = Math.max(
+  0,
+  Number(process.env['SESSION_AGENT_MESSAGE_SAMPLE_CHARS'] ?? 100),
+)
+// agent 推理消息截断长度
+export const AGENT_REASONING_MESSAGE_CHARS = Math.max(
+  0,
+  Number(process.env['SESSION_AGENT_REASONING_MESSAGE_CHARS'] ?? 4_000),
+)
+// archive 命令输出截断限制
+export const ARCHIVE_COMMAND_OUTPUT_MAX_CHARS = Math.max(
+  0,
+  Number(process.env['ARCHIVE_COMMAND_OUTPUT_MAX_CHARS'] ?? 5000),
+)

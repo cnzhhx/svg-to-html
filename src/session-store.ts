@@ -4,12 +4,11 @@ import {
   MAX_SESSION_LOG_CHARS,
   MAX_SESSION_LOG_ENTRIES,
   emitSessionEvent,
-  isCodexReasoningEvent,
   truncateText,
 } from "./session-store/events.js";
 import { ensureWorkflowProgress } from "./session-store/progress.js";
 import {
-  sessionMessageFromCodexEvent,
+  sessionMessageFromAgentEvent,
   upsertSessionMessage,
 } from "./session-store/messages.js";
 import { SessionPersistence } from "./session-store/persistence.js";
@@ -61,21 +60,36 @@ class SessionStore extends EventEmitter {
     });
   }
 
-  private persistCodexMessage(
+  private persistAgentMessage(
     sessionId: string,
     event: Record<string, unknown>,
   ) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    const message = sessionMessageFromCodexEvent(event);
+    const message = sessionMessageFromAgentEvent(event);
     if (message) this.upsertMessageRecord(session, message);
   }
 
   async hydrateFromDisk() {
     for (const session of await loadSessionSnapshots()) {
-      if (session.status === "running") {
-        mutateSession.pause(session);
+      const status = String(session.status);
+      const supportedStatuses = new Set([
+        "draft",
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "best-effort",
+        "failed-gate",
+      ]);
+      if (status === "running") {
+        mutateSession.resetInFlightExecution(session);
         mutateSession.markQueued(session);
+      } else if (!supportedStatuses.has(status)) {
+        mutateSession.failPipeline(
+          session,
+          "旧版 session 状态已不再支持，请重新启动或删除",
+        );
       }
       this.sessions.set(session.id, session);
       this.persistence.persistSnapshot(session);
@@ -193,11 +207,10 @@ class SessionStore extends EventEmitter {
     }
   }
 
-  emitCodexEvent(sessionId: string, event: Record<string, unknown>) {
-    if (isCodexReasoningEvent(event)) return;
-    this.persistCodexMessage(sessionId, event);
+  emitAgentEvent(sessionId: string, event: Record<string, unknown>) {
+    this.persistAgentMessage(sessionId, event);
     this.emitEvent({
-      type: "codex:event",
+      type: "agent:event",
       sessionId,
       event,
       timestamp: Date.now(),
@@ -377,19 +390,6 @@ class SessionStore extends EventEmitter {
     });
   }
 
-  pause(sessionId: string) {
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-    const progress = mutateSession.pause(session);
-    this.persistence.persistSnapshot(session);
-    this.emitEvent({
-      type: "session:updated",
-      sessionId,
-      data: { progress, status: "paused" },
-      timestamp: Date.now(),
-    });
-  }
-
   completePipeline(
     sessionId: string,
     options?: {
@@ -449,18 +449,12 @@ class SessionStore extends EventEmitter {
 const sessionStore = new SessionStore();
 
 export type {
-  PipelineStep,
   Session,
   SessionEvent,
   SessionMessage,
-  SessionMessageKind,
-  SessionPersistenceState,
   SessionResult,
-  SessionStatus,
   WorkflowArchiveEntry,
   WorkflowArchiveItem,
   WorkflowArchiveStage,
-  WorkflowNodeKey,
-  WorkflowProgress,
 } from "./session-store/types.js";
 export { sessionStore };

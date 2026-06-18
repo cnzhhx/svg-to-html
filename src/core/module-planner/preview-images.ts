@@ -4,8 +4,9 @@ import { pathToFileURL } from "node:url";
 
 import { capturePage, launchEdge } from "../cdp.js";
 import { renderSvgToPng } from "../semi-auto-scaffold/svg-render.js";
-import { writeTextFile, type resolveSvgDesign } from "../utils.js";
-import type { CodexPlannerPreviewImage } from "./types.js";
+import { writeTextFile } from '../file-io.js';
+import { resolveSvgDesign } from '../design-resolve.js';
+import type { ModelPlannerPreviewImage } from "./types.js";
 
 const PLANNER_TILE_MIN_SPLIT_HEIGHT = 3500;
 const PLANNER_TILE_MAX_HEIGHT = 2200;
@@ -41,7 +42,7 @@ const createSvgImageWrapper = ({
         width: ${bodyWidth}px;
         height: ${bodyHeight}px;
         overflow: hidden;
-        background: #000;
+        background: transparent;
       }
 
       img {
@@ -78,6 +79,7 @@ const createTileRanges = (height: number) => {
 
 const renderWrapper = async ({
   artifactDir,
+  deviceScaleFactor = 1,
   outputPath,
   wrapperName,
   wrapperSource,
@@ -85,6 +87,7 @@ const renderWrapper = async ({
   viewportWidth,
 }: {
   artifactDir: string;
+  deviceScaleFactor?: number;
   outputPath: string;
   wrapperName: string;
   wrapperSource: string;
@@ -96,6 +99,7 @@ const renderWrapper = async ({
   const browser = await launchEdge();
   try {
     await capturePage({
+      deviceScaleFactor,
       outputPath,
       port: browser.port,
       url: pathToFileURL(wrapperPath).href,
@@ -107,13 +111,13 @@ const renderWrapper = async ({
   }
 };
 
-const renderCodexPlannerPreviewImages = async ({
+const renderModelPlannerPreviewImages = async ({
   artifactDir,
   design,
 }: {
   artifactDir: string;
   design: ResolvedSvgDesign;
-}): Promise<CodexPlannerPreviewImage[]> => {
+}): Promise<ModelPlannerPreviewImage[]> => {
   if (!shouldUseTiledPlannerImages(design.height)) {
     const imagePath = path.join(artifactDir, "svg.png");
     if (!existsSync(imagePath)) {
@@ -133,12 +137,13 @@ const renderCodexPlannerPreviewImages = async ({
     ];
   }
 
-  const images: CodexPlannerPreviewImage[] = [];
+  const images: ModelPlannerPreviewImage[] = [];
   const ranges = createTileRanges(design.height);
   for (const [index, range] of ranges.entries()) {
     const tilePath = path.join(artifactDir, `planner-tile-${index + 1}.png`);
     await renderWrapper({
       artifactDir,
+      deviceScaleFactor: design.scale,
       outputPath: tilePath,
       viewportHeight: range.height,
       viewportWidth: design.width,
@@ -167,4 +172,4 @@ const renderCodexPlannerPreviewImages = async ({
   return images;
 };
 
-export { renderCodexPlannerPreviewImages };
+export { renderModelPlannerPreviewImages };

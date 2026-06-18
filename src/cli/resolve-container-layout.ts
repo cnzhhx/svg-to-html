@@ -1,11 +1,5 @@
-import { createContainerLayoutReport } from '../core/container-layout.js'
-
-const parseFlagValue = (args: string[], flag: string) => {
-  const inlineArg = args.find((arg) => arg.startsWith(`${flag}=`))
-  if (inlineArg) return inlineArg.slice(flag.length + 1)
-  const flagIndex = args.indexOf(flag)
-  return flagIndex >= 0 ? args[flagIndex + 1] : undefined
-}
+import { createContainerLayoutReport } from '../core/container-layout/index.js'
+import { parseFlagValue } from './cli-utils.js'
 
 const parseScale = (args: string[]) => {
   if (args.includes('--scale') && args.indexOf('--scale') === args.length - 1) {

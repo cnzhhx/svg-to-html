@@ -1,9 +1,12 @@
-import { existsSync } from 'node:fs'
 import path from 'node:path'
 
-import { readModulePlan } from '../pipeline/module-merge.js'
-import { verifyModuleLocal } from '../pipeline/agent-runner/module-local-verify.js'
-import type { ModulePlanModule } from '../pipeline/module-merge.js'
+import { readModulePlan } from '../pipeline/module-merge/index.js'
+import { verifyModuleLocal } from '../pipeline/agent-runner/module/module-local-verify.js'
+import {
+  normalizePlanModules,
+  parseCliFlags,
+  resolveRequiredPath,
+} from './cli-utils.js'
 
 const VALUE_FLAGS = new Set([
   '--module-dir',
@@ -21,72 +24,34 @@ const VALUE_FLAGS = new Set([
   '--scaffoldHtml',
 ])
 
-const INLINE_PREFIXES = [...VALUE_FLAGS].map((flag) => `${flag}=`)
-
 const parseArgs = (args: string[]) => {
-  const values = new Map<string, string>()
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]
-    if (!arg) continue
-
-    const inlinePrefix = INLINE_PREFIXES.find((prefix) =>
-      arg.startsWith(prefix),
-    )
-    if (inlinePrefix) {
-      const value = arg.slice(inlinePrefix.length)
-      if (!value) throw new Error(`Missing value for ${inlinePrefix.slice(0, -1)}`)
-      values.set(inlinePrefix.slice(0, -1), value)
-      continue
-    }
-
-    if (VALUE_FLAGS.has(arg)) {
-      const value = args[index + 1]
-      if (!value || value.startsWith('-')) throw new Error(`Missing value for ${arg}`)
-      values.set(arg, value)
-      index += 1
-      continue
-    }
-  }
+  const { flags } = parseCliFlags(args, VALUE_FLAGS)
   return {
-    moduleDir: values.get('--module-dir') ?? values.get('--moduleDir') ?? '.',
-    moduleId: values.get('--module-id') ?? values.get('--moduleId'),
+    moduleDir: flags.get('--module-dir') ?? flags.get('--moduleDir') ?? '.',
+    moduleId: flags.get('--module-id') ?? flags.get('--moduleId'),
     modulePlanPath:
-      values.get('--module-plan') ?? values.get('--modulePlan') ?? '../module-plan.json',
+      flags.get('--module-plan') ?? flags.get('--modulePlan') ?? '../module-plan.json',
     moduleSvgPath:
-      values.get('--module-svg') ?? values.get('--moduleSvg') ?? 'module.svg',
-    round: Number(values.get('--round') ?? '0'),
-    scale: values.get('--scale') ? Number(values.get('--scale')) : undefined,
+      flags.get('--module-svg') ?? flags.get('--moduleSvg') ?? 'module.svg',
+    round: Number(flags.get('--round') ?? '0'),
+    scale: flags.get('--scale') ? Number(flags.get('--scale')) : undefined,
     scaffoldHtmlPath:
-      values.get('--scaffold') ??
-      values.get('--scaffold-html') ??
-      values.get('--scaffoldHtml') ??
+      flags.get('--scaffold') ??
+      flags.get('--scaffold-html') ??
+      flags.get('--scaffoldHtml') ??
       '../modules-scaffold.html',
   }
 }
 
-const normalizePlanModules = (modules: unknown): ModulePlanModule[] => {
-  if (Array.isArray(modules)) return modules as ModulePlanModule[]
-  if (modules && typeof modules === 'object') {
-    return Object.entries(modules).map(([id, value]) => ({
-      ...(value && typeof value === 'object' ? value : {}),
-      id,
-    })) as ModulePlanModule[]
-  }
-  return []
-}
-
-const resolveRequiredPath = (filePath: string, baseDir: string, label: string) => {
-  const resolved = path.isAbsolute(filePath)
-    ? filePath
-    : path.resolve(baseDir, filePath)
-  if (!existsSync(resolved)) throw new Error(`${label} not found: ${resolved}`)
-  return resolved
-}
-
 const main = async () => {
   const args = parseArgs(process.argv.slice(2))
-  if (args.scale !== undefined && (!Number.isFinite(args.scale) || args.scale <= 0)) {
-    throw new Error(`Invalid value for --scale: ${args.scale} (expected a positive number)`)
+  if (
+    args.scale !== undefined &&
+    (!Number.isFinite(args.scale) || args.scale <= 0)
+  ) {
+    throw new Error(
+      `Invalid value for --scale: ${args.scale} (expected a positive number)`,
+    )
   }
   const moduleDir = path.resolve(args.moduleDir)
   const moduleId = args.moduleId ?? path.basename(moduleDir)
@@ -110,7 +75,9 @@ const main = async () => {
     (candidate) => candidate.id === moduleId,
   )
   if (!module?.region) {
-    throw new Error(`Module region not found in ${modulePlanPath}: ${moduleId}`)
+    throw new Error(
+      `Module region not found in ${modulePlanPath}: ${moduleId}`,
+    )
   }
 
   const result = await verifyModuleLocal({
@@ -128,7 +95,7 @@ const main = async () => {
     modulePlan,
     modulePlanPath,
     moduleSvgPath,
-    onProgress: (message) => console.log(`[module-verify] ${message}`),
+    onProgress: () => {},
     round: Number.isFinite(args.round) ? args.round : 0,
     scale: args.scale,
     scaffoldHtmlPath,
@@ -136,17 +103,8 @@ const main = async () => {
 
   console.log(
     JSON.stringify({
-      artifactDir: result.artifactDir,
-      diffPngPath: result.diffPngPath,
       diffRatio: result.diffRatio,
-      htmlPath: result.htmlPath,
-      htmlPngPath: result.htmlPngPath,
-      moduleId: result.moduleId,
       passed: result.passed,
-      svgPngPath: result.svgPngPath,
-      targetHtmlPath: result.targetHtmlPath,
-      targetSvgPath: result.targetSvgPath,
-      verifyReportPath: result.verifyReportPath,
     }),
   )
 }

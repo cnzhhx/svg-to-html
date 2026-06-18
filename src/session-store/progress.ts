@@ -5,8 +5,6 @@ const WORKFLOW_NODE_LABELS: Record<WorkflowNodeKey, string> = {
   analysis: '结构解析',
   agent: '大模型生成',
   verify: '视觉校验',
-  export: '框架导出',
-  feedback: '迭代修正',
   done: '完成',
 }
 
@@ -25,8 +23,6 @@ const createWorkflowProgress = (): WorkflowProgress => ({
     analysis: { label: WORKFLOW_NODE_LABELS.analysis, status: 'pending' },
     agent: { label: WORKFLOW_NODE_LABELS.agent, status: 'pending' },
     verify: { label: WORKFLOW_NODE_LABELS.verify, status: 'pending' },
-    export: { label: WORKFLOW_NODE_LABELS.export, status: 'pending' },
-    feedback: { label: WORKFLOW_NODE_LABELS.feedback, status: 'pending' },
     done: { label: WORKFLOW_NODE_LABELS.done, status: 'pending' },
   },
 })
@@ -40,8 +36,6 @@ const isInitialWorkflowProgress = (progress: WorkflowProgress) =>
   progress.nodes.analysis?.status === 'pending' &&
   progress.nodes.agent?.status === 'pending' &&
   progress.nodes.verify?.status === 'pending' &&
-  progress.nodes.export?.status === 'pending' &&
-  progress.nodes.feedback?.status === 'pending' &&
   progress.nodes.done?.status === 'pending'
 
 const ensureWorkflowProgress = (session: Session): WorkflowProgress => {
@@ -53,8 +47,6 @@ const ensureWorkflowProgress = (session: Session): WorkflowProgress => {
       (session.status !== 'draft' ||
         session.activeStep !== null ||
         session.steps.agent.status !== 'pending' ||
-        session.steps.verify.status !== 'pending' ||
-        Boolean(session.result.verifyReportPath) ||
         typeof session.result.diffRatio === 'number'))
 
   if (shouldDerive) {
@@ -71,8 +63,14 @@ const ensureWorkflowProgress = (session: Session): WorkflowProgress => {
     ] as WorkflowProgress['nodes']['analysis']
   }
   delete legacyNodes[LEGACY_ANALYSIS_NODE_KEY]
-  if ((progress.currentNode as string | null) === LEGACY_ANALYSIS_NODE_KEY) {
+  const legacyRevisionNodeKey = 'feed' + 'back'
+  delete legacyNodes[legacyRevisionNodeKey]
+  const currentNode = progress.currentNode as string | null
+  if (currentNode === LEGACY_ANALYSIS_NODE_KEY) {
     progress.currentNode = 'analysis'
+  }
+  if (currentNode === legacyRevisionNodeKey) {
+    progress.currentNode = 'done'
   }
 
   const defaultProgress = createWorkflowProgress()
@@ -95,7 +93,6 @@ const deriveWorkflowProgressFromSession = (session: Session): WorkflowProgress =
   // These booleans are recovery signals for historical sessions, not fresh
   // workflow decisions; they rebuild a plausible progress bar from artifacts.
   const hasAnalysisArtifacts =
-    Boolean(session.result.shellManifestPath) ||
     Boolean(session.result.containerLayoutPath) ||
     Boolean(session.result.modulePlanPath)
   const hasAgentOutput =
@@ -106,7 +103,6 @@ const deriveWorkflowProgressFromSession = (session: Session): WorkflowProgress =
   const hasVerifyOutput =
     verifyStep.status === 'completed' ||
     typeof session.result.diffRatio === 'number' ||
-    Boolean(session.result.verifyReportPath) ||
     isTerminalDoneStatus(session.status)
   const analysisCompleted =
     hasAnalysisArtifacts ||
@@ -151,18 +147,6 @@ const deriveWorkflowProgressFromSession = (session: Session): WorkflowProgress =
     progress.nodes.analysis.status = 'completed'
     progress.nodes.agent.status = 'completed'
     progress.nodes.verify.status = 'completed'
-    progress.nodes.export = {
-      ...progress.nodes.export,
-      status: 'completed',
-      startedAt: progress.nodes.export.startedAt ?? now,
-      completedAt: progress.nodes.export.completedAt ?? now,
-    }
-    progress.nodes.feedback = {
-      ...progress.nodes.feedback,
-      status: 'completed',
-      startedAt: now,
-      completedAt: now,
-    }
     progress.nodes.done = {
       ...progress.nodes.done,
       status: 'completed',
@@ -181,12 +165,6 @@ const deriveWorkflowProgressFromSession = (session: Session): WorkflowProgress =
       startedAt: verifyStep.startedAt ?? now,
       completedAt: undefined,
     }
-    return progress
-  }
-
-  if (progress.nodes.export?.status === 'running') {
-    progress.currentNode = 'export'
-    progress.detail = '正在导出 React/Vue 组件'
     return progress
   }
 
@@ -209,27 +187,6 @@ const deriveWorkflowProgressFromSession = (session: Session): WorkflowProgress =
       ...progress.nodes[progress.currentNode],
       status: 'pending',
     }
-    return progress
-  }
-
-  if (session.status === 'paused') {
-    if (!analysisCompleted) {
-      progress.currentNode = 'analysis'
-      progress.detail = '结构解析已暂停'
-      return progress
-    }
-    if (!hasAgentOutput) {
-      progress.currentNode = 'agent'
-      progress.detail = '大模型生成已暂停'
-      return progress
-    }
-    if (!hasVerifyOutput) {
-      progress.currentNode = 'verify'
-      progress.detail = '视觉校验已暂停'
-      return progress
-    }
-    progress.currentNode = 'feedback'
-    progress.detail = '迭代修正已暂停'
     return progress
   }
 
@@ -262,7 +219,7 @@ const deriveWorkflowProgressFromSession = (session: Session): WorkflowProgress =
         error: session.error,
       }
     } else {
-      progress.currentNode = hasVerifyOutput ? 'feedback' : 'verify'
+      progress.currentNode = 'verify'
       progress.nodes[progress.currentNode] = {
         ...progress.nodes[progress.currentNode],
         status: 'failed',
@@ -276,14 +233,8 @@ const deriveWorkflowProgressFromSession = (session: Session): WorkflowProgress =
   }
 
   if (hasVerifyOutput) {
-    progress.currentNode = 'feedback'
-    progress.detail = '首轮结果已生成'
-    progress.nodes.feedback = {
-      ...progress.nodes.feedback,
-      status: 'completed',
-      startedAt: now,
-      completedAt: now,
-    }
+    progress.currentNode = 'done'
+    progress.detail = '结果已生成'
     progress.nodes.done = {
       ...progress.nodes.done,
       status: 'completed',
@@ -295,7 +246,7 @@ const deriveWorkflowProgressFromSession = (session: Session): WorkflowProgress =
 
   if (hasAgentOutput) {
     progress.currentNode = 'verify'
-    progress.detail = '首轮 HTML 已生成，等待视觉校验'
+    progress.detail = '首轮渲染入口已生成，等待视觉校验'
     return progress
   }
 
@@ -310,8 +261,5 @@ const deriveWorkflowProgressFromSession = (session: Session): WorkflowProgress =
 
 export {
   WORKFLOW_NODE_LABELS,
-  createWorkflowProgress,
-  deriveWorkflowProgressFromSession,
   ensureWorkflowProgress,
-  isInitialWorkflowProgress,
 }

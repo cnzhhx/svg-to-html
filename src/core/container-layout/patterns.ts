@@ -1,11 +1,24 @@
-import type { Box } from "../utils.js";
-import { areaOf, bottomOf, isSimilar, rightOf } from "./geometry.js";
+import type { Box } from "../geometry.js";
+import { areaOf, bottomOf, rightOf } from "../geometry.js";
 import type {
   ContainerRecord,
   PatternHint,
   RebuildRecipe,
   RepeatedGroupRecord,
 } from "./types.js";
+
+export const isAncestorPath = (maybeAncestor: string, nodePath: string) =>
+  nodePath.startsWith(`${maybeAncestor} > `);
+
+export const isResourceNodePath = (nodePath: string) =>
+  /(^| > )(defs|clipPath|mask|pattern|symbol):nth-of-type\(\d+\)/.test(
+    nodePath,
+  );
+
+export const isSimilar = (left: number, right: number, tolerance = 0.12) => {
+  const larger = Math.max(Math.abs(left), Math.abs(right), 1);
+  return Math.abs(left - right) / larger <= tolerance;
+};
 
 export const buildRepeatedGroups = (containers: ContainerRecord[]) => {
   const childrenByParent = new Map<string, ContainerRecord[]>();
@@ -121,7 +134,7 @@ export const detectRepeatGroupPatterns = (
       kind: "repeat-group",
       recipeId: toRecipeId("repeat-group", group.containerIds),
       summary:
-        "检测到同层重复模块。这里更像重复券卡/列表项的模板结构，优先抽成统一 item 容器，静态壳层能整块提取就不要拆成零散装饰。",
+        "检测到同层重复模块。这里更像重复卡片/列表项的模板结构，优先抽成统一 item 容器，静态壳层能整块提取就不要拆成零散装饰。",
     }));
 
 export const detectCellRows = (containers: ContainerRecord[]) => {
@@ -262,7 +275,6 @@ export const createRebuildRecipes = ({
         targets,
         title: "Token Row Recipe",
         validationFocus: [
-          "`workflow-lint.md` 不再出现 `short-token-row-nested-cells` 或 `fullwidth-punctuation`。",
           "数字 token 的 `Δy` 应接近 0；若仍整体下沉，说明 top compensation 还没真正落回 HTML。",
           "若 `Δx` 仍大，优先检查锚点/结构，不要继续抠字号。",
         ],
@@ -272,7 +284,7 @@ export const createRebuildRecipes = ({
     if (pattern.kind === "repeat-group") {
       return {
         applyWhen:
-          "同层出现 2 个及以上尺寸和排布节奏稳定的大模块，通常对应重复券卡、商品卡、列表项。",
+          "同层出现 2 个及以上尺寸和排布节奏稳定的大模块，通常对应重复卡片、列表项、矩阵项。",
         forbiddenStructure: [
           "禁止把每张卡完全手写成独立散点结构，导致同类问题无法一次修复。",
           "禁止只抽纯色底板，再在每张卡里重复手搓静态装饰。",

@@ -1,10 +1,8 @@
 import { createDiffBrowserScript } from './browser-script.js'
 import { createDiffWrapperHtml } from './wrapper-html.js'
-import type { SerializableRegion } from './types.js'
 
 type DiffWrapperOptions = {
-  htmlImageUrl: string
-  regions: SerializableRegion[]
+  renderImageUrl: string
   svgImageUrl: string
   threshold: number
 }
