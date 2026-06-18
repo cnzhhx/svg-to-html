@@ -117,6 +117,8 @@ All settings can be configured via the `.env` file. Key variables:
 | `MAX_PARALLEL_MODULE_AGENTS` | `10` | Parallel modules per session |
 | `DIFF_RATIO_THRESHOLD` | `0.05` | Full-page diff pass threshold (5%) |
 | `CHROMIUM_PATH` | auto-detect | Browser binary path |
+| `SESSION_CHAT_DISABLED` | `1` | Disable the chat repair UI and backend message endpoint |
+| `SESSION_DELETE_DISABLED` | `0` | Disable session deletion |
 
 See `.env` for the full list.
 

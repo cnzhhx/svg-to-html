@@ -9,6 +9,8 @@ const componentLibraryFeatureEnabled = false
 let enableSessionLocalStorage = false
 // Whether session deletion is disabled (controlled by backend SESSION_DELETE_DISABLED).
 let sessionDeleteDisabled = false
+// Whether session chat/repair is disabled (controlled by backend SESSION_CHAT_DISABLED).
+let sessionChatDisabled = true
 
 const fileInput = $('#fileInput')
 const uploadZone = $('#uploadZone')
@@ -991,6 +993,7 @@ uploadDialogSubmit.addEventListener('click', async () => {
 themeToggleBtn.addEventListener('click', toggleTheme)
 
 chatToggleBtn.addEventListener('click', () => {
+  if (sessionChatDisabled) return
   if (!currentSession) return
   setChatDrawerOpen(!chatDrawerOpen)
 })
@@ -1047,11 +1050,13 @@ resultGrid.addEventListener('click', (e) => {
   e.preventDefault()
   e.stopPropagation()
   selectModule(button.getAttribute('data-module-id'))
+  if (sessionChatDisabled) return
   setChatDrawerOpen(true)
 })
 
 composer.addEventListener('submit', async (e) => {
   e.preventDefault()
+  if (sessionChatDisabled) return
   if (!currentSessionId) return
   if (isSessionInputLocked(currentSession)) return
   const text = messageInput.value.trim()
@@ -1152,11 +1157,15 @@ async function loadRuntimeInfo() {
       }
     }
     sessionDeleteDisabled = Boolean(data.sessionDeleteDisabled)
+    sessionChatDisabled = data.sessionChatDisabled !== false
     deleteSessionBtn.style.display = sessionDeleteDisabled ? 'none' : ''
+    syncChatFeatureUi()
     syncComponentLibraryFeatureUi()
     runtimeInfo.textContent = ''
   } catch {
     enableSessionLocalStorage = false
+    sessionChatDisabled = true
+    syncChatFeatureUi()
     syncComponentLibraryFeatureUi()
     runtimeInfo.textContent = ''
   } finally {
@@ -2001,7 +2010,9 @@ function renderSessionHeader() {
   sessionTitle.textContent = currentSession.designName
   sessionMeta.textContent = `${currentSession.id} · ${statusLabel} · ${scaleLabel} · ${formatLabel}${componentLibraryLabel ? ` · ${componentLibraryLabel}` : ''} · ${durationLabel} · ${progress.detail || labelForWorkflowNode(progress.currentNode || 'upload')}`
   deleteSessionBtn.disabled = sessionDeleteDisabled
-  chatStatus.textContent = `${statusLabel} · ${progress.detail || '可查看聊天记录'}`
+  chatStatus.textContent = sessionChatDisabled
+    ? '聊天功能已关闭'
+    : `${statusLabel} · ${progress.detail || '可查看聊天记录'}`
   renderModulePicker()
   renderChatFilterTabs()
   syncComposerState(currentSession)
@@ -3847,7 +3858,7 @@ function isSessionBusy(session) {
 }
 
 function setChatDrawerOpen(next) {
-  chatDrawerOpen = Boolean(next && currentSession)
+  chatDrawerOpen = Boolean(next && currentSession && !sessionChatDisabled)
   chatDrawer.classList.toggle('open', chatDrawerOpen)
   chatToggleBtn.classList.toggle('active', chatDrawerOpen)
   chatToggleBtn.textContent = chatDrawerOpen ? '收起聊天' : '打开聊天'
@@ -4018,20 +4029,34 @@ function renderLayoutState() {
   resultPanel.classList.toggle('visible', showResults)
   executionBadge.classList.toggle('visible', Boolean(badgeText))
   executionBadge.textContent = badgeText
-  chatToggleBtn.disabled = !hasSession
+  chatToggleBtn.disabled = sessionChatDisabled || !hasSession
 
-  if (!hasSession) {
+  if (sessionChatDisabled) {
+    chatStatus.textContent = '聊天功能已关闭'
+  } else if (!hasSession) {
     chatStatus.textContent = '选择 session 后可查看聊天'
   }
 
-  if (!hasSession) {
+  if (sessionChatDisabled || !hasSession) {
     setChatDrawerOpen(false)
   }
 }
 
+function syncChatFeatureUi() {
+  chatToggleBtn.style.display = sessionChatDisabled ? 'none' : ''
+  chatToggleBtn.hidden = sessionChatDisabled
+  chatDrawer.hidden = sessionChatDisabled
+  if (sessionChatDisabled) {
+    setChatDrawerOpen(false)
+    chatStatus.textContent = '聊天功能已关闭'
+  }
+  updateComposerState()
+  renderLayoutState()
+}
+
 function updateComposerState() {
   const hasSession = Boolean(currentSession)
-  const locked = !hasSession || isSessionInputLocked(currentSession)
+  const locked = sessionChatDisabled || !hasSession || isSessionInputLocked(currentSession)
   const hasText = Boolean(messageInput.value.trim())
   const modules = collectSelectableModules()
   const needsModule = hasSession && !isLocalOnlySession(currentSession)
@@ -4042,6 +4067,10 @@ function updateComposerState() {
   sendBtn.disabled = locked || !hasText || !hasSelectedModule
   composer.classList.toggle('is-disabled', locked)
 
+  if (sessionChatDisabled) {
+    composerHint.textContent = '聊天功能已关闭'
+    return
+  }
   if (!hasSession) {
     composerHint.textContent = '选择 session 后可发送调整要求'
     return
@@ -4135,12 +4164,14 @@ function isCompletedStatus(status) {
 }
 
 function isSessionInputLocked(session) {
+  if (sessionChatDisabled) return true
   if (!session) return true
   if (isLocalOnlySession(session)) return true
   return session.status === 'queued' || session.status === 'running'
 }
 
 function composerPlaceholderFor(session) {
+  if (sessionChatDisabled) return '聊天功能已关闭'
   if (!session) return '输入调整要求…'
   if (isLocalOnlySession(session)) return '本地归档记录不能继续执行'
   if (isSessionInputLocked(session)) return '生成中，完成后才能输入调整要求'
