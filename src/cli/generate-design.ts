@@ -1,8 +1,8 @@
-import { createContainerLayoutReport } from "../core/container-layout.js";
+import { createContainerLayoutReport } from "../core/container-layout/index.js";
 import { shutdownBrowserPool } from "../core/cdp.js";
 import { initializeDesignScaffolds } from "../core/design-scaffold.js";
 import { parseOutputFormat } from "../core/output-target.js";
-import { buildSemiAutoScaffoldArtifacts } from "../core/semi-auto-scaffold.js";
+import { buildSemiAutoScaffoldArtifacts } from "../core/semi-auto-scaffold/index.js";
 import { shutdownStaticServerPool } from "../core/static-server.js";
 import { parseFlagValue } from "./cli-utils.js";
 

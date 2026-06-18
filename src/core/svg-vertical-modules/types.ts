@@ -6,7 +6,7 @@ import type {
 } from "../module-planner/types.js";
 import type { ModulePlanQualityReport } from "../module-plan-quality.js";
 import type { SvgLayoutResult } from "../svg-layout.js";
-import type { Box, Region } from "../utils.js";
+import type { Box, Region } from '../geometry.js';
 
 export type ModulePlanningRoute = "single" | "model";
 export type ModulePlanMode = "auto" | "single" | "vertical";

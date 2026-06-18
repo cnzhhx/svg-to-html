@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { safeDecodeUri } from "../core/file-io.js";
-import type { Region } from "../core/utils.js";
+import type { Region } from "../core/geometry.js";
 import { isString, normalizePathForCompare } from "./module-merge/utils.js";
 
 type ModuleOutputAllowedAsset = {

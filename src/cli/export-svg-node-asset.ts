@@ -3,15 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { PNG_RASTER_SCALE_MULTIPLIER } from "../config/runtime.js";
+import { PNG_RASTER_SCALE_MULTIPLIER } from "../config/index.js";
 import { capturePage, evaluatePage, launchEdge } from "../core/cdp.js";
-import { readSvgDimensions } from "../core/utils.js";
+import { readSvgDimensions } from "../core/svg-parse.js";
 import {
   readModuleSemanticDocument,
   updateModuleSemanticDocument,
   type ModuleSemanticGeneratedAsset,
   type ModuleSemanticNode,
-} from "../pipeline/agent-runner/module-semantic.js";
+} from "../pipeline/agent-runner/module/module-semantic.js";
 import {
   GENERATED_ASSET_NO_ORDINARY_TEXT_TREATMENT,
   createGeneratedAssetManifestEntry,

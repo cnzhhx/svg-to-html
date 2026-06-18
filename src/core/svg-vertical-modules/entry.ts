@@ -1,7 +1,7 @@
 import path from "node:path";
 import { readdir, unlink } from "node:fs/promises";
 
-import { createContainerLayoutReport } from "../container-layout.js";
+import { createContainerLayoutReport } from "../container-layout/entry.js";
 import {
   runModelPlanner,
   toValidationSummary,
@@ -13,13 +13,10 @@ import type {
 } from "../module-planner/types.js";
 import { createModulePlanQualityReport } from "../module-plan-quality.js";
 import { readSvgLayout } from "../svg-layout.js";
-import {
-  resolveArtifactDir,
-  resolveSvgDesign,
-  writeJsonFile,
-  writeTextFile,
-  type Box,
-} from "../utils.js";
+import type { Box } from "../geometry.js";
+import { resolveArtifactDir } from "../paths.js";
+import { resolveSvgDesign } from "../design-resolve.js";
+import { writeJsonFile, writeTextFile } from "../file-io.js";
 import { createMarkdown } from "./markdown.js";
 import { isSmallLowComplexityDesign } from "./route-heuristics.js";
 import { createSinglePageModule } from "./single-planner.js";

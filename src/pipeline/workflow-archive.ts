@@ -5,9 +5,9 @@ import { randomUUID } from "node:crypto";
 import {
   WORKFLOW_ARCHIVE_FULL_EVERY_N,
   WORKFLOW_ARCHIVE_TEXT_MAX_CHARS,
-} from "../config/runtime.js";
+} from "../config/index.js";
 import { truncate } from "../core/string-utils.js";
-import { writeJsonFile, writeTextFile } from "../core/utils.js";
+import { writeJsonFile, writeTextFile } from "../core/file-io.js";
 
 import type {
   WorkflowArchiveEntry,

@@ -1,4 +1,4 @@
-import { createContainerLayoutReport } from '../core/container-layout.js'
+import { createContainerLayoutReport } from '../core/container-layout/index.js'
 import { parseFlagValue } from './cli-utils.js'
 
 const parseScale = (args: string[]) => {

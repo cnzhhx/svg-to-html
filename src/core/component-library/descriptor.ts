@@ -1,7 +1,8 @@
 import path from "node:path";
 import { readdir, stat } from "node:fs/promises";
 
-import { isInsidePath, isRecord } from "../utils.js";
+import { isInsidePath } from '../paths.js';
+import { isRecord } from '../type-guards.js';
 import type {
   ComponentLibraryComponent,
   ComponentLibraryDescriptor,

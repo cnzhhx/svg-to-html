@@ -1,6 +1,7 @@
 import path from 'node:path'
 
-import { resolveSvgDesign, type Box } from '../utils.js'
+import { resolveSvgDesign } from '../design-resolve.js';
+import type { Box } from '../geometry.js';
 import type {
   StructureDraft,
   StructureDraftNode,

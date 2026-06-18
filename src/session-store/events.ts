@@ -6,7 +6,7 @@ import {
   MAX_AGENT_REASONING_EVENT_CHARS,
   MAX_SESSION_LOG_CHARS,
   MAX_SESSION_LOG_ENTRIES,
-} from '../config/runtime.js'
+} from '../config/index.js'
 import type { Session, SessionEvent } from './types.js'
 
 const truncateText = (value: string, maxChars: number) =>

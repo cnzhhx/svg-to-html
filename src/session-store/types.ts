@@ -89,59 +89,79 @@ type PendingUserMessage = {
   text: string
 }
 
-type SessionResult = {
+type UploadResultFields = {
   sourceEntryPath?: string
   sourceStylePath?: string
-  renderEntryPath?: string
-  compareEntryPath?: string
-  outputTarget?: SessionOutputTarget
   designWidth?: number
   designHeight?: number
-  containerLayoutPath?: string
-  diffRatio?: string | number
-  svgPngPath?: string
-  renderPngPath?: string
   artifactDir?: string
   sourceBasis?: string
   sourceRenderMode?: string
-  tokensUsed?: number
-  cachedInputTokens?: number
-  componentLibrary?: ComponentLibrarySessionRef
-  componentLibraryId?: string
-  inputTokens?: number
-  uncachedInputTokens?: number
-  outputTokens?: number
-  verifyMode?: string
+}
+
+type AnalysisResultFields = {
+  containerLayoutPath?: string
+  modulePlanPath?: string
+  modulePlanMarkdownPath?: string
+  modulePlanQualityPath?: string
+  modulePlanQualityMarkdownPath?: string
+  moduleCount?: number
+  modulePlanMode?: string
+  regionsPath?: string
+  moduleDiffRegionsPath?: string
+}
+
+type AgentResultFields = {
+  renderEntryPath?: string
   moduleAgentManifestPath?: string
   moduleAgentRuns?: Array<Record<string, unknown>>
   moduleAgentThreadIds?: Record<string, string>
   moduleValidationRuns?: Array<Record<string, unknown>>
-  modelTelemetryRecords?: Array<Record<string, unknown>>
-  modelUsageRecords?: Array<Record<string, unknown>>
-  moduleConcurrencyLimit?: number
-  moduleCount?: number
-  moduleCountExceedsConcurrency?: boolean
-  moduleDiffRegionsPath?: string
   moduleFailedIds?: string[]
   moduleFailureKinds?: Record<string, string>
   moduleFailures?: Record<string, string>
-  modulePlanMode?: string
-  moduleManifestPath?: string
   moduleMergeManifestPath?: string
-  modulePlanMarkdownPath?: string
-  modulePlanPath?: string
-  modulePlanQualityMarkdownPath?: string
-  modulePlanQualityPath?: string
-  regionsPath?: string
-  agentResponse?: string
-  workflowHistoryDir?: string
-  workflowHistoryManifestPath?: string
-  workflowArchives?: WorkflowArchiveEntry[]
+  moduleManifestPath?: string
+  moduleConcurrencyLimit?: number
+  moduleCountExceedsConcurrency?: boolean
   multiAgentRoute?: boolean
   multiAgentRouteReason?: string
-  textTuningAppliedCount?: number
-  textTuningReportPath?: string
+  agentResponse?: string
 }
+
+type VerifyResultFields = {
+  diffRatio?: string | number
+  svgPngPath?: string
+  renderPngPath?: string
+  compareEntryPath?: string
+  verifyMode?: string
+}
+
+type UsageResultFields = {
+  tokensUsed?: number
+  cachedInputTokens?: number
+  inputTokens?: number
+  uncachedInputTokens?: number
+  outputTokens?: number
+  modelTelemetryRecords?: Array<Record<string, unknown>>
+  modelUsageRecords?: Array<Record<string, unknown>>
+}
+
+type SessionResult = UploadResultFields
+  & AnalysisResultFields
+  & AgentResultFields
+  & VerifyResultFields
+  & UsageResultFields
+  & {
+    outputTarget?: SessionOutputTarget
+    componentLibrary?: ComponentLibrarySessionRef
+    componentLibraryId?: string
+    textTuningAppliedCount?: number
+    textTuningReportPath?: string
+    workflowHistoryDir?: string
+    workflowHistoryManifestPath?: string
+    workflowArchives?: WorkflowArchiveEntry[]
+  }
 
 type SessionPersistenceState = {
   errorCount: number
@@ -230,6 +250,8 @@ type SessionEvent =
     }
 
 export type {
+  AgentResultFields,
+  AnalysisResultFields,
   PipelineStep,
   Session,
   SessionEvent,
@@ -239,6 +261,9 @@ export type {
   SessionPersistenceState,
   SessionResult,
   SessionStatus,
+  UploadResultFields,
+  UsageResultFields,
+  VerifyResultFields,
   WorkflowArchiveEntry,
   WorkflowArchiveItem,
   WorkflowArchiveStage,

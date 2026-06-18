@@ -3,16 +3,10 @@ import { readFile } from "node:fs/promises";
 
 import { capturePage, evaluatePage, launchEdge } from "./cdp.js";
 import { startStaticServer } from "./static-server.js";
-import {
-  assertFile,
-  type ResolvedSvgDesign,
-  resolveArtifactDir,
-  resolveSvgDesign,
-  toAbsolutePath,
-  toUrlPath,
-  writeJsonFile,
-  writeTextFile,
-} from "./utils.js";
+import type { ResolvedSvgDesign } from "./design-resolve.js";
+import { resolveSvgDesign } from "./design-resolve.js";
+import { resolveArtifactDir, toAbsolutePath, toUrlPath } from "./paths.js";
+import { assertFile, writeJsonFile, writeTextFile } from "./file-io.js";
 
 type RenderResult = {
   artifactDir: string;

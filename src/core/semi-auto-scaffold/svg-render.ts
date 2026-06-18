@@ -2,7 +2,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { capturePage, launchEdge } from "../cdp.js";
-import { resolveSvgDesign, writeTextFile } from "../utils.js";
+import { resolveSvgDesign } from '../design-resolve.js';
+import { writeTextFile } from '../file-io.js';
 
 const createSvgRenderWrapper = ({
   height,

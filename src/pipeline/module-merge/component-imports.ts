@@ -4,7 +4,7 @@ import {
   ensureComponentLibraryDependenciesInstalled,
   loadComponentLibraryDescriptor,
 } from "../../core/component-library/index.js";
-import { isRecord } from "../../core/utils.js";
+import { isRecord } from "../../core/type-guards.js";
 import type {
   ComponentLibraryBuildContext,
   ComponentLibraryComponent,

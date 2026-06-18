@@ -1,7 +1,7 @@
 import path from 'node:path'
 
-import { readModulePlan } from '../pipeline/module-merge.js'
-import { verifyModuleLocal } from '../pipeline/agent-runner/module-local-verify.js'
+import { readModulePlan } from '../pipeline/module-merge/index.js'
+import { verifyModuleLocal } from '../pipeline/agent-runner/module/module-local-verify.js'
 import {
   normalizePlanModules,
   parseCliFlags,

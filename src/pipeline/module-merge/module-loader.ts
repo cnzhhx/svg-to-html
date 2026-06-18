@@ -12,7 +12,7 @@ import {
   normalizeSourceFragment,
   rewriteModuleLocalAssetReferences,
 } from "./html-render.js";
-import { readModuleAllowedAssets } from "../agent-runner/module-semantic.js";
+import { readModuleAllowedAssets } from "../agent-runner/module/module-semantic.js";
 import {
   asString,
   isRecord,

@@ -4,7 +4,8 @@ import { pathToFileURL } from "node:url";
 
 import { capturePage, launchEdge } from "../cdp.js";
 import { renderSvgToPng } from "../semi-auto-scaffold/svg-render.js";
-import { writeTextFile, type resolveSvgDesign } from "../utils.js";
+import { writeTextFile } from '../file-io.js';
+import { resolveSvgDesign } from '../design-resolve.js';
 import type { ModelPlannerPreviewImage } from "./types.js";
 
 const PLANNER_TILE_MIN_SPLIT_HEIGHT = 3500;

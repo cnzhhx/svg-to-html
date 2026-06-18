@@ -6,7 +6,7 @@ import {
   type PatternHint,
   type RepeatedGroupRecord,
 } from "../container-layout/types.js";
-import type { Box } from "../utils.js";
+import type { Box } from '../geometry.js';
 import type {
   StructureDraft,
   StructureDraftNode,

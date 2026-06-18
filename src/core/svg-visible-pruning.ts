@@ -5,16 +5,13 @@ import { pathToFileURL } from "node:url";
 import {
   SVG_VISIBILITY_PRUNE_ENABLED,
   SVG_VISIBILITY_PRUNE_MAX_CANDIDATES,
-} from "../config/runtime.js";
+} from "../config/index.js";
 import { evaluatePage, launchEdge } from "./cdp.js";
-import {
-  type Box,
-  ensureSvgViewBox,
-  parseRootChildElements,
-  type ResolvedSvgDesign,
-  writeJsonFile,
-  writeTextFile,
-} from "./utils.js";
+import type { Box } from "./geometry.js";
+import { ensureSvgViewBox } from "./svg-parse.js";
+import { parseRootChildElements } from "./html-parse.js";
+import type { ResolvedSvgDesign } from "./design-resolve.js";
+import { writeJsonFile, writeTextFile } from "./file-io.js";
 
 type SvgVisibilityPrunedNode = {
   changedPixels: number;

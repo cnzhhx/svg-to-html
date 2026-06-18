@@ -1,4 +1,4 @@
-import { isRecord } from "../../core/utils.js";
+import { isRecord } from "../../core/type-guards.js";
 import type { ModuleMergeResolvedModule } from "./types.js";
 
 /**

@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import { getWorkspaceRoot } from '../core/utils.js'
+import { getWorkspaceRoot } from '../core/paths.js'
 
 const getSessionsRoot = () => path.join(getWorkspaceRoot(), 'sessions')
 

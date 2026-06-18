@@ -5,8 +5,8 @@ import path from 'node:path'
 import {
   STATIC_SERVER_POOL_DISABLED,
   STATIC_SERVER_POOL_IDLE_MS,
-} from '../config/runtime.js'
-import { getWorkspaceRoot, isInsidePath } from './utils.js'
+} from '../config/index.js'
+import { getWorkspaceRoot, isInsidePath } from './paths.js';
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',

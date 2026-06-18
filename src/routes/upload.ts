@@ -13,7 +13,7 @@ import {
 import type { OutputFormat } from "../core/output-target.js";
 import { getComponentLibrary } from "../core/component-library/index.js";
 import type { ComponentLibrarySessionRef } from "../core/component-library/types.js";
-import { getWorkspaceRoot } from "../core/utils.js";
+import { getWorkspaceRoot } from "../core/paths.js";
 import { sessionStore } from "../session-store.js";
 
 const router = Router();

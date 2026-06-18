@@ -11,12 +11,11 @@ import {
   round,
 } from './geometry.js'
 import type { ModulePlannerMetadata } from './module-planner/types.js'
+import type { Box, Region } from './geometry.js'
 import {
   writeJsonFile,
   writeTextFile,
-  type Box,
-  type Region,
-} from './utils.js'
+} from './file-io.js'
 
 type ModulePlanQualitySeverity = 'critical' | 'warning'
 

@@ -10,8 +10,8 @@ import {
   round,
   unionBoxes,
 } from "../geometry.js";
-import type { Box, Region } from "../utils.js";
-import { isRecord } from "../utils.js";
+import type { Box, Region } from '../geometry.js';
+import { isRecord } from '../type-guards.js';
 import type {
   ModuleKind,
   ModelPlannerModule,

@@ -3,7 +3,8 @@ import path from 'node:path'
 
 import type { OutputFormat, SessionOutputTarget } from './output-target.js'
 import { resolveOutputTarget } from './output-target.js'
-import { resolveSvgDesign, writeTextFile } from './utils.js'
+import { resolveSvgDesign } from './design-resolve.js';
+import { writeTextFile } from './file-io.js';
 
 const createRenderScaffold = ({
   designName,

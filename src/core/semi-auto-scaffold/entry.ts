@@ -2,15 +2,12 @@ import path from 'node:path'
 
 import {
   createContainerLayoutReport,
-} from '../container-layout.js'
+} from '../container-layout/entry.js'
 import type { ContainerLayoutReport } from '../container-layout/types.js'
 import type { SvgLayoutResult } from '../svg-layout.js'
-import {
-  resolveArtifactDir,
-  resolveSvgDesign,
-  writeJsonFile,
-  writeTextFile,
-} from '../utils.js'
+import { resolveArtifactDir } from '../paths.js'
+import { resolveSvgDesign } from '../design-resolve.js'
+import { writeJsonFile, writeTextFile } from '../file-io.js'
 import { createScaffoldDecisionsMarkdown } from './decisions.js'
 import { createHtmlScaffoldFromDraft } from './html-renderer.js'
 import { buildStructureDraft } from './structure-draft.js'

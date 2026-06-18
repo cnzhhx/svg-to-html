@@ -4,8 +4,10 @@ import { pathToFileURL } from "node:url";
 
 import { capturePage, evaluatePage, launchEdge } from "./cdp.js";
 import { areaOf, intersectionArea } from "./geometry.js";
-import type { Box, Region } from "./utils.js";
-import { isRecord, parseSvgSize, writeTextFile } from "./utils.js";
+import type { Box, Region } from './geometry.js';
+import { isRecord } from './type-guards.js';
+import { parseSvgSize } from './svg-parse.js';
+import { writeTextFile } from './file-io.js';
 
 type ModuleTextBlock = {
   bboxIncludesIcon?: boolean;

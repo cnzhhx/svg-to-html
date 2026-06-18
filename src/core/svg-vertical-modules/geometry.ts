@@ -1,5 +1,5 @@
 import { clamp, isFiniteBox, round } from "../geometry.js";
-import type { Box, Region } from "../utils.js";
+import type { Box, Region } from '../geometry.js';
 import type {
   ModuleBox,
   SerializableRegion,

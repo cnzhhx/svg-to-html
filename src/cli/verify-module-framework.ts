@@ -1,7 +1,7 @@
 import path from "node:path";
 
-import { readModulePlan } from "../pipeline/module-merge.js";
-import { verifyModuleFrameworkLocal } from "../pipeline/agent-runner/module-framework-local-verify.js";
+import { readModulePlan } from "../pipeline/module-merge/index.js";
+import { verifyModuleFrameworkLocal } from "../pipeline/agent-runner/module/module-framework-local-verify.js";
 import type { SvgVerticalModule } from "../core/svg-vertical-modules/types.js";
 import {
   normalizePlanModules,
