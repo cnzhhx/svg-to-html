@@ -4,11 +4,10 @@ import { mkdir, readFile } from 'node:fs/promises'
 
 import express from 'express'
 
-import { AGENT_TIMEOUT_MS } from './config/runtime.js'
 import { detectBrowserBinary } from './core/cdp.js'
-import { detectOcrSupport } from './core/ocr.js'
-import { setWorkspaceRoot } from './core/utils.js'
-import { resumeQueuedSessions } from './pipeline/agent-runner.js'
+import { setWorkspaceRoot } from './core/paths.js'
+import { processQueuedSessions } from './pipeline/agent-runner/index.js'
+import componentLibrariesRouter from './routes/component-libraries.js'
 import eventsRouter from './routes/events.js'
 import jobRouter from './routes/job.js'
 import uploadRouter from './routes/upload.js'
@@ -31,7 +30,7 @@ process.on('uncaughtException', (error) => {
   process.exit(1)
 })
 
-const PORT = Number(process.env['PORT'] ?? 80)
+const PORT = Number(process.env['PORT'] ?? 81)
 const WORKSPACE = path.resolve(process.env['WORKSPACE'] ?? path.join(process.cwd(), 'workspace'))
 const BASE_PATH = '/transformer'
 const BUILD_TIME = new Date().toISOString()
@@ -55,6 +54,7 @@ router.use(express.json())
 
 // API routes
 router.use('/api', uploadRouter)
+router.use('/api', componentLibrariesRouter)
 router.use('/api', jobRouter)
 router.use('/api', eventsRouter)
 
@@ -91,11 +91,10 @@ app.use(BASE_PATH, router)
 const main = async () => {
   await mkdir(WORKSPACE, { recursive: true })
   await sessionStore.hydrateFromDisk()
-  resumeQueuedSessions()
+  processQueuedSessions()
 
   app.listen(PORT, () => {
     const browserBinary = detectBrowserBinary()
-    const ocrSupport = detectOcrSupport()
 
     console.log(`Design-to-HTML service running at http://localhost:${PORT}${BASE_PATH || '/'}`)
     console.log(`Base Path: ${BASE_PATH || '(none)'}`)
@@ -104,24 +103,16 @@ const main = async () => {
     console.log(`Node: ${process.version}`)
     console.log(`Browser Binary: ${browserBinary ?? 'NOT FOUND'}`)
     console.log(`Build Time: ${BUILD_TIME}`)
-    console.log(
-      `OCR: provider=${ocrSupport.provider}, available=${ocrSupport.available}`,
-    )
-    console.log(`Agent Timeout: ${AGENT_TIMEOUT_MS / 1000}s`)
   })
 }
 
 main().catch((error) => {
   const browserBinary = detectBrowserBinary()
-  const ocrSupport = detectOcrSupport()
   const message = error instanceof Error ? error.message : String(error)
 
   console.error('Failed to start service')
   console.error(`Workspace: ${WORKSPACE}`)
   console.error(`Browser Binary: ${browserBinary ?? 'NOT FOUND'}`)
-  console.error(
-    `OCR: provider=${ocrSupport.provider}, available=${ocrSupport.available}`,
-  )
   console.error(message)
   if (/EACCES|permission denied/i.test(message) && PORT === 80) {
     console.error('Port 80 需要更高权限；请使用 sudo 启动，或改用 PORT 环境变量指定其他端口。')

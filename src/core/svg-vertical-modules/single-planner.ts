@@ -1,12 +1,10 @@
-import type { Box } from "../utils.js";
+import type { Box } from '../geometry.js';
 import type {
-  PlannerOcrBlock,
-  PlannerShellEntry,
   SvgVerticalModule,
 } from "./types.js";
-import { toSerializableRegion, uniqueStrings } from "./geometry.js";
+import { toSerializableRegion } from "./geometry.js";
 
-export const createFallbackModule = ({
+const createFallbackModule = ({
   id = "module-01",
   reason,
   viewport,
@@ -28,26 +26,20 @@ export const createFallbackModule = ({
     id,
     kind: "single-page",
     nodePaths: [],
-    ocrBlockIds: [],
     reason,
     region,
     score: 0,
-    shellContainerIds: [],
     sourceContainerIds: [],
   };
 };
 
 export const createSinglePageModule = ({
   candidateNodeCount = 0,
-  ocrBlocks,
   reason,
-  shellManifest,
   viewport,
 }: {
   candidateNodeCount?: number;
-  ocrBlocks: PlannerOcrBlock[];
   reason: string;
-  shellManifest: PlannerShellEntry[];
   viewport: Box;
 }) => ({
   ...createFallbackModule({
@@ -55,8 +47,4 @@ export const createSinglePageModule = ({
     viewport,
   }),
   candidateNodeCount,
-  ocrBlockIds: uniqueStrings(ocrBlocks.map((block) => block.id)),
-  shellContainerIds: uniqueStrings(
-    shellManifest.map((entry) => entry.containerId),
-  ),
 });

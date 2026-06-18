@@ -1,13 +1,21 @@
 import path from 'node:path'
 
-import { areaOf, intersectionArea } from './geometry.js'
+import {
+  areaOf,
+  bottomOf,
+  centerOf,
+  intersectionArea,
+  isFiniteBox,
+  overlapLength,
+  pointInside,
+  round,
+} from './geometry.js'
 import type { ModulePlannerMetadata } from './module-planner/types.js'
+import type { Box, Region } from './geometry.js'
 import {
   writeJsonFile,
   writeTextFile,
-  type Box,
-  type Region,
-} from './utils.js'
+} from './file-io.js'
 
 type ModulePlanQualitySeverity = 'critical' | 'warning'
 
@@ -23,16 +31,14 @@ type ModulePlanQualityIssue = {
 type ModulePlanQualitySourceBox = {
   box: Box
   id: string
-  kind: 'ocr' | 'shell'
 }
 
 type ModulePlanQualityModule = {
   candidateNodeCount?: number
   id: string
   nodePaths?: string[]
-  ocrBlockIds?: string[]
   region: Region
-  shellContainerIds?: string[]
+  sourceContainerIds?: string[]
 }
 
 type ModulePlanQualitySharedLayer = {
@@ -44,33 +50,17 @@ type ModulePlanQualitySharedLayer = {
 
 type ModulePlanQualityInput = {
   artifactDir?: string
-  concurrencyLimit?: number
   design: {
     height: number
     width: number
   }
   mode?: string
   modules: ModulePlanQualityModule[]
-  ocrBlocks?: Array<{
-    bbox?: Box
-    id?: string
-  }>
   planner?: ModulePlannerMetadata
-  shellManifest?: Array<{
-    box?: Box
-    category?: string
-    containerId?: string
-    status?: string
-  }>
   sharedLayers?: ModulePlanQualitySharedLayer[]
 }
 
 type ModulePlanQualityReport = {
-  concurrency: {
-    exceedsLimit: boolean
-    limit: null | number
-    moduleCount: number
-  }
   coverage: {
     contentBottom: number
     moduleBottom: number
@@ -108,36 +98,7 @@ type ModulePlanQualityArtifacts = {
   report: ModulePlanQualityReport
 }
 
-const round = (value: number, digits = 3) => Number(value.toFixed(digits))
 
-const centerOf = (box: Box) => ({
-  x: box.x + box.width / 2,
-  y: box.y + box.height / 2,
-})
-
-const pointInside = (point: { x: number; y: number }, box: Region) =>
-  point.x >= box.x &&
-  point.x <= box.x + box.width &&
-  point.y >= box.y &&
-  point.y <= box.y + box.height
-
-const bottomOf = (box: Pick<Box, 'height' | 'y'>) => box.y + box.height
-
-const overlapLength = (
-  leftStart: number,
-  leftEnd: number,
-  rightStart: number,
-  rightEnd: number,
-) => Math.max(0, Math.min(leftEnd, rightEnd) - Math.max(leftStart, rightStart))
-
-const isFiniteBox = (box: Box | undefined): box is Box =>
-  Boolean(box) &&
-  Number.isFinite(box?.x) &&
-  Number.isFinite(box?.y) &&
-  Number.isFinite(box?.width) &&
-  Number.isFinite(box?.height) &&
-  (box?.width ?? 0) > 0 &&
-  (box?.height ?? 0) > 0
 
 const clipBoxToViewport = (
   sourceBox: ModulePlanQualitySourceBox,
@@ -275,36 +236,7 @@ const edgeCutsBox = (edgeY: number, box: Box) => {
   return edgeY > box.y + inset && edgeY < bottomOf(box) - inset
 }
 
-const collectSourceBoxes = ({
-  ocrBlocks = [],
-  shellManifest = [],
-}: Pick<ModulePlanQualityInput, 'ocrBlocks' | 'shellManifest'>) => {
-  const ocrSourceBoxes = ocrBlocks.flatMap((block, index) => {
-    if (!isFiniteBox(block.bbox)) return []
-    return [
-      {
-        box: block.bbox,
-        id: block.id ?? `ocr-${index + 1}`,
-        kind: 'ocr' as const,
-      },
-    ]
-  })
-
-  const shellSourceBoxes = shellManifest.flatMap((entry, index) => {
-    if (!isFiniteBox(entry.box)) return []
-    if (entry.category?.toLowerCase() === 'layout') return []
-    if (entry.status?.toLowerCase() === 'layout') return []
-    return [
-      {
-        box: entry.box,
-        id: entry.containerId ?? `shell-${index + 1}`,
-        kind: 'shell' as const,
-      },
-    ]
-  })
-
-  return [...ocrSourceBoxes, ...shellSourceBoxes]
-}
+const collectSourceBoxes = (): ModulePlanQualitySourceBox[] => []
 
 const createMarkdown = (report: ModulePlanQualityReport) => [
   '# Module Plan Quality',
@@ -329,9 +261,6 @@ const createMarkdown = (report: ModulePlanQualityReport) => [
   `- uncovered source boxes: ${report.coverage.uncoveredSourceBoxCount}`,
   `- module bottom: ${report.coverage.moduleBottom}`,
   `- content bottom: ${report.coverage.contentBottom}`,
-  report.concurrency.limit
-    ? `- concurrency: ${report.concurrency.limit} (exceeds: ${report.concurrency.exceedsLimit})`
-    : '- concurrency: not provided',
   '',
   '## Issues',
   '',
@@ -358,13 +287,10 @@ const createMarkdown = (report: ModulePlanQualityReport) => [
 
 const createModulePlanQualityReport = async ({
   artifactDir,
-  concurrencyLimit,
   design,
   mode,
   modules,
-  ocrBlocks,
   planner,
-  shellManifest,
   sharedLayers = [],
 }: ModulePlanQualityInput): Promise<ModulePlanQualityArtifacts> => {
   const issues: ModulePlanQualityIssue[] = []
@@ -374,7 +300,7 @@ const createModulePlanQualityReport = async ({
     x: 0,
     y: 0,
   }
-  const sourceBoxes = collectSourceBoxes({ ocrBlocks, shellManifest })
+  const sourceBoxes = collectSourceBoxes()
     .map((sourceBox) => clipBoxToViewport(sourceBox, viewport))
     .filter((sourceBox): sourceBox is ModulePlanQualitySourceBox => Boolean(sourceBox))
   const uncoveredSourceBoxes = sourceBoxes.filter(
@@ -393,7 +319,7 @@ const createModulePlanQualityReport = async ({
         sampleIds: uncoveredSourceBoxes.slice(0, 20).map((sourceBox) => sourceBox.id),
       },
       kind: 'uncovered-source-content',
-      message: `${uncoveredSourceBoxes.length} OCR/shell source box(es) are not covered by any module region.`,
+      message: `${uncoveredSourceBoxes.length} shell source box(es) are not covered by any module region.`,
       severity: 'critical',
     })
   }
@@ -435,6 +361,28 @@ const createModulePlanQualityReport = async ({
     })
   }
 
+  const modulesWithSourceContentButNoOwnedVisuals = modules.filter((module) => {
+    const sourceContainerCount = module.sourceContainerIds?.length ?? 0
+    const expectedSourceContent = sourceContainerCount > 0
+    const ownedVisualSource =
+      (module.nodePaths?.length ?? 0) > 0 ||
+      (module.candidateNodeCount ?? 0) > 0 ||
+      sourceContainerCount > 0
+    return expectedSourceContent && !ownedVisualSource
+  })
+  modulesWithSourceContentButNoOwnedVisuals.forEach((module) => {
+    issues.push({
+      details: {
+        sourceContainerCount: module.sourceContainerIds?.length ?? 0,
+      },
+      kind: 'module-has-source-content-but-no-owned-visuals',
+      message:
+        'Module owns source structure markers but has no SVG node paths, candidate nodes, or source containers to reconstruct from.',
+      moduleId: module.id,
+      severity: 'critical',
+    })
+  })
+
   const hasFallbackCoverage = hasCoveringRegion({
     modules,
     sharedLayers,
@@ -467,17 +415,13 @@ const createModulePlanQualityReport = async ({
   const cutSourceSamples = verticalEdges.flatMap((edge) =>
     sourceBoxes
       .filter((sourceBox) => {
-        const ownedByModule =
-          sourceBox.kind === 'ocr'
-            ? (edge.module.ocrBlockIds ?? []).includes(sourceBox.id)
-            : (edge.module.shellContainerIds ?? []).includes(sourceBox.id)
+        const ownedByModule = (edge.module.sourceContainerIds ?? []).includes(sourceBox.id)
         return ownedByModule && edgeCutsBox(edge.y, sourceBox.box)
       })
       .map((sourceBox) => ({
         boundaryY: round(edge.y),
         moduleId: edge.module.id,
         sourceBoxId: sourceBox.id,
-        sourceKind: sourceBox.kind,
       })),
   )
   if (cutSourceSamples.length > 0) {
@@ -486,7 +430,7 @@ const createModulePlanQualityReport = async ({
         samples: cutSourceSamples.slice(0, 20),
       },
       kind: 'module-boundary-cuts-source-box',
-      message: `${cutSourceSamples.length} module boundary/source-box intersection(s) cut through OCR or shell source boxes.`,
+      message: `${cutSourceSamples.length} module boundary/source-box intersection(s) cut through source containers.`,
       severity: 'critical',
     })
   }
@@ -535,9 +479,7 @@ const createModulePlanQualityReport = async ({
 
   const tinyModules = modules.filter(
     (module) =>
-      (module.candidateNodeCount ?? 0) <= 1 &&
-      (module.ocrBlockIds?.length ?? 0) <= 6 &&
-      (module.shellContainerIds?.length ?? 0) <= 1,
+      (module.candidateNodeCount ?? 0) <= 1,
   )
   if (tinyModules.length >= 4) {
     issues.push({
@@ -550,28 +492,9 @@ const createModulePlanQualityReport = async ({
     })
   }
 
-  const exceedsConcurrency =
-    concurrencyLimit !== undefined && modules.length > concurrencyLimit
-  if (exceedsConcurrency) {
-    issues.push({
-      details: {
-        concurrencyLimit,
-        moduleCount: modules.length,
-      },
-      kind: 'module-count-exceeds-concurrency',
-      message: `Module count ${modules.length} exceeds concurrency ${concurrencyLimit}; agents will run in batches, not be skipped.`,
-      severity: 'warning',
-    })
-  }
-
   const criticalIssueCount = issues.filter((issue) => issue.severity === 'critical').length
   const warningIssueCount = issues.filter((issue) => issue.severity === 'warning').length
   const report: ModulePlanQualityReport = {
-    concurrency: {
-      exceedsLimit: Boolean(exceedsConcurrency),
-      limit: concurrencyLimit ?? null,
-      moduleCount: modules.length,
-    },
     coverage: {
       contentBottom: round(contentBottom),
       moduleBottom: round(moduleBottom),
@@ -615,9 +538,5 @@ const createModulePlanQualityReport = async ({
   }
 }
 
-export type {
-  ModulePlanQualityArtifacts,
-  ModulePlanQualityIssue,
-  ModulePlanQualityReport,
-}
+export type { ModulePlanQualityReport }
 export { createModulePlanQualityReport }

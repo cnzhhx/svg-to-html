@@ -6,34 +6,20 @@ import {
   type CreateAdaptiveModulePlanOptions,
   type ModulePlanMode,
   type ModulePlannerMode,
-} from '../core/svg-vertical-modules.js'
+} from '../core/svg-vertical-modules/index.js'
+import { parseFlagValue } from './cli-utils.js'
 
 const VALUE_FLAGS = new Set([
   '--artifact-dir',
-  '--concurrency-limit',
   '--container-layout',
   '--min-gap',
   '--mode',
-  // Deprecated no-op kept so old commands do not treat its value as inputPath.
-  '--max-modules',
-  '--ocr-blocks',
   '--planner',
   '--planner-retries',
   '--scale',
-  '--shell-manifest',
-  // Deprecated no-op kept so old commands do not treat its value as inputPath.
-  '--target-module-count',
 ])
 
-const parseFlagValue = (args: string[], flag: string) => {
-  const inlineArg = args.find((arg) => arg.startsWith(`${flag}=`))
-  if (inlineArg) return inlineArg.slice(flag.length + 1)
-
-  const flagIndex = args.indexOf(flag)
-  if (flagIndex >= 0) return args[flagIndex + 1]
-
-  return undefined
-}
+const DEPRECATED_FLAGS = new Set(['--max-modules', '--target-module-count'])
 
 const parseNumberFlag = ({
   args,
@@ -61,7 +47,7 @@ const parseMode = (args: string[]): ModulePlanMode => {
 const parsePlanner = (args: string[]): ModulePlannerMode => {
   const value = parseFlagValue(args, '--planner')
   if (!value) return 'auto'
-  if (value === 'auto' || value === 'script' || value === 'codex') {
+  if (value === 'auto' || value === 'script' || value === 'model') {
     return value
   }
   throw new Error(`Invalid --planner value: ${value}`)
@@ -84,10 +70,14 @@ const readJsonFlag = async <T>(args: string[], flag: string) => {
 }
 
 const usage =
-  'Usage: pnpm exec tsx src/cli/split-svg-modules.ts 设计稿.svg路径 [--mode auto|single|vertical] [--planner auto|script|codex] [--planner-retries 2] [--min-gap 10] [--concurrency-limit 20] [--scale 1|2] [--container-layout artifacts/container-layout.json] [--ocr-blocks artifacts/ocr-blocks.json] [--shell-manifest artifacts/shell-manifest.json]'
+  'Usage: pnpm exec tsx src/cli/split-svg-modules.ts 设计稿.svg路径 [--mode auto|single|vertical] [--planner auto|script|model] [--planner-retries 2] [--min-gap 10] [--scale 1|2] [--container-layout artifacts/container-layout.json]'
 
 const main = async () => {
   const args = process.argv.slice(2)
+  const deprecatedFlag = args.find((arg) => DEPRECATED_FLAGS.has(arg))
+  if (deprecatedFlag) {
+    throw new Error(`Deprecated flag: ${deprecatedFlag}`)
+  }
   const inputPath = parseInputPath(args)
   const minGap = parseNumberFlag({ args, defaultValue: 10, flag: '--min-gap' })
   const mode = parseMode(args)
@@ -106,18 +96,12 @@ const main = async () => {
     defaultValue: 1,
     flag: '--scale',
   })
-  const concurrencyLimit = parseNumberFlag({
-    args,
-    defaultValue: Number(process.env['MAX_PARALLEL_MODULE_AGENTS'] ?? 20),
-    flag: '--concurrency-limit',
-  })
+
 
   if (
     !inputPath ||
     !Number.isFinite(minGap) ||
     (minGap ?? 0) <= 0 ||
-    !Number.isFinite(concurrencyLimit) ||
-    (concurrencyLimit ?? 0) <= 0 ||
     !Number.isFinite(plannerRetries) ||
     (plannerRetries ?? 0) < 0 ||
     !Number.isFinite(scale) ||
@@ -129,23 +113,15 @@ const main = async () => {
   console.log('[svg-modules] Planning adaptive modules...')
   const result = await createAdaptiveModulePlan({
     artifactDir,
-    concurrencyLimit,
     containerLayoutReport: await readJsonFlag<
       CreateAdaptiveModulePlanOptions['containerLayoutReport']
     >(args, '--container-layout'),
     inputPath,
     minGap,
     mode,
-    ocrBlocks: await readJsonFlag<CreateAdaptiveModulePlanOptions['ocrBlocks']>(
-      args,
-      '--ocr-blocks',
-    ),
     planner,
     plannerRetries,
     scale,
-    shellManifest: await readJsonFlag<
-      CreateAdaptiveModulePlanOptions['shellManifest']
-    >(args, '--shell-manifest'),
   })
 
   console.log('[svg-modules] Plan written:')

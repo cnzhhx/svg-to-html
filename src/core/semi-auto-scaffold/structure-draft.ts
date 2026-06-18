@@ -6,20 +6,12 @@ import {
   type PatternHint,
   type RepeatedGroupRecord,
 } from "../container-layout/types.js";
-import type { TextLayoutBlock } from "../text-layout.js";
-import type { Box } from "../utils.js";
+import type { Box } from '../geometry.js';
 import type {
-  OcrBlockRecord,
-  ShellManifestEntry,
   StructureDraft,
   StructureDraftNode,
 } from "./types.js";
-import {
-  areaOf,
-  boxCenterDistance,
-  containmentRatio,
-  sanitizeId,
-} from "./utils.js";
+import { sanitizeId } from "./utils.js";
 
 const pruneEmptyDraftNodes = ({
   rootNodeIds,
@@ -29,13 +21,10 @@ const pruneEmptyDraftNodes = ({
   nodeById: Map<string, StructureDraftNode>;
 }) => {
   const shouldKeep = (node: StructureDraftNode) => {
-    if (node.role === "shell") return true;
     if (node.role === "container") return true;
     if (node.role === "repeat-list" || node.role === "repeat-item") return true;
     if (node.role === "token-row" || node.role === "token-cell") return true;
-    if (node.textBlockIds.length > 0) return true;
     if (node.children.length > 0) return true;
-    if (node.shellEntryId) return true;
     return false;
   };
 
@@ -94,28 +83,19 @@ const buildTokenRowBox = ({
 
 const buildStructureDraft = ({
   containerLayout,
-  ocrBlocks,
-  shellManifest,
 }: {
   containerLayout: ContainerLayoutReport;
-  ocrBlocks: OcrBlockRecord[];
-  shellManifest: ShellManifestEntry[];
 }) => {
   const containerById = new Map(
     containerLayout.containers.map(
       (container) => [container.id, container] as const,
     ),
   );
-  const shellByContainerId = new Map(
-    shellManifest.map((entry) => [entry.containerId, entry] as const),
-  );
   const nodeById = new Map<string, StructureDraftNode>();
   const rootNodeIds: string[] = [];
-  const textCapableNodeIds: string[] = [];
 
   const registerNode = (node: StructureDraftNode) => {
     nodeById.set(node.id, node);
-    if (node.role !== "shell") textCapableNodeIds.push(node.id);
     return node;
   };
 
@@ -213,9 +193,7 @@ const buildStructureDraft = ({
         repeatGroupId: sanitizeId(group.containerIds.join("-")),
         role: isTokenRow ? "token-row" : "repeat-list",
         selector: `#${groupNodeId}`,
-        shellEntryId: null,
         tag: "section",
-        textBlockIds: [],
       });
 
     if (!parentNode.children.includes(groupNode.id))
@@ -244,40 +222,8 @@ const buildStructureDraft = ({
           repeatGroupId: groupNode.repeatGroupId,
           role: isTokenRow ? "token-cell" : "repeat-item",
           selector: `#${nodeId}`,
-          shellEntryId:
-            shellByContainerId.get(container.id)?.containerId ?? null,
           tag: isTokenRow ? "div" : "article",
-          textBlockIds: [],
         });
-
-      if (!isTokenRow) {
-        const shellEntry = shellByContainerId.get(container.id);
-        if (shellEntry) {
-          const shellNodeId = `node-shell-${sanitizeId(container.id)}`;
-          const shellNode =
-            nodeById.get(shellNodeId) ??
-            registerNode({
-              box: {
-                height: container.box.height,
-                width: container.box.width,
-                x: container.box.x,
-                y: container.box.y,
-              },
-              children: [],
-              containerId: container.id,
-              id: shellNodeId,
-              patternKinds: ["shell-candidate"],
-              repeatGroupId: groupNode.repeatGroupId,
-              role: "shell",
-              selector: `#${shellNodeId}`,
-              shellEntryId: shellEntry.containerId,
-              tag: "div",
-              textBlockIds: [],
-            });
-          if (!itemNode.children.includes(shellNode.id))
-            itemNode.children.push(shellNode.id);
-        }
-      }
 
       if (!groupNode.children.includes(itemNode.id)) {
         groupNode.children.splice(index, 0, itemNode.id);
@@ -324,36 +270,12 @@ const buildStructureDraft = ({
         repeatGroupId: null,
         role: topLevel ? "container" : "group",
         selector: `#${nodeId}`,
-        shellEntryId: shellByContainerId.get(container.id)?.containerId ?? null,
         tag: topLevel ? "section" : "div",
-        textBlockIds: [],
       });
 
     if (topLevel && !rootNodeIds.includes(node.id)) rootNodeIds.push(node.id);
     if (parentNode && !parentNode.children.includes(node.id))
       parentNode.children.push(node.id);
-
-    const shellEntry = shellByContainerId.get(container.id);
-    if (shellEntry) {
-      const shellNodeId = `node-shell-${sanitizeId(container.id)}`;
-      const shellNode =
-        nodeById.get(shellNodeId) ??
-        registerNode({
-          box: container.box,
-          children: [],
-          containerId: container.id,
-          id: shellNodeId,
-          patternKinds: ["shell-candidate"],
-          repeatGroupId: null,
-          role: "shell",
-          selector: `#${shellNodeId}`,
-          shellEntryId: shellEntry.containerId,
-          tag: "div",
-          textBlockIds: [],
-        });
-      if (!node.children.includes(shellNode.id))
-        node.children.push(shellNode.id);
-    }
 
     const repeatedGroups = containerLayout.repeatedGroups
       .filter((group) => group.parentContainerId === container.id)
@@ -396,7 +318,6 @@ const buildStructureDraft = ({
     );
     const rootContainerId = rootContainer?.id ?? "root";
     const needsRootWrapper =
-      shellByContainerId.has(rootContainerId) ||
       containerLayout.repeatedGroups.some(
         (group) => group.parentContainerId === rootContainerId,
       );
@@ -424,50 +345,6 @@ const buildStructureDraft = ({
 
   buildTopLevelNodes();
 
-  const textCapableNodes = textCapableNodeIds
-    .map((nodeId) => nodeById.get(nodeId))
-    .filter((node): node is StructureDraftNode => Boolean(node));
-
-  ocrBlocks.forEach((block) => {
-    const candidates = textCapableNodes
-      .filter((node) => containmentRatio(block.bbox, node.box) >= 0.7)
-      .sort((left, right) => areaOf(left.box) - areaOf(right.box));
-
-    let bestNode = candidates[0];
-
-    if (!bestNode) {
-      const nearest = [...textCapableNodes].sort(
-        (left, right) =>
-          boxCenterDistance(block.bbox, left.box) -
-          boxCenterDistance(block.bbox, right.box),
-      )[0];
-
-      if (nearest) {
-        const parentNode = [...nodeById.values()].find((node) =>
-          node.children.includes(nearest.id),
-        );
-        bestNode =
-          parentNode && containmentRatio(block.bbox, parentNode.box) >= 0.5
-            ? parentNode
-            : nearest;
-      }
-    }
-
-    if (!bestNode) return;
-
-    block.assignedNodeId = bestNode.id;
-    bestNode.textBlockIds.push(block.id);
-  });
-
-  const trackedBlocks: TextLayoutBlock[] = ocrBlocks
-    .filter((block) => block.assignedNodeId)
-    .map((block) => ({
-      declarations: {},
-      id: block.id,
-      region: block.bbox,
-      selectors: [`#text-${sanitizeId(block.id)}`],
-    }));
-
   const prunedRootNodeIds = pruneEmptyDraftNodes({
     rootNodeIds,
     nodeById,
@@ -476,10 +353,8 @@ const buildStructureDraft = ({
   return {
     designName: path.basename(containerLayout.svgPath, ".svg"),
     nodes: [...nodeById.values()],
-    ocrBlockIds: ocrBlocks.map((block) => block.id),
     pageSelector: ".design-page",
     topLevelNodeIds: prunedRootNodeIds,
-    trackedBlocks,
   } satisfies StructureDraft;
 };
 

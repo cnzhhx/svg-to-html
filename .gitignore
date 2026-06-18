@@ -5,9 +5,9 @@ dist/
 test/output/
 *.tsbuildinfo
 
-.env
-.env.*
-config/model-provider.json
-
 .DS_Store
 **/.DS_Store
+.runtime-traces/
+
+# Local model provider config may contain API keys.
+config/model-provider.json

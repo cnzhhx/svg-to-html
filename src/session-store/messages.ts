@@ -1,4 +1,45 @@
 import type { Session, SessionMessage } from './types.js'
+import {
+  AGENT_MESSAGE_SAMPLE_CHARS,
+  AGENT_REASONING_MESSAGE_CHARS,
+} from '../config/index.js'
+
+const sampleText = (value: string, maxChars = AGENT_MESSAGE_SAMPLE_CHARS) => {
+  if (maxChars <= 0) return ''
+  return value.length <= maxChars ? value : value.slice(0, maxChars)
+}
+
+const sampleString = (value: unknown) =>
+  typeof value === 'string' ? sampleText(value) : ''
+
+const sampleUnknown = (value: unknown) => {
+  if (value === undefined) return ''
+  if (typeof value === 'string') return sampleText(value)
+  try {
+    return sampleText(JSON.stringify(value))
+  } catch {
+    return sampleText(String(value))
+  }
+}
+
+const isAgentMessageItemType = (
+  value: unknown,
+): value is NonNullable<SessionMessage['agentItemType']> =>
+  value === 'agent_message' ||
+  value === 'command_execution' ||
+  value === 'error' ||
+  value === 'mcp_tool_call' ||
+  value === 'reasoning'
+
+const labelForStatus = (value: unknown) => {
+  if (value === 'in_progress') return '执行中'
+  if (value === 'completed') return '完成'
+  if (value === 'failed') return '失败'
+  return sampleString(value)
+}
+
+const sampleEventText = (lines: string[]) =>
+  sampleText(lines.filter(Boolean).join('\n'))
 
 type UpsertSessionMessageOptions = {
   enqueueForAgent?: boolean
@@ -34,7 +75,7 @@ const upsertSessionMessage = (
   return created
 }
 
-const sessionMessageFromCodexEvent = (
+const sessionMessageFromAgentEvent = (
   event: Record<string, unknown>,
 ): Omit<SessionMessage, 'createdAt'> | undefined => {
   const eventType = event['type']
@@ -54,26 +95,77 @@ const sessionMessageFromCodexEvent = (
   const itemType = itemRecord['type']
   if (
     typeof itemId !== 'string' ||
-    (itemType !== 'agent_message' && itemType !== 'error')
+    !isAgentMessageItemType(itemType)
   ) {
     return undefined
   }
 
+  const status = labelForStatus(itemRecord['status'])
   const text =
     itemType === 'error'
-      ? itemRecord['message']
+      ? sampleString(itemRecord['message'])
       : itemType === 'agent_message'
-        ? itemRecord['text']
-        : ''
+        ? typeof itemRecord['text'] === 'string'
+          ? itemRecord['text']
+          : ''
+        : itemType === 'reasoning'
+          ? typeof itemRecord['text'] === 'string'
+            ? sampleText(itemRecord['text'], AGENT_REASONING_MESSAGE_CHARS)
+            : ''
+          : itemType === 'command_execution'
+            ? sampleEventText([
+                `命令${status ? ` ${status}` : ''}: ${sampleString(itemRecord['command'])}`,
+                sampleString(itemRecord['aggregated_output'])
+                  ? `输出: ${sampleString(itemRecord['aggregated_output'])}`
+                  : '',
+              ])
+            : itemType === 'mcp_tool_call'
+              ? sampleEventText([
+                  `工具${status ? ` ${status}` : ''}: ${[
+                    sampleString(itemRecord['server']),
+                    sampleString(itemRecord['tool']),
+                  ]
+                    .filter(Boolean)
+                    .join('/')}`,
+                  itemRecord['error'] &&
+                  typeof itemRecord['error'] === 'object' &&
+                  typeof (itemRecord['error'] as Record<string, unknown>)[
+                    'message'
+                  ] === 'string'
+                    ? `错误: ${sampleString(
+                        (itemRecord['error'] as Record<string, unknown>)[
+                          'message'
+                        ],
+                      )}`
+                    : '',
+                  sampleUnknown(itemRecord['result'])
+                    ? `结果: ${sampleUnknown(itemRecord['result'])}`
+                    : '',
+                ])
+              : ''
+  const moduleId =
+    typeof event['moduleId'] === 'string'
+      ? event['moduleId']
+      : typeof itemRecord['moduleId'] === 'string'
+        ? itemRecord['moduleId']
+        : undefined
+  const sourceLabel =
+    typeof event['sourceLabel'] === 'string'
+      ? event['sourceLabel']
+      : typeof itemRecord['sourceLabel'] === 'string'
+        ? itemRecord['sourceLabel']
+        : undefined
 
   return {
-    codexEventType: eventType,
-    codexItemType: itemType,
+    agentEventType: eventType,
+    agentItemType: itemType,
     id: itemId,
     kind: itemType === 'agent_message' ? 'chat' : 'event',
+    ...(moduleId ? { moduleId } : {}),
+    ...(sourceLabel ? { sourceLabel } : {}),
     role: 'assistant',
-    text: typeof text === 'string' ? text : '',
+    text,
   }
 }
 
-export { sessionMessageFromCodexEvent, upsertSessionMessage }
+export { sessionMessageFromAgentEvent, upsertSessionMessage }

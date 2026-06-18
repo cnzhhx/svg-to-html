@@ -1,6 +1,6 @@
-import type { Box } from "../utils.js";
+import type { Box } from "../geometry.js";
 
-export type ContainerKind = "explicit-group" | "root" | "shape-container";
+type ContainerKind = "explicit-group" | "root" | "shape-container";
 
 export type ContainerRecord = {
   box: Box;

@@ -1,20 +1,18 @@
-import { readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
-import {
-  assertModuleOutputPolicy,
-  type ModuleOutputAllowedAsset,
-} from "../module-output-policy.js";
-import type { TextLayoutConfig } from "../../core/text-layout.js";
 import type {
   ModuleFragmentManifest,
   ModuleMergeResolvedModule,
   ModulePlan,
   ModulePlanModule,
-  ModuleTextLayoutCoordinateSpace,
+  ModuleSourceData,
 } from "./types.js";
-import { rewriteModuleLocalAssetReferences } from "./html-render.js";
-import { normalizeTextLayoutConfig } from "./text-layout.js";
+import {
+  normalizeSourceFragment,
+  rewriteModuleLocalAssetReferences,
+} from "./html-render.js";
+import { readModuleAllowedAssets } from "../agent-runner/module/module-semantic.js";
 import {
   asString,
   isRecord,
@@ -25,19 +23,11 @@ import {
   resolveConfiguredPath,
 } from "./utils.js";
 
-const readAllowedAssetsIfExists = async (
-  filePath: string,
-): Promise<ModuleOutputAllowedAsset[]> => {
+const readOptionalText = async (filePath: string) => {
   try {
-    const parsed = await parseJsonFile<unknown>(filePath, "allowed assets");
-    if (Array.isArray(parsed))
-      return parsed.filter(isRecord) as ModuleOutputAllowedAsset[];
-    if (isRecord(parsed) && Array.isArray(parsed.assets)) {
-      return parsed.assets.filter(isRecord) as ModuleOutputAllowedAsset[];
-    }
-    return [];
+    return await readFile(filePath, "utf8");
   } catch {
-    return [];
+    return undefined;
   }
 };
 
@@ -49,38 +39,28 @@ const readModulePlan = async (modulePlanPath: string): Promise<ModulePlan> => {
   return parsed as ModulePlan;
 };
 
-const GENERATED_ASSET_COLLECTION_KEYS = [
-  "generatedAssets",
-  "producedAssets",
-  "localAssets",
-  "moduleAssets",
-] as const;
-
-const GENERATED_ASSET_REF_KEYS = [
+const PRODUCED_ASSET_REF_KEYS = [
   "path",
   "relativePath",
   "htmlRef",
-  "assetPath",
-  "svgPath",
-  "pngPath",
-  "webpPath",
-  "jpgPath",
-  "jpegPath",
-  "avifPath",
 ] as const;
 
-const collectGeneratedAssetRefs = (manifest: ModuleFragmentManifest) =>
-  GENERATED_ASSET_COLLECTION_KEYS.flatMap((collectionKey) => {
+const collectGeneratedAssetRefs = (manifest: ModuleFragmentManifest) => {
+  const refs: string[] = [];
+  // producedAssets 是脚本 finalizeModuleManifest 标准化后的唯一资产字段
+  for (const collectionKey of ["producedAssets"] as const) {
     const collection = manifest[collectionKey];
-    if (!Array.isArray(collection)) return [];
-    return collection.flatMap((item) => {
-      if (!isRecord(item)) return [];
-      return GENERATED_ASSET_REF_KEYS.flatMap((refKey) => {
+    if (!Array.isArray(collection)) continue;
+    for (const item of collection) {
+      if (!isRecord(item)) continue;
+      for (const refKey of PRODUCED_ASSET_REF_KEYS) {
         const ref = asString(item[refKey]);
-        return ref ? [ref] : [];
-      });
-    });
-  });
+        if (ref) refs.push(ref);
+      }
+    }
+  }
+  return refs;
+};
 
 const normalizePlanModules = async ({
   modulePlan,
@@ -178,60 +158,22 @@ const getModuleDir = ({
     : path.join(modulesDir, planEntry.id);
 };
 
-const normalizeCoordinateSpace = (
-  value: unknown,
-): ModuleTextLayoutCoordinateSpace | undefined => {
-  if (value === "absolute" || value === "local") return value;
-  return undefined;
-};
-
-const inferTextLayoutCoordinateSpace = ({
-  region,
-  textLayout,
-}: {
-  region: ModuleMergeResolvedModule["region"];
-  textLayout: TextLayoutConfig;
-}): ModuleTextLayoutCoordinateSpace => {
-  // Older module payloads did not declare whether text boxes were local to the
-  // module or absolute page coordinates, so infer it from impossible offsets.
-  const blocksWithRegion = (textLayout.blocks ?? []).filter(
-    (block) => block.region,
-  );
-  if (!blocksWithRegion.length) return "absolute";
-  if (region.x <= 0 && region.y <= 0) return "absolute";
-
-  const localLikeCount = blocksWithRegion.filter((block) => {
-    const blockRegion = block.region;
-    if (!blockRegion) return false;
-    const regionCenterY = blockRegion.y + blockRegion.height / 2;
-    const moduleCenterY = region.y + region.height / 2;
-    return (
-      blockRegion.y < region.y - 1 &&
-      regionCenterY >= -4 &&
-      regionCenterY <= region.height + 4 &&
-      Math.abs(regionCenterY - moduleCenterY) > region.height * 0.35
-    );
-  }).length;
-
-  return localLikeCount > blocksWithRegion.length / 2 ? "local" : "absolute";
-};
-
 const collectTargetPathIssues = ({
   baseDir,
   moduleId,
-  outputHtmlPath,
+  renderEntryPath,
   payload,
   sourceLabel,
 }: {
   baseDir: string;
   moduleId: string;
-  outputHtmlPath: string;
+  renderEntryPath: string;
   payload: unknown;
   sourceLabel: string;
 }) => {
   // Module agents may echo target paths in auxiliary JSON; flag values that
   // point outside the expected module output before merge-time file writes.
-  const outputComparable = normalizePathForCompare(outputHtmlPath);
+  const renderEntryComparable = normalizePathForCompare(renderEntryPath);
   const issues: string[] = [];
 
   const isTargetPathKey = (key: string) => {
@@ -287,14 +229,16 @@ const collectTargetPathIssues = ({
           /^(main|main-html|final-html|session-html|html)$/i.test(childValue)
         ) {
           issues.push(
-            `${sourceLabel}.${childPath} declares final HTML as target`,
+            `${sourceLabel}.${childPath} declares render entry as target`,
           );
           return;
         }
 
         const resolved = resolveConfiguredPath(childValue, baseDir);
-        if (normalizePathForCompare(resolved) === outputComparable) {
-          issues.push(`${sourceLabel}.${childPath} points at final HTML`);
+        if (normalizePathForCompare(resolved) === renderEntryComparable) {
+          issues.push(
+            `${sourceLabel}.${childPath} points at render entry HTML`,
+          );
         }
       }
 
@@ -308,12 +252,14 @@ const collectTargetPathIssues = ({
 };
 
 const assertFragmentDoesNotTargetDocument = ({
-  fragmentHtml,
-  htmlPath,
+  content,
+  filePath,
+  label,
   moduleId,
 }: {
-  fragmentHtml: string;
-  htmlPath: string;
+  content: string;
+  filePath: string;
+  label: string;
   moduleId: string;
 }) => {
   const forbiddenPatterns = [
@@ -322,82 +268,163 @@ const assertFragmentDoesNotTargetDocument = ({
     { label: "<head>", pattern: /<head\b/i },
     { label: "<body>", pattern: /<body\b/i },
     { label: "<main>", pattern: /<main\b/i },
-    {
-      label: "inline text-layout script",
-      pattern: /data-text-layout-config/i,
-    },
   ];
 
   const match = forbiddenPatterns.find((item) =>
-    item.pattern.test(fragmentHtml),
+    item.pattern.test(content),
   );
   if (!match) return;
 
   throw new Error(
-    `${moduleId} fragment must be a partial HTML fragment, not a main document target. Found ${match.label} in ${htmlPath}`,
+    `${moduleId} ${label} must be a partial fragment, not a main document target. Found ${match.label} in ${filePath}`,
+  );
+};
+
+const decodeHtmlEntities = (value: string) =>
+  value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+
+const normalizeVisibleTextToken = (value: string) =>
+  decodeHtmlEntities(value)
+    .replace(/\s+/g, " ")
+    .trim();
+
+const collectPreviewVisibleTextTokens = (html: string) => {
+  const stripped = html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, "\n");
+  const tokens = stripped
+    .split(/\n+/)
+    .map(normalizeVisibleTextToken)
+    .filter((token) => token.length >= 2);
+  return [...new Set(tokens)].slice(0, 80);
+};
+
+const assertSourcePreviewTextConsistency = ({
+  moduleId,
+  previewFragmentHtml,
+  sourceDataRaw,
+  sourceFragmentLabel,
+  sourceFragmentRaw,
+}: {
+  moduleId: string;
+  previewFragmentHtml: string;
+  sourceDataRaw?: string;
+  sourceFragmentLabel: string;
+  sourceFragmentRaw: string;
+}) => {
+  const previewTokens = collectPreviewVisibleTextTokens(previewFragmentHtml);
+  if (!previewTokens.length) return;
+  const searchableSource = normalizeVisibleTextToken(
+    `${sourceFragmentRaw}\n${sourceDataRaw ?? ""}`,
+  );
+  const missing = previewTokens
+    .filter((token) => !searchableSource.includes(token))
+    .slice(0, 20);
+  if (!missing.length) return;
+  throw new Error(
+    `${moduleId} ${sourceFragmentLabel} is out of sync with preview.fragment.html; missing visible text token(s): ${missing.join(", ")}. Vue/React final HTML is built from source, so keep source fragment/source-data synchronized with the preview fragment.`,
   );
 };
 
 const loadResolvedModule = async ({
   modulePlan,
   modulesDir,
-  outputHtmlPath,
+  renderEntryPath,
   planDir,
   planEntry,
 }: {
   modulePlan: ModulePlan;
   modulesDir: string;
-  outputHtmlPath: string;
+  renderEntryPath: string;
   planDir: string;
   planEntry: ModulePlanModule;
 }): Promise<ModuleMergeResolvedModule> => {
   assertValidModuleId(planEntry.id);
 
   const moduleDir = getModuleDir({ modulesDir, planDir, planEntry });
-  const htmlPath = resolveModuleFilePath({
-    defaultFileName: "fragment.html",
+  const previewFragmentPath = resolveModuleFilePath({
+    defaultFileName: "preview.fragment.html",
     moduleDir,
   });
-  const cssPath = resolveModuleFilePath({
-    defaultFileName: "fragment.css",
+  const moduleCssPath = resolveModuleFilePath({
+    defaultFileName: "module.css",
     moduleDir,
   });
-  const textLayoutPath = resolveModuleFilePath({
-    defaultFileName: "text-layout.json",
-    moduleDir,
-  });
+  const outputFormat = modulePlan.outputFormat;
+  const sourceFragmentPath =
+    outputFormat === "vue"
+      ? resolveModuleFilePath({
+          defaultFileName: "source.fragment.vue.html",
+          moduleDir,
+        })
+      : outputFormat === "react"
+        ? resolveModuleFilePath({
+            defaultFileName: "source.fragment.jsx",
+            moduleDir,
+          })
+        : undefined;
+  const sourceDataPath =
+    outputFormat === "vue" || outputFormat === "react"
+      ? resolveModuleFilePath({
+          defaultFileName: "source-data.json",
+          moduleDir,
+        })
+      : undefined;
   const manifestPath = resolveModuleFilePath({
     defaultFileName: "manifest.json",
     moduleDir,
   });
-  const allowedAssetsPath = resolveModuleFilePath({
-    defaultFileName: "allowed-assets.json",
-    moduleDir,
-  });
-
-  let [fragmentHtml, fragmentCss, textLayoutRaw, manifestRaw, allowedAssets] =
-    await Promise.all([
-      readRequiredText(htmlPath, `${planEntry.id} fragment.html`),
-      readRequiredText(cssPath, `${planEntry.id} fragment.css`),
-      readRequiredText(textLayoutPath, `${planEntry.id} text-layout.json`),
-      readRequiredText(manifestPath, `${planEntry.id} manifest.json`),
-      readAllowedAssetsIfExists(allowedAssetsPath),
-    ]);
-  let textLayoutJson: unknown;
+  let [
+    previewFragmentHtml,
+    moduleCss,
+    sourceFragment,
+    sourceDataRaw,
+    manifestRaw,
+    allowedAssets,
+  ] = await Promise.all([
+    readRequiredText(
+      previewFragmentPath,
+      `${planEntry.id} preview.fragment.html`,
+    ),
+    readRequiredText(moduleCssPath, `${planEntry.id} module.css`),
+    sourceFragmentPath
+      ? readRequiredText(
+          sourceFragmentPath,
+          `${planEntry.id} ${path.basename(sourceFragmentPath)}`,
+        )
+      : Promise.resolve(undefined),
+    sourceDataPath ? readOptionalText(sourceDataPath) : Promise.resolve(undefined),
+    readRequiredText(manifestPath, `${planEntry.id} manifest.json`),
+    readModuleAllowedAssets(moduleDir),
+  ]);
   let manifest: ModuleFragmentManifest;
-  try {
-    textLayoutJson = JSON.parse(textLayoutRaw) as unknown;
-  } catch (error) {
-    throw new Error(
-      `Unable to parse ${planEntry.id} text-layout.json as JSON: ${textLayoutPath} (${error instanceof Error ? error.message : String(error)})`,
-    );
-  }
+  let sourceData: ModuleSourceData | undefined;
   try {
     manifest = JSON.parse(manifestRaw) as ModuleFragmentManifest;
   } catch (error) {
     throw new Error(
       `Unable to parse ${planEntry.id} manifest.json as JSON: ${manifestPath} (${error instanceof Error ? error.message : String(error)})`,
     );
+  }
+  if (sourceDataRaw !== undefined) {
+    try {
+      const parsed = JSON.parse(sourceDataRaw) as unknown;
+      if (!isRecord(parsed)) {
+        throw new Error("source-data.json must be a JSON object");
+      }
+      sourceData = parsed as ModuleSourceData;
+    } catch (error) {
+      throw new Error(
+        `Unable to parse ${planEntry.id} source-data.json as JSON: ${sourceDataPath} (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
   }
 
   if (!isRecord(manifest)) {
@@ -409,7 +436,27 @@ const loadResolvedModule = async ({
   const region = planEntry.region
     ? normalizeRegion(planEntry.region, planEntry.id)
     : normalizeRegion(manifest.region, planEntry.id);
-  const textLayout = normalizeTextLayoutConfig(textLayoutJson);
+  const sourceFragmentLabel = sourceFragmentPath
+    ? path.basename(sourceFragmentPath)
+    : undefined;
+  const sourceFragmentRaw = sourceFragment;
+  if (sourceFragmentPath && !sourceFragment?.trim()) {
+    throw new Error(
+      `${planEntry.id} ${sourceFragmentLabel} must be non-empty for ${outputFormat} output`,
+    );
+  }
+  if (
+    sourceFragmentPath &&
+    sourceFragment !== undefined &&
+    (outputFormat === "vue" || outputFormat === "react")
+  ) {
+    sourceFragment = normalizeSourceFragment(sourceFragment, outputFormat);
+    if (!sourceFragment.trim()) {
+      throw new Error(
+        `${planEntry.id} ${sourceFragmentLabel} became empty after ${outputFormat} source-fragment normalization`,
+      );
+    }
+  }
 
   const manifestModuleId = manifest.moduleId ?? manifest.id;
   if (manifestModuleId && manifestModuleId !== planEntry.id) {
@@ -422,14 +469,14 @@ const loadResolvedModule = async ({
     ...collectTargetPathIssues({
       baseDir: planDir,
       moduleId: planEntry.id,
-      outputHtmlPath,
+      renderEntryPath,
       payload: planEntry,
       sourceLabel: "module-plan",
     }),
     ...collectTargetPathIssues({
       baseDir: moduleDir,
       moduleId: planEntry.id,
-      outputHtmlPath,
+      renderEntryPath,
       payload: manifest,
       sourceLabel: "manifest",
     }),
@@ -437,67 +484,66 @@ const loadResolvedModule = async ({
 
   if (targetIssues.length) {
     throw new Error(
-      `Module fragments must not target the final session HTML:\n${targetIssues.join("\n")}`,
+      `Module artifacts must not target the render entry HTML:\n${targetIssues.join("\n")}`,
     );
   }
 
   assertFragmentDoesNotTargetDocument({
-    fragmentHtml,
-    htmlPath,
+    content: previewFragmentHtml,
+    filePath: previewFragmentPath,
+    label: "preview.fragment.html",
     moduleId: planEntry.id,
   });
-  await assertModuleOutputPolicy(
-    {
-      fragmentCss,
-      fragmentHtml,
-      manifest,
-      manifestRaw,
-      textLayoutRaw,
-    },
-    {
-      allowedAssets,
-      design: modulePlan.design,
-      htmlPath: outputHtmlPath,
-      moduleDir,
+  if (sourceFragmentPath && sourceFragmentRaw !== undefined) {
+    assertFragmentDoesNotTargetDocument({
+      content: sourceFragmentRaw,
+      filePath: sourceFragmentPath,
+      label: sourceFragmentLabel!,
       moduleId: planEntry.id,
-      moduleRegion: region,
-      originalSvgPath: modulePlan.design?.svgPath,
-    },
-  );
+    });
+    assertSourcePreviewTextConsistency({
+      moduleId: planEntry.id,
+      previewFragmentHtml,
+      sourceDataRaw,
+      sourceFragmentLabel: sourceFragmentLabel!,
+      sourceFragmentRaw,
+    });
+  }
+  const moduleLocalAssetRefs = collectGeneratedAssetRefs(manifest);
 
-  fragmentHtml = rewriteModuleLocalAssetReferences({
+  previewFragmentHtml = rewriteModuleLocalAssetReferences({
     allowedAssets,
-    content: fragmentHtml,
+    content: previewFragmentHtml,
     moduleDir,
-    moduleLocalAssetRefs: collectGeneratedAssetRefs(manifest),
-    outputHtmlPath,
+    moduleLocalAssetRefs,
+    renderEntryPath,
   });
-  fragmentCss = rewriteModuleLocalAssetReferences({
+  moduleCss = rewriteModuleLocalAssetReferences({
     allowedAssets,
-    content: fragmentCss,
+    content: moduleCss,
     moduleDir,
-    moduleLocalAssetRefs: collectGeneratedAssetRefs(manifest),
-    outputHtmlPath,
+    moduleLocalAssetRefs,
+    renderEntryPath,
   });
 
   return {
-    cssPath,
+    allowedAssets,
     dir: moduleDir,
-    fragmentCss,
-    fragmentHtml,
-    htmlPath,
     id: planEntry.id,
     manifest,
     manifestPath,
+    moduleLocalAssetRefs,
+    moduleCss,
+    moduleCssPath,
     planEntry,
+    previewFragmentHtml,
+    previewFragmentPath,
     region,
-    textLayout,
-    textLayoutCoordinateSpace:
-      normalizeCoordinateSpace(planEntry.textLayoutCoordinateSpace) ??
-      normalizeCoordinateSpace(modulePlan.textLayoutCoordinateSpace) ??
-      normalizeCoordinateSpace(manifest.textLayoutCoordinateSpace) ??
-      inferTextLayoutCoordinateSpace({ region, textLayout }),
-    textLayoutPath,
+    sourceFragment,
+    sourceFragmentPath,
+    sourceData,
+    sourceDataPath,
+    sourceDataRaw,
   };
 };
 

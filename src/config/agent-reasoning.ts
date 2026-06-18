@@ -1,13 +1,19 @@
-import type { ThreadOptions } from '@openai/codex-sdk'
-
-type AgentReasoningEffort = NonNullable<ThreadOptions['modelReasoningEffort']>
+type AgentReasoningEffort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
 
 const SUPPORTED_REASONING_EFFORTS: AgentReasoningEffort[] = [
+  'none',
+  'minimal',
   'low',
   'medium',
   'high',
   'xhigh',
-]
+];
 
 const parseReasoningEffort = (
   value: string | undefined,
@@ -32,9 +38,9 @@ const AGENT_REASONING_EFFORTS = {
     process.env['AGENT_UNIT_REASONING_EFFORT'],
     'high',
   ),
-  globalRepair: parseReasoningEffort(
-    process.env['GLOBAL_REPAIR_REASONING_EFFORT'],
-    'high',
+  support: parseReasoningEffort(
+    process.env['SUPPORT_AGENT_REASONING_EFFORT'],
+    'low',
   ),
 } as const
 

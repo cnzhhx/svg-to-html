@@ -1,7 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { inspectSvgSource } from "../pipeline/agent-runner/module-input-summary.js";
+import { inspectSvgSource } from "../core/svg-inspection.js";
+import { parseCliFlags } from "./cli-utils.js";
 
 const VALUE_FLAGS = new Set([
   "--format",
@@ -12,38 +13,16 @@ const VALUE_FLAGS = new Set([
   "--tag",
 ]);
 
-const INLINE_PREFIXES = [...VALUE_FLAGS].map((flag) => `${flag}=`);
-
 const parseArgs = (args: string[]) => {
-  const values = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (!arg) continue;
-
-    const inlinePrefix = INLINE_PREFIXES.find((prefix) =>
-      arg.startsWith(prefix),
-    );
-    if (inlinePrefix) {
-      values.set(inlinePrefix.slice(0, -1), arg.slice(inlinePrefix.length));
-      continue;
-    }
-
-    if (VALUE_FLAGS.has(arg)) {
-      const value = args[index + 1];
-      if (!value || value.startsWith("-"))
-        throw new Error(`Missing value for ${arg}`);
-      values.set(arg, value);
-      index += 1;
-    }
-  }
+  const { flags } = parseCliFlags(args, VALUE_FLAGS);
 
   return {
-    format: values.get("--format") ?? "json",
-    fromIndex: Number(values.get("--from-index") ?? "0"),
-    maxElements: Number(values.get("--max-elements") ?? "120"),
-    moduleDir: values.get("--module-dir") ?? ".",
-    moduleSvg: values.get("--module-svg") ?? "module.svg",
-    tags: (values.get("--tag") ?? "")
+    format: flags.get("--format") ?? "json",
+    fromIndex: Number(flags.get("--from-index") ?? "0"),
+    maxElements: Number(flags.get("--max-elements") ?? "120"),
+    moduleDir: flags.get("--module-dir") ?? ".",
+    moduleSvg: flags.get("--module-svg") ?? "module.svg",
+    tags: (flags.get("--tag") ?? "")
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean),

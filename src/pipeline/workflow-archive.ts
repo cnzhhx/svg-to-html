@@ -2,7 +2,12 @@ import path from "node:path";
 import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
-import { writeJsonFile, writeTextFile } from "../core/utils.js";
+import {
+  WORKFLOW_ARCHIVE_FULL_EVERY_N,
+  WORKFLOW_ARCHIVE_TEXT_MAX_CHARS,
+} from "../config/index.js";
+import { truncate } from "../core/string-utils.js";
+import { writeJsonFile, writeTextFile } from "../core/file-io.js";
 
 import type {
   WorkflowArchiveEntry,
@@ -46,18 +51,12 @@ type WorkflowArchiveManifest = {
   updatedAt: number;
 };
 
-const WORKFLOW_ARCHIVE_FULL_EVERY_N = Number(
-  process.env["WORKFLOW_ARCHIVE_FULL_EVERY_N"] ?? 5,
-);
-const WORKFLOW_ARCHIVE_TEXT_MAX_CHARS = Number(
-  process.env["WORKFLOW_ARCHIVE_TEXT_MAX_CHARS"] ?? 12000,
-);
 const HEAVY_ARCHIVE_FILE_LABELS = new Set([
   "Rendered SVG PNG",
-  "Rendered HTML PNG",
+  "Rendered Output PNG",
   "Diff PNG",
-  "HTML Snapshot",
-  "Rejected HTML Snapshot",
+  "Render Entry Snapshot",
+  "Rejected Render Entry Snapshot",
 ]);
 
 const manifestWriteQueue = new Map<string, Promise<void>>();
@@ -115,10 +114,12 @@ const withManifestWriteLock = async <T>(
   }
 };
 
-const truncateArchiveText = (value: string) => {
-  if (value.length <= WORKFLOW_ARCHIVE_TEXT_MAX_CHARS) return value;
-  return `${value.slice(0, WORKFLOW_ARCHIVE_TEXT_MAX_CHARS)}\n[archive text truncated ${value.length - WORKFLOW_ARCHIVE_TEXT_MAX_CHARS} chars]`;
-};
+const truncateArchiveText = (value: string) =>
+  truncate(
+    value,
+    WORKFLOW_ARCHIVE_TEXT_MAX_CHARS,
+    (v, m) => `\n[archive text truncated ${v.length - m} chars]`,
+  );
 
 const shouldWriteFullMaterials = ({
   round,
@@ -261,7 +262,5 @@ const archiveWorkflowCheckpoint = async ({
 
 export {
   archiveWorkflowCheckpoint,
-  getWorkflowHistoryDir,
-  getWorkflowHistoryManifestPath,
 };
 export type { WorkflowArchiveMaterial };

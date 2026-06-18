@@ -1,37 +1,34 @@
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 
 import { shutdownBrowserPool } from "../core/cdp.js";
 import { createModuleTextBlocks } from "../core/module-text-blocks.js";
-import { toAbsolutePath } from "../core/utils.js";
+import { toAbsolutePath } from "../core/paths.js";
+import { writeJsonFile } from "../core/file-io.js";
+import {
+  buildModuleSemanticTextHints,
+  type ModuleSemanticDocument,
+} from "../pipeline/agent-runner/module/module-semantic.js";
+import { parseCliFlags } from "./cli-utils.js";
+
+const VALUE_FLAGS = new Set([
+  "--module-dir",
+  "--module-id",
+  "--module-svg",
+  "--scale",
+  "--semantic",
+  "--module-semantic",
+]);
 
 const parseArgs = (args: string[]) => {
-  const values = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (!arg) continue;
-    const inline = arg.match(/^(--[^=]+)=(.*)$/);
-    if (inline) {
-      values.set(inline[1]!, inline[2]!);
-      continue;
-    }
-    if (arg.startsWith("--")) {
-      const value = args[index + 1];
-      if (!value || value.startsWith("--")) throw new Error(`Missing value for ${arg}`);
-      values.set(arg, value);
-      index += 1;
-    }
-  }
+  const { flags } = parseCliFlags(args, VALUE_FLAGS);
   return {
-    moduleDir: values.get("--module-dir") ?? values.get("--moduleDir") ?? ".",
-    moduleId: values.get("--module-id") ?? values.get("--moduleId"),
-    moduleOcrBlocksPath:
-      values.get("--ocr") ??
-      values.get("--module-ocr-blocks") ??
-      values.get("--moduleOcrBlocks"),
-    moduleSvgPath:
-      values.get("--module-svg") ?? values.get("--moduleSvg") ?? "module.svg",
-    outputPath: values.get("--out"),
-    scale: values.get("--scale") ? Number(values.get("--scale")) : undefined,
+    moduleDir: flags.get("--module-dir") ?? ".",
+    moduleId: flags.get("--module-id"),
+    moduleSemanticPath:
+      flags.get("--semantic") ?? flags.get("--module-semantic"),
+    moduleSvgPath: flags.get("--module-svg") ?? "module.svg",
+    scale: flags.get("--scale") ? Number(flags.get("--scale")) : undefined,
   };
 };
 
@@ -42,28 +39,60 @@ const main = async () => {
   const moduleSvgPath = path.isAbsolute(args.moduleSvgPath)
     ? args.moduleSvgPath
     : path.resolve(moduleDir, args.moduleSvgPath);
-  const moduleOcrBlocksPath = args.moduleOcrBlocksPath
-    ? toAbsolutePath(args.moduleOcrBlocksPath)
-    : path.join(moduleDir, "module-ocr-blocks.json");
-  const outputPath = args.outputPath ? toAbsolutePath(args.outputPath) : undefined;
+  const moduleSemanticPath = args.moduleSemanticPath
+    ? toAbsolutePath(args.moduleSemanticPath)
+    : path.join(moduleDir, "module-semantic.json");
   if (args.scale !== undefined && (!Number.isFinite(args.scale) || args.scale <= 0)) {
     throw new Error(`Invalid value for --scale: ${args.scale} (expected a positive number)`);
   }
+  const semanticDocument = JSON.parse(
+    await readFile(moduleSemanticPath, "utf8"),
+  ) as ModuleSemanticDocument;
   const result = await createModuleTextBlocks({
     moduleDir,
     moduleId,
-    moduleOcrBlocksPath,
+    textHints: buildModuleSemanticTextHints(semanticDocument),
     moduleSvgPath,
-    outputPath,
-    region: { height: 0, width: 0, x: 0, y: 0 },
+    region: semanticDocument.module.region,
     scale: args.scale,
   });
+
+  // Converge textBlocks back into module-semantic.json
+  const updatedSemantic: ModuleSemanticDocument = {
+    ...semanticDocument,
+    textBlocks: result.blocks.map((block) => ({
+      id: block.id,
+      kind: block.kind,
+      lineCount: block.lineCount,
+      lineRegions: block.lineRegions,
+      lines: block.lines,
+      sourceNodeIds: block.sourceBlockId ? [block.sourceBlockId] : [],
+      text: block.text,
+      textRegion: block.textRegion ?? block.region,
+      ...(block.color ? { color: block.color } : {}),
+      ...(block.renderedTextRegion
+        ? { renderedTextRegion: block.renderedTextRegion }
+        : {}),
+    })),
+    runtime: {
+      ...semanticDocument.runtime,
+      completedStages: [
+        ...new Set([
+          ...semanticDocument.runtime.completedStages,
+          "text-blocks",
+        ]),
+      ].sort((left, right) => left.localeCompare(right)),
+    },
+  };
+  await writeJsonFile(moduleSemanticPath, updatedSemantic);
+
   console.log(
     JSON.stringify({
       blockCount: result.blockCount,
       generatedBy: result.generatedBy,
-      outputPath: outputPath ?? path.join(moduleDir, "module-text-blocks.json"),
+      outputPath: null,
       previewPath: result.previewPath,
+      semanticPath: moduleSemanticPath,
     }),
   );
 };

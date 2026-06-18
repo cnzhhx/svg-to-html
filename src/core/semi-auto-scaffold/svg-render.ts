@@ -2,7 +2,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { capturePage, launchEdge } from "../cdp.js";
-import { resolveSvgDesign, writeTextFile } from "../utils.js";
+import { resolveSvgDesign } from '../design-resolve.js';
+import { writeTextFile } from '../file-io.js';
 
 const createSvgRenderWrapper = ({
   height,
@@ -23,7 +24,7 @@ const createSvgRenderWrapper = ({
         width: ${width}px;
         height: ${height}px;
         overflow: hidden;
-        background: #000;
+        background: transparent;
       }
 
       img {
@@ -69,6 +70,7 @@ const renderSvgToPng = async ({
 
   try {
     await capturePage({
+      deviceScaleFactor: design.scale,
       outputPath: svgPngPath,
       port: browser.port,
       url: pathToFileURL(wrapperPath).href,

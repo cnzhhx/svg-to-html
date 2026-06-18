@@ -1,27 +1,17 @@
 {
-  "defaultModel": "codex",
+  "moduleAgentModel": "your-model",
+  "otherModel": "your-model",
   "models": {
-    "kimi": {
-      "runtime": "kimi-cli",
-      "provider": "kimi",
-      "baseURL": "",
-      "apiKey": "",
-      "model": "kimi-for-coding",
-      "cliModel": "kimi-code/kimi-for-coding",
-      "headers": {
-        "User-Agent": "KimiCLI/1.39.0"
-      },
-      "requiresOpenaiAuth": false,
-      "wireApi": "chat"
-    },
-    "codex": {
-      "runtime": "codex",
-      "provider": "",
-      "baseURL": "",
-      "apiKey": "",
-      "model": "gpt-5.5",
-      "requiresOpenaiAuth": false,
-      "wireApi": "responses"
+    "your-model": {
+      "runtime": "opencode",
+      "provider": "your-provider",
+      "baseURL": "https://api.example.com/v1",
+      "apiKeyEnv": "YOUR_PROVIDER_API_KEY",
+      "model": "your-model-id",
+      "modalities": {
+        "input": ["text", "image"],
+        "output": ["text"]
+      }
     }
   }
 }

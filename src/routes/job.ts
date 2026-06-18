@@ -1,13 +1,14 @@
 import { Router } from "express";
 import os from "node:os";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import archiver from "archiver";
 
-import { DIFF_RATIO_THRESHOLD } from "../config/runtime.js";
-import { getWorkspaceRoot } from "../core/utils.js";
-import { pauseSession, enqueueSession } from "../pipeline/agent-runner.js";
-import { MAX_CONCURRENT_AGENTS } from "../pipeline/agent-runner/config.js";
+import { DIFF_RATIO_THRESHOLD, MAX_CONCURRENT_AGENTS, SESSION_LOCAL_STORAGE_ENABLED } from "../config/index.js";
+import { detectBrowserBinary } from "../core/cdp.js";
+import { truncate } from "../core/string-utils.js";
+import { getWorkspaceRoot } from "../core/paths.js";
+import { cancelSessionRun, enqueueSession } from "../pipeline/agent-runner/index.js";
 import {
   sessionStore,
   type Session,
@@ -17,14 +18,14 @@ import {
 
 const router = Router();
 
-const API_MESSAGE_TEXT_LIMIT = 20_000;
+const API_MESSAGE_TEXT_LIMIT = Number.POSITIVE_INFINITY;
+const API_EVENT_MESSAGE_TEXT_LIMIT = 100;
+const API_REASONING_MESSAGE_TEXT_LIMIT = 4_000;
 const API_LOG_TEXT_LIMIT = 2_000;
 const API_RECENT_LOG_LIMIT = 40;
 
-const truncateApiText = (value: unknown, limit: number) => {
-  const text = String(value ?? "");
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
-};
+const truncateApiText = (value: unknown, limit: number) =>
+  truncate(String(value ?? ""), limit, "…");
 
 const safeMessagesForApi = (
   messages: SessionMessage[],
@@ -32,11 +33,17 @@ const safeMessagesForApi = (
 ) => {
   if (!includeMessages) return [];
   return messages
-    .filter((message) => message.codexItemType !== "reasoning")
     .slice(-100)
     .map((message) => ({
       ...message,
-      text: truncateApiText(message.text, API_MESSAGE_TEXT_LIMIT),
+      text: truncateApiText(
+        message.text,
+        message.agentItemType === "reasoning"
+          ? API_REASONING_MESSAGE_TEXT_LIMIT
+          : message.kind === "event"
+            ? API_EVENT_MESSAGE_TEXT_LIMIT
+            : API_MESSAGE_TEXT_LIMIT,
+      ),
     }));
 };
 
@@ -50,68 +57,115 @@ const safeLogsForApi = (
     .map((log) => truncateApiText(log, API_LOG_TEXT_LIMIT));
 };
 
+const deriveTokenSplitFromEvents = (session: Session) => {
+  if (
+    session.result.cachedInputTokens !== undefined &&
+    session.result.uncachedInputTokens !== undefined
+  ) {
+    return {};
+  }
+
+  const eventsPath = path.join(session.sessionDir, "events.jsonl");
+  if (!existsSync(eventsPath)) return {};
+
+  let cachedInputTokens = 0;
+  let eventInputTokens = 0;
+  try {
+    for (const line of readFileSync(eventsPath, "utf8").split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      const parsed = JSON.parse(line) as {
+        event?: {
+          type?: string;
+          usage?: {
+            cached_input_tokens?: number;
+            input_tokens?: number;
+          };
+        };
+        type?: string;
+      };
+      if (
+        parsed.type !== "agent:event" ||
+        parsed.event?.type !== "turn.completed"
+      ) {
+        continue;
+      }
+      const usage = parsed.event.usage;
+      cachedInputTokens += Number(usage?.cached_input_tokens ?? 0);
+      eventInputTokens += Number(usage?.input_tokens ?? 0);
+    }
+  } catch {
+    return {};
+  }
+
+  if (eventInputTokens <= 0 && cachedInputTokens <= 0) return {};
+  const inputTokens = Number(session.result.inputTokens ?? eventInputTokens);
+  return {
+    cachedInputTokens,
+    uncachedInputTokens: Math.max(0, inputTokens - cachedInputTokens),
+  };
+};
+
 const safeResultForApi = (
-  result: SessionResult,
+  session: Session,
   { summary }: { summary: boolean },
 ): SessionResult => {
+  const result = {
+    ...session.result,
+    ...(summary ? {} : deriveTokenSplitFromEvents(session)),
+  };
   const summaryKeys: Array<keyof SessionResult> = [
     "diffRatio",
-    "finalOutputReady",
     "moduleCount",
-    "qualityStatus",
     "verifyMode",
   ];
   const detailKeys: Array<keyof SessionResult> = [
-    "agentTimeoutMs",
     "artifactDir",
-    "compareHtmlPath",
+    "componentLibrary",
+    "componentLibraryId",
+    "compareEntryPath",
     "containerLayoutPath",
-    "diffPngPath",
+    "designWidth",
+    "designHeight",
     "diffRatio",
-    "finalOutputPolicyPassed",
-    "finalOutputPolicyPath",
-    "finalOutputReady",
-    "frameworkExports",
-    "fontRenderingLimitLikely",
-    "fontRenderingLimitReason",
-    "htmlPath",
-    "htmlPngPath",
+    "cachedInputTokens",
     "inputTokens",
-    "layoutBoxPassed",
-    "layoutBoxReportPath",
     "moduleAgentRuns",
+    "moduleAgentThreadIds",
+    "moduleAgentManifestPath",
     "moduleConcurrencyLimit",
     "moduleCount",
     "moduleCountExceedsConcurrency",
     "moduleDiffRegionsPath",
     "moduleFailedIds",
+    "moduleFailureKinds",
+    "moduleFailures",
+    "moduleManifestPath",
+    "moduleMergeManifestPath",
+    "modulePlanMarkdownPath",
     "modulePlanMode",
     "modulePlanPath",
-    "moduleRegionsPath",
-    "moduleRegionDiffPassed",
-    "moduleRegionDiffThreshold",
-    "moduleTextLayoutMissingSelectorCount",
-    "moduleTextLayoutSelectorCheckPassed",
+    "modulePlanQualityMarkdownPath",
+    "modulePlanQualityPath",
+    "moduleValidationRuns",
     "multiAgentRoute",
     "multiAgentRouteReason",
-    "ocrProvider",
+    "modelTelemetryRecords",
+    "modelUsageRecords",
     "outputTokens",
-    "qualityStatus",
+    "outputTarget",
+    "renderEntryPath",
+    "renderPngPath",
     "regionsPath",
-    "shellManifestPath",
+    "sourceEntryPath",
+    "sourceStylePath",
+    "sourceBasis",
+    "sourceRenderMode",
     "svgPngPath",
-    "textBoxReportPath",
-    "textContentPriorityIssueCount",
-    "textGeometryPriorityIssueCount",
-    "textInsightsPath",
-    "textPriorityIssueCount",
     "textTuningAppliedCount",
     "textTuningReportPath",
     "tokensUsed",
+    "uncachedInputTokens",
     "verifyMode",
-    "verifyReportPath",
-    "workflowLintPassed",
-    "workflowLintPath",
   ];
   const safeKeys = summary ? summaryKeys : detailKeys;
   const safe = Object.fromEntries(
@@ -131,7 +185,7 @@ const sessionForApi = (
   logs: safeLogsForApi(session.logs, { includeLogs: !summary }),
   messages: safeMessagesForApi(session.messages, { includeMessages: !summary }),
   pendingUserMessages: [],
-  result: safeResultForApi(session.result, {
+  result: safeResultForApi(session, {
     summary,
   }),
 });
@@ -143,12 +197,8 @@ const isCompletedSessionStatus = (status: string) =>
 
 const canStartSession = (status: string) =>
   status === "draft" ||
-  status === "paused" ||
   status === "failed" ||
   isCompletedSessionStatus(status);
-
-const canResumeSession = (status: string) =>
-  status === "paused" || status === "failed" || isCompletedSessionStatus(status);
 
 const canAcceptUserMessage = (status: string) =>
   status !== "queued" && status !== "running";
@@ -229,61 +279,6 @@ router.post("/sessions/:id/messages", async (req, res) => {
   res.json({ sessionId: session.id, status: "queued" });
 });
 
-router.post("/sessions/:id/pause", (req, res) => {
-  const session = sessionStore.get(String(req.params["id"] ?? ""));
-  if (!session) {
-    res.status(404).json({ error: "Session not found" });
-    return;
-  }
-  if (session.status !== "running" && session.status !== "queued") {
-    res
-      .status(409)
-      .json({ error: `Cannot pause session from status ${session.status}` });
-    return;
-  }
-  pauseSession(session.id);
-  res.json({ sessionId: session.id, status: "paused" });
-});
-
-router.post("/sessions/:id/resume", async (req, res) => {
-  const session = sessionStore.get(String(req.params["id"] ?? ""));
-  if (!session) {
-    res.status(404).json({ error: "Session not found" });
-    return;
-  }
-  if (session.status === "queued" || session.status === "running") {
-    res.json({ sessionId: session.id, status: session.status });
-    return;
-  }
-  if (!canResumeSession(session.status)) {
-    res
-      .status(409)
-      .json({ error: `Cannot resume session from status ${session.status}` });
-    return;
-  }
-  const text = String(req.body?.text ?? "").trim();
-  const moduleId = String(req.body?.moduleId ?? "").trim();
-  if (text) {
-    if (!moduleId) {
-      res.status(400).json({ error: "请选择要修复的模块" });
-      return;
-    }
-    sessionStore.addMessage(
-      session.id,
-      {
-        id: `user-${Date.now()}`,
-        kind: "chat",
-        moduleId,
-        role: "user",
-        text,
-      },
-      { enqueueForAgent: true },
-    );
-  }
-  enqueueSession(session.id);
-  res.json({ sessionId: session.id, status: "queued" });
-});
-
 router.delete("/sessions/:id", async (req, res) => {
   const session = sessionStore.get(String(req.params["id"] ?? ""));
   if (!session) {
@@ -291,34 +286,34 @@ router.delete("/sessions/:id", async (req, res) => {
     return;
   }
 
-  if (session.status === "queued" || session.status === "running") {
-    pauseSession(session.id);
-  }
+  const canceledActiveRun =
+    session.status === "queued" || session.status === "running";
 
   try {
+    if (canceledActiveRun) {
+      await cancelSessionRun(session.id);
+    }
     await sessionStore.deleteSession(session.id);
     res.json({ deleted: true, sessionId: session.id });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (canceledActiveRun && sessionStore.get(session.id)) {
+      sessionStore.failPipeline(session.id, `删除失败：${message}`);
+    }
     res.status(500).json({ error: message });
   }
 });
 
 router.get("/runtime", (_req, res) => {
   res.json({
-    agentTimeoutMs: null,
-    browserPath:
-      process.env["CHROMIUM_PATH"] ||
-      process.env["CHROME_PATH"] ||
-      process.env["BROWSER_PATH"] ||
-      null,
+    browserPath: detectBrowserBinary() ?? null,
     maxConcurrentAgents: MAX_CONCURRENT_AGENTS,
     nodeVersion: process.version,
-    ocrProvider: process.env["OCR_PROVIDER"] || null,
     platform: process.platform,
     release: os.release(),
     diffRatioThreshold: DIFF_RATIO_THRESHOLD,
     workspaceRoot: getWorkspaceRoot(),
+    enableSessionLocalStorage: SESSION_LOCAL_STORAGE_ENABLED,
   });
 });
 
@@ -351,49 +346,10 @@ router.get("/sessions/:id/download", async (req, res) => {
   });
   archive.pipe(res);
 
-  // Export the full session folder so the frontend gets all source files,
-  // generated HTML, reports, assets, and persisted session metadata together.
+  // Export the full session folder so the frontend gets source entries,
+  // render previews, reports, assets, and persisted session metadata together.
   archive.directory(session.sessionDir, session.designName || session.id);
 
-  await archive.finalize();
-});
-
-router.get("/sessions/:id/exports/:target/download", async (req, res) => {
-  const session = sessionStore.get(String(req.params["id"] ?? ""));
-  const target = String(req.params["target"] ?? "").trim().toLowerCase();
-  if (!session) {
-    res.status(404).json({ error: "Session not found" });
-    return;
-  }
-  if (target !== "react" && target !== "vue") {
-    res.status(400).json({ error: "Export target must be react or vue" });
-    return;
-  }
-
-  const configuredDir = session.result.frameworkExports?.[target]?.dir;
-  const exportDir = configuredDir ?? path.join(session.artifactDir, "exports", target);
-  if (!existsSync(exportDir)) {
-    res.status(404).json({ error: `${target} export directory not found` });
-    return;
-  }
-
-  const zipName = `${session.designName || session.id}-${target}.zip`;
-  res.setHeader("Content-Type", "application/zip");
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`,
-  );
-
-  const archive = archiver("zip", { zlib: { level: 6 } });
-  archive.on("error", (error) => {
-    if (!res.headersSent) {
-      res.status(500).json({ error: error.message });
-      return;
-    }
-    res.destroy(error);
-  });
-  archive.pipe(res);
-  archive.directory(exportDir, target);
   await archive.finalize();
 });
 

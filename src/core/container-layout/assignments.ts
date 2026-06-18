@@ -3,7 +3,7 @@ import {
   getSmallestContainingShape,
   isShellLayerPeer,
 } from "./candidates.js";
-import { areaOf } from "./geometry.js";
+import { areaOf } from "../geometry.js";
 import type {
   AssignmentRecord,
   ContainerRecord,

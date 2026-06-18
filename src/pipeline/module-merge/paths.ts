@@ -1,60 +1,62 @@
-import path from 'node:path'
+import path from "node:path";
 
-import { toAbsolutePath } from '../../core/utils.js'
-import type { ModuleMergeOptions, ModulePlan } from './types.js'
-import { resolveConfiguredPath } from './utils.js'
+import { toAbsolutePath } from "../../core/paths.js";
+import type { ModuleMergeOptions, ModulePlan } from "./types.js";
+import { resolveConfiguredPath } from "./utils.js";
 
-const resolveModulePlanPath = ({ artifactDir, modulePlanPath }: ModuleMergeOptions) => {
-  if (modulePlanPath) return toAbsolutePath(modulePlanPath)
+const resolveModulePlanPath = ({
+  artifactDir,
+  modulePlanPath,
+}: ModuleMergeOptions) => {
+  if (modulePlanPath) return toAbsolutePath(modulePlanPath);
   if (!artifactDir) {
-    throw new Error('module merge requires either artifactDir or modulePlanPath')
+    throw new Error(
+      "module merge requires either artifactDir or modulePlanPath",
+    );
   }
-  return path.join(toAbsolutePath(artifactDir), 'modules', 'module-plan.json')
-}
+  return path.join(toAbsolutePath(artifactDir), "modules", "module-plan.json");
+};
 
-const resolveOutputHtmlPath = ({
+const resolveRenderEntryPath = ({
   modulePlan,
-  outputHtmlPath,
+  renderEntryPath,
   planDir,
 }: {
-  modulePlan: ModulePlan
-  outputHtmlPath?: string
-  planDir: string
+  modulePlan: ModulePlan;
+  renderEntryPath?: string;
+  planDir: string;
 }) => {
-  const configuredPath =
-    outputHtmlPath ??
-    modulePlan.outputHtmlPath ??
-    modulePlan.finalHtmlPath ??
-    modulePlan.htmlPath
+  const configuredPath = renderEntryPath ?? modulePlan.renderEntryPath;
 
   if (!configuredPath) {
     throw new Error(
-      'module merge requires outputHtmlPath, or outputHtmlPath/finalHtmlPath/htmlPath in module-plan.json',
-    )
+      "module merge requires renderEntryPath, or renderEntryPath in module-plan.json",
+    );
   }
 
-  return resolveConfiguredPath(configuredPath, planDir)
-}
+  return resolveConfiguredPath(configuredPath, planDir);
+};
 
-const resolveScaffoldHtmlPath = ({
+const resolveScaffoldRenderPath = ({
   modulePlan,
-  outputHtmlPath,
+  renderEntryPath,
   planDir,
-  scaffoldHtmlPath,
+  scaffoldRenderPath,
 }: {
-  modulePlan: ModulePlan
-  outputHtmlPath: string
-  planDir: string
-  scaffoldHtmlPath?: string
+  modulePlan: ModulePlan;
+  renderEntryPath: string;
+  planDir: string;
+  scaffoldRenderPath?: string;
 }) => {
-  const configuredPath =
-    scaffoldHtmlPath ??
-    modulePlan.scaffoldHtmlPath ??
-    modulePlan.baseHtmlPath
+  const configuredPath = scaffoldRenderPath ?? modulePlan.scaffoldRenderPath;
 
   return configuredPath
     ? resolveConfiguredPath(configuredPath, planDir)
-    : outputHtmlPath
-}
+    : renderEntryPath;
+};
 
-export { resolveModulePlanPath, resolveOutputHtmlPath, resolveScaffoldHtmlPath }
+export {
+  resolveModulePlanPath,
+  resolveRenderEntryPath,
+  resolveScaffoldRenderPath,
+};

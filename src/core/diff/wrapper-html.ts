@@ -10,7 +10,7 @@ const createDiffWrapperHtml = ({ script }: DiffWrapperHtmlOptions) => `<!DOCTYPE
     <style>
       html, body {
         margin: 0;
-        background: #000;
+        background: transparent;
       }
 
       canvas {

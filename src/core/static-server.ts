@@ -2,7 +2,11 @@ import { readFile, stat } from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
 
-import { getWorkspaceRoot, isInsidePath } from './utils.js'
+import {
+  STATIC_SERVER_POOL_DISABLED,
+  STATIC_SERVER_POOL_IDLE_MS,
+} from '../config/index.js'
+import { getWorkspaceRoot, isInsidePath } from './paths.js';
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -22,22 +26,6 @@ const MIME_TYPES: Record<string, string> = {
 }
 
 const WORKSPACE_URL_PREFIX = '/__workspace'
-
-const parseNonNegativeInteger = (
-  value: string | undefined,
-  fallback: number,
-) => {
-  const parsed = Number(value ?? fallback)
-  if (!Number.isFinite(parsed)) return fallback
-  return Math.max(0, Math.floor(parsed))
-}
-
-const STATIC_SERVER_POOL_IDLE_MS = parseNonNegativeInteger(
-  process.env['STATIC_SERVER_POOL_IDLE_MS'],
-  1000,
-)
-const STATIC_SERVER_POOL_DISABLED =
-  process.env['STATIC_SERVER_POOL_DISABLED'] === '1'
 
 type StaticServer = {
   close: () => Promise<void>
@@ -228,5 +216,4 @@ const startStaticServer = async (): Promise<StaticServer> => {
   }
 }
 
-export default startStaticServer
-export { shutdownStaticServerPool }
+export { startStaticServer, shutdownStaticServerPool }

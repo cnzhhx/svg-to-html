@@ -1,22 +1,25 @@
+import type {
+  OutputFormat,
+  SessionOutputTarget,
+} from '../core/output-target.js'
+import type { ComponentLibrarySessionRef } from '../core/component-library/types.js'
+
 type PipelineStep = 'agent' | 'verify'
-type OutputFormat = 'html' | 'react' | 'vue'
-type FrameworkExportTarget = 'react' | 'vue'
 type WorkflowNodeKey =
   | 'upload'
   | 'analysis'
   | 'agent'
   | 'verify'
-  | 'export'
-  | 'feedback'
   | 'done'
 
 type SessionStatus =
   | 'draft'
   | 'queued'
   | 'running'
-  | 'paused'
   | 'completed'
   | 'failed'
+  | 'best-effort'
+  | 'failed-gate'
 
 type StepState = {
   status: 'pending' | 'running' | 'completed' | 'failed'
@@ -71,8 +74,14 @@ type SessionMessage = {
   kind: SessionMessageKind
   createdAt: number
   moduleId?: string
-  codexEventType?: 'item.completed' | 'item.started' | 'item.updated'
-  codexItemType?: 'agent_message' | 'error' | 'reasoning'
+  sourceLabel?: string
+  agentEventType?: 'item.completed' | 'item.started' | 'item.updated'
+  agentItemType?:
+    | 'agent_message'
+    | 'command_execution'
+    | 'error'
+    | 'mcp_tool_call'
+    | 'reasoning'
 }
 
 type PendingUserMessage = {
@@ -80,96 +89,79 @@ type PendingUserMessage = {
   text: string
 }
 
-type FrameworkExportResult = {
-  assetManifestPath?: string
-  assets?: unknown[]
-  componentPaths?: string[]
-  cssPath?: string
-  dir: string
-  error?: string
-  previewHtmlPath?: string
-  repeatComponentCount?: number
-  status: 'completed' | 'failed' | 'skipped'
-  target: FrameworkExportTarget
-  verifyResult?: unknown
+type UploadResultFields = {
+  sourceEntryPath?: string
+  sourceStylePath?: string
+  designWidth?: number
+  designHeight?: number
+  artifactDir?: string
+  sourceBasis?: string
+  sourceRenderMode?: string
 }
 
-type SessionResult = {
-  htmlPath?: string
-  compareHtmlPath?: string
+type AnalysisResultFields = {
   containerLayoutPath?: string
-  diffRatio?: string | number
-  svgPngPath?: string
-  htmlPngPath?: string
-  diffPngPath?: string
-  artifactDir?: string
-  layoutBoxPassed?: boolean
-  workflowLintPassed?: boolean
-  finalOutputPolicyPassed?: boolean
-  finalOutputPolicyPath?: string
-  finalOutputReady?: boolean
-  globalRepairRollbackReason?: string
-  globalRepairRolledBack?: boolean
-  agentTimeoutMs?: number
-  tokensUsed?: number
-  inputTokens?: number
-  outputTokens?: number
-  textBoxReportPath?: string
-  layoutBoxReportPath?: string
-  verifyReportPath?: string
-  verifyMode?: string
-  qualityStatus?: 'pass' | 'partial' | 'fail'
-  qualityGateSummary?: Record<string, unknown>
-  qualityBlockingIssues?: string[]
-  qualitySoftIssues?: string[]
-  fontRenderingLimitLikely?: boolean
-  fontRenderingLimitReason?: string
-  textInsightsPath?: string
-  textContentPriorityIssueCount?: number
-  textGeometryPriorityIssueCount?: number
-  textPriorityIssueCount?: number
-  workflowLintPath?: string
-  frameworkExports?: Partial<Record<FrameworkExportTarget, FrameworkExportResult>>
+  modulePlanPath?: string
+  modulePlanMarkdownPath?: string
+  modulePlanQualityPath?: string
+  modulePlanQualityMarkdownPath?: string
+  moduleCount?: number
+  modulePlanMode?: string
+  regionsPath?: string
+  moduleDiffRegionsPath?: string
+}
+
+type AgentResultFields = {
+  renderEntryPath?: string
   moduleAgentManifestPath?: string
   moduleAgentRuns?: Array<Record<string, unknown>>
+  moduleAgentThreadIds?: Record<string, string>
   moduleValidationRuns?: Array<Record<string, unknown>>
-  moduleConcurrencyLimit?: number
-  moduleCount?: number
-  moduleCountExceedsConcurrency?: boolean
-  moduleDiffRegionsPath?: string
   moduleFailedIds?: string[]
+  moduleFailureKinds?: Record<string, string>
   moduleFailures?: Record<string, string>
-  modulePlanMode?: string
-  moduleManifestPath?: string
   moduleMergeManifestPath?: string
-  modulePlanMarkdownPath?: string
-  modulePlanPath?: string
-  modulePlanQualityMarkdownPath?: string
-  modulePlanQualityPath?: string
-  moduleTextLayoutMissingSelectorCount?: number
-  moduleTextLayoutSelectorCheckPassed?: boolean
-  moduleRegionStats?: Array<Record<string, unknown>>
-  moduleRegionSummary?: Record<string, unknown>
-  moduleRegionsPath?: string
-  moduleDomReconcileMarkdownPath?: string
-  moduleDomReconcilePath?: string
-  moduleDomReconcileSummary?: Record<string, unknown>
-  moduleRegionDiffFailures?: Array<Record<string, unknown>>
-  moduleRegionDiffPassed?: boolean
-  moduleRegionDiffThreshold?: number
-  regionsPath?: string
-  shellAssetDir?: string
-  shellManifestPath?: string
-  agentResponse?: string
-  ocrProvider?: string
-  workflowHistoryDir?: string
-  workflowHistoryManifestPath?: string
-  workflowArchives?: WorkflowArchiveEntry[]
+  moduleManifestPath?: string
+  moduleConcurrencyLimit?: number
+  moduleCountExceedsConcurrency?: boolean
   multiAgentRoute?: boolean
   multiAgentRouteReason?: string
-  textTuningAppliedCount?: number
-  textTuningReportPath?: string
+  agentResponse?: string
 }
+
+type VerifyResultFields = {
+  diffRatio?: string | number
+  svgPngPath?: string
+  renderPngPath?: string
+  compareEntryPath?: string
+  verifyMode?: string
+}
+
+type UsageResultFields = {
+  tokensUsed?: number
+  cachedInputTokens?: number
+  inputTokens?: number
+  uncachedInputTokens?: number
+  outputTokens?: number
+  modelTelemetryRecords?: Array<Record<string, unknown>>
+  modelUsageRecords?: Array<Record<string, unknown>>
+}
+
+type SessionResult = UploadResultFields
+  & AnalysisResultFields
+  & AgentResultFields
+  & VerifyResultFields
+  & UsageResultFields
+  & {
+    outputTarget?: SessionOutputTarget
+    componentLibrary?: ComponentLibrarySessionRef
+    componentLibraryId?: string
+    textTuningAppliedCount?: number
+    textTuningReportPath?: string
+    workflowHistoryDir?: string
+    workflowHistoryManifestPath?: string
+    workflowArchives?: WorkflowArchiveEntry[]
+  }
 
 type SessionPersistenceState = {
   errorCount: number
@@ -183,14 +175,16 @@ type Session = {
   id: string
   designName: string
   queuedAt?: number
+  executionStartedAt?: number
   threadId?: string
   svgPath: string
   scale?: number
-  htmlPath: string
-  compareHtmlPath: string
   sessionDir: string
   artifactDir: string
-  outputFormats?: OutputFormat[]
+  componentLibrary?: ComponentLibrarySessionRef
+  componentLibraryId?: string
+  outputFormat: OutputFormat
+  outputTarget: SessionOutputTarget
   status: SessionStatus
   activeStep: null | PipelineStep
   steps: Record<PipelineStep, StepState>
@@ -243,7 +237,7 @@ type SessionEvent =
       timestamp: number
     }
   | {
-      type: 'codex:event'
+      type: 'agent:event'
       sessionId: string
       event: Record<string, unknown>
       timestamp: number
@@ -256,19 +250,20 @@ type SessionEvent =
     }
 
 export type {
-  FrameworkExportResult,
-  FrameworkExportTarget,
-  OutputFormat,
+  AgentResultFields,
+  AnalysisResultFields,
   PipelineStep,
   Session,
   SessionEvent,
   SessionMessage,
-  SessionMessageKind,
   SessionMessageRole,
   PendingUserMessage,
   SessionPersistenceState,
   SessionResult,
   SessionStatus,
+  UploadResultFields,
+  UsageResultFields,
+  VerifyResultFields,
   WorkflowArchiveEntry,
   WorkflowArchiveItem,
   WorkflowArchiveStage,

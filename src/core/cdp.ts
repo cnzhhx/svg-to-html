@@ -6,6 +6,12 @@ import { createServer, type Server } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
+import {
+  BROWSER_POOL_DISABLED,
+  BROWSER_POOL_IDLE_MS,
+  CDP_READY_TIMEOUT_MS,
+  CDP_SEND_TIMEOUT_MS,
+} from "../config/index.js";
 
 type ServerWithEvents = Server & {
   on(event: "error", listener: (error: Error) => void): Server;
@@ -41,14 +47,7 @@ const resolveBrowserBinary = () => {
             "/usr/bin/microsoft-edge-stable",
             "/opt/google/chrome/chrome",
           ]
-        : process.platform === "win32"
-          ? [
-              "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-              "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-              "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-              "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-            ]
-          : [];
+        : [];
 
   const candidate = [...envCandidates, ...platformCandidates].find((item) =>
     existsSync(item),
@@ -87,30 +86,26 @@ type PendingMessage = {
   timer: ReturnType<typeof setTimeout>;
 };
 
-const parsePositiveInteger = (value: string | undefined, fallback: number) => {
-  const parsed = Number(value ?? fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.floor(parsed));
-};
+const toCdpViewportSize = (value: number) =>
+  Math.max(1, Math.ceil(Number.isFinite(value) ? value : 1));
 
-const parseNonNegativeInteger = (
-  value: string | undefined,
-  fallback: number,
-) => {
-  const parsed = Number(value ?? fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(0, Math.floor(parsed));
-};
-
-const CDP_SEND_TIMEOUT_MS = parsePositiveInteger(
-  process.env["CDP_SEND_TIMEOUT_MS"],
-  30000,
-);
-const BROWSER_POOL_IDLE_MS = parseNonNegativeInteger(
-  process.env["BROWSER_POOL_IDLE_MS"],
-  1000,
-);
-const BROWSER_POOL_DISABLED = process.env["BROWSER_POOL_DISABLED"] === "1";
+const toCdpScreenshotClip = ({
+  height,
+  width,
+  x,
+  y,
+}: {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+}) => ({
+  height: Math.max(1, Math.ceil(Number.isFinite(height) ? height : 1)),
+  scale: 1,
+  width: Math.max(1, Math.ceil(Number.isFinite(width) ? width : 1)),
+  x: Math.max(0, Math.floor(Number.isFinite(x) ? x : 0)),
+  y: Math.max(0, Math.floor(Number.isFinite(y) ? y : 0)),
+});
 
 class CdpClient {
   private readonly listeners = new Map<string, ((params: unknown) => void)[]>();
@@ -310,7 +305,7 @@ const closeTarget = async (port: number, targetId: string) => {
 const waitForCondition = async (
   cdp: CdpClient,
   expression: string,
-  timeoutMs = 20000,
+  timeoutMs = CDP_READY_TIMEOUT_MS,
 ) => {
   const startedAt = Date.now();
 
@@ -556,9 +551,16 @@ const launchEdge = async (preferredPort?: number): Promise<LaunchResult> => {
 const capturePage = async ({
   clip,
   deviceScaleFactor = 1,
+  // Default to an opaque base. The browser process is pooled and reused
+  // across captures; without forcing a surface clear, stale pixels from a
+  // previously captured page bleed through transparent regions and stack
+  // onto the new screenshot ("duplicate/ghosted content"). Callers that
+  // genuinely need transparency must opt in via transparentBackground.
+  opaqueBackground = true,
   outputPath,
   port,
   readyExpression = 'document.readyState === "complete" && window.__RENDER_READY__ === true',
+  readyTimeoutMs = CDP_READY_TIMEOUT_MS,
   transparentBackground = false,
   url,
   viewportHeight,
@@ -571,9 +573,11 @@ const capturePage = async ({
     y: number;
   };
   deviceScaleFactor?: number;
+  opaqueBackground?: boolean;
   outputPath: string;
   port: number;
   readyExpression?: string;
+  readyTimeoutMs?: number;
   transparentBackground?: boolean;
   url: string;
   viewportHeight: number;
@@ -585,6 +589,8 @@ const capturePage = async ({
     Number.isFinite(deviceScaleFactor) && deviceScaleFactor > 0
       ? deviceScaleFactor
       : 1;
+  const metricViewportHeight = toCdpViewportSize(viewportHeight);
+  const metricViewportWidth = toCdpViewportSize(viewportWidth);
 
   try {
     cdp = await CdpClient.connect(target.webSocketDebuggerUrl);
@@ -594,30 +600,35 @@ const capturePage = async ({
       await cdp.send("Emulation.setDefaultBackgroundColorOverride", {
         color: { a: 0, b: 0, g: 0, r: 0 },
       });
+    } else if (opaqueBackground) {
+      // Force an opaque base so the compositor clears the surface each frame
+      // before drawing (see the opaqueBackground default note above).
+      await cdp.send("Emulation.setDefaultBackgroundColorOverride", {
+        color: { a: 255, b: 255, g: 255, r: 255 },
+      });
     }
     await cdp.send("Emulation.setDeviceMetricsOverride", {
       deviceScaleFactor: safeDeviceScaleFactor,
-      height: viewportHeight,
+      height: metricViewportHeight,
       mobile: false,
-      screenHeight: viewportHeight,
-      screenWidth: viewportWidth,
-      width: viewportWidth,
+      screenHeight: metricViewportHeight,
+      screenWidth: metricViewportWidth,
+      width: metricViewportWidth,
     });
     await cdp.send("Page.navigate", { url });
 
-    await waitForCondition(cdp, readyExpression);
+    await waitForCondition(cdp, readyExpression, readyTimeoutMs);
 
     const screenshot = await cdp.send<{ data: string }>(
       "Page.captureScreenshot",
       {
-        captureBeyondViewport: true,
-        clip: {
+        captureBeyondViewport: false,
+        clip: toCdpScreenshotClip({
           height: clip?.height ?? viewportHeight,
-          scale: 1,
           width: clip?.width ?? viewportWidth,
           x: clip?.x ?? 0,
           y: clip?.y ?? 0,
-        },
+        }),
         format: "png",
         fromSurface: true,
       },
@@ -625,26 +636,46 @@ const capturePage = async ({
 
     await writeFile(outputPath, Buffer.from(screenshot.data, "base64"));
   } finally {
+    if (cdp) {
+      try {
+        await cdp.send("Page.stopLoading");
+      } catch {}
+      try {
+        await cdp.send("Page.resetNavigationHistory");
+      } catch {}
+    }
     cdp?.close();
     await closeTarget(port, target.id);
   }
 };
 
 const evaluatePage = async <T>({
+  deviceScaleFactor = 1,
   expression,
+  evaluateTimeoutMs = CDP_SEND_TIMEOUT_MS,
   port,
   readyExpression = 'document.readyState === "complete" && window.__RENDER_READY__ === true',
+  readyTimeoutMs = CDP_READY_TIMEOUT_MS,
   url,
   viewportHeight,
   viewportWidth,
 }: {
+  deviceScaleFactor?: number;
   expression: string;
+  evaluateTimeoutMs?: number;
   port: number;
   readyExpression?: string;
+  readyTimeoutMs?: number;
   url: string;
   viewportHeight: number;
   viewportWidth: number;
 }) => {
+  const safeDeviceScaleFactor =
+    Number.isFinite(deviceScaleFactor) && deviceScaleFactor > 0
+      ? deviceScaleFactor
+      : 1;
+  const metricViewportHeight = toCdpViewportSize(viewportHeight);
+  const metricViewportWidth = toCdpViewportSize(viewportWidth);
   const target = await createTarget(port);
   let cdp: CdpClient | undefined;
 
@@ -653,16 +684,16 @@ const evaluatePage = async <T>({
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
     await cdp.send("Emulation.setDeviceMetricsOverride", {
-      deviceScaleFactor: 1,
-      height: viewportHeight,
+      deviceScaleFactor: safeDeviceScaleFactor,
+      height: metricViewportHeight,
       mobile: false,
-      screenHeight: viewportHeight,
-      screenWidth: viewportWidth,
-      width: viewportWidth,
+      screenHeight: metricViewportHeight,
+      screenWidth: metricViewportWidth,
+      width: metricViewportWidth,
     });
     await cdp.send("Page.navigate", { url });
 
-    await waitForCondition(cdp, readyExpression);
+    await waitForCondition(cdp, readyExpression, readyTimeoutMs);
 
     const result = await cdp.send<{
       exceptionDetails?: {
@@ -674,7 +705,7 @@ const evaluatePage = async <T>({
       awaitPromise: true,
       expression,
       returnByValue: true,
-    });
+    }, evaluateTimeoutMs);
 
     if (result.exceptionDetails) {
       const detail =
@@ -694,8 +725,12 @@ const evaluatePage = async <T>({
 
 export {
   capturePage,
+  CdpClient,
+  closeTarget,
+  createTarget,
   detectBrowserBinary,
   evaluatePage,
   launchEdge,
   shutdownBrowserPool,
+  waitForCondition,
 };
