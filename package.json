@@ -19,8 +19,7 @@
     "task:extract-module-text": "tsx src/cli/extract-module-text.ts",
     "task:verify": "tsx src/cli/verify-design.ts",
     "task:verify-module": "tsx src/cli/verify-module-design.ts",
-    "task:verify-module-framework": "tsx src/cli/verify-module-framework.ts",
-    "lint:dead-code": "knip"
+    "task:verify-module-framework": "tsx src/cli/verify-module-framework.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.2",
@@ -40,7 +39,6 @@
     "@types/express": "^5.0.2",
     "@types/express-serve-static-core": "^5.0.2",
     "@types/multer": "^1.4.12",
-    "knip": "^6.17.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
