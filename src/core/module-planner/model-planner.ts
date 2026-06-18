@@ -7,6 +7,10 @@ import {
   startAgentThread,
 } from "../../pipeline/llm-client.js";
 import { AGENT_REASONING_EFFORTS } from "../../config/agent-reasoning.js";
+import {
+  MODEL_PLANNER_MOCK_RESPONSE,
+  MODEL_PLANNER_TURN_TIMEOUT_MS,
+} from "../../config/runtime.js";
 import { writeJsonFile, writeTextFile } from "../utils.js";
 import { normalizeModelPlan } from "./normalize-plan.js";
 import type {
@@ -25,18 +29,7 @@ import {
 import type { PlannedModules } from "../svg-vertical-modules/types.js";
 import { buildInitialPrompt, buildRetryPrompt } from "../../prompts/planner.js";
 
-const DEFAULT_PLANNER_TURN_TIMEOUT_MS = 10 * 60 * 1000;
-
-const getPlannerTurnTimeoutMs = () => {
-  const raw = Number(
-    process.env["MODEL_PLANNER_TURN_TIMEOUT_MS"] ??
-      DEFAULT_PLANNER_TURN_TIMEOUT_MS,
-  );
-  if (!Number.isFinite(raw) || raw <= 0) {
-    return DEFAULT_PLANNER_TURN_TIMEOUT_MS;
-  }
-  return Math.floor(raw);
-};
+const getPlannerTurnTimeoutMs = () => MODEL_PLANNER_TURN_TIMEOUT_MS;
 
 type ModelPlannerSuccess = {
   attemptCount: number;
@@ -180,7 +173,7 @@ const runPlannerTurn = async ({
     ),
     prompt,
   );
-  const mockResponse = process.env["MODEL_PLANNER_MOCK_RESPONSE"];
+  const mockResponse = MODEL_PLANNER_MOCK_RESPONSE;
   if (mockResponse !== undefined) return mockResponse;
 
   const timeoutMs = getPlannerTurnTimeoutMs();

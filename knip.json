@@ -1,0 +1,11 @@
+{
+  "entry": [
+    "src/cli/*.ts",
+    "src/mcp/browser-mcp-server.ts"
+  ],
+  "project": ["src/**/*.ts"],
+  "ignoreDependencies": [
+    "react",
+    "react-dom"
+  ]
+}

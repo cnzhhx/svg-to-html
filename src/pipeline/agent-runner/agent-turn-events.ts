@@ -1,48 +1,22 @@
 import { truncate } from '../../core/string-utils.js'
+import {
+  MAX_AGENT_STDOUT_LOG_CHARS,
+  MAX_AGENT_STDOUT_LOG_LINE_CHARS,
+  MAX_AGENT_STDOUT_LOG_LINES,
+  MAX_EVENT_COMMAND_CHARS,
+  MAX_EVENT_COMMAND_OUTPUT_CHARS,
+  MAX_EVENT_METRIC_CHUNK_GAPS,
+  MAX_EVENT_METRIC_THINK_SAMPLES,
+  MAX_EVENT_REASONING_CHARS,
+  MAX_EVENT_TOOL_TEXT_CHARS,
+  MAX_MODEL_TELEMETRY_RECORDS,
+} from '../../config/runtime.js'
 import { sessionStore } from '../../session-store.js'
 import type {
   AgentThreadEvent,
   AgentThreadItem,
   AgentTurnMetrics,
 } from '../agent-runtime/index.js'
-
-const MAX_AGENT_STDOUT_LOG_CHARS = Number(
-  process.env['SESSION_AGENT_STDOUT_LOG_CHARS'] ?? 100,
-)
-const MAX_AGENT_STDOUT_LOG_LINES = Number(
-  process.env['SESSION_AGENT_STDOUT_LOG_LINES'] ?? 20,
-)
-const MAX_AGENT_STDOUT_LOG_LINE_CHARS = Number(
-  process.env['SESSION_AGENT_STDOUT_LOG_LINE_CHARS'] ?? 100,
-)
-const MAX_MODEL_TELEMETRY_RECORDS = Math.max(
-  0,
-  Number(process.env['SESSION_MODEL_TELEMETRY_RECORDS'] ?? 200),
-)
-const MAX_EVENT_COMMAND_OUTPUT_CHARS = Math.max(
-  0,
-  Number(process.env['SESSION_EVENT_COMMAND_OUTPUT_CHARS'] ?? 100),
-)
-const MAX_EVENT_COMMAND_CHARS = Math.max(
-  0,
-  Number(process.env['SESSION_EVENT_COMMAND_CHARS'] ?? 100),
-)
-const MAX_EVENT_TOOL_TEXT_CHARS = Math.max(
-  0,
-  Number(process.env['SESSION_EVENT_TOOL_TEXT_CHARS'] ?? 100),
-)
-const MAX_EVENT_REASONING_CHARS = Math.max(
-  0,
-  Number(process.env['SESSION_EVENT_REASONING_CHARS'] ?? 4_000),
-)
-const MAX_EVENT_METRIC_CHUNK_GAPS = Math.max(
-  0,
-  Number(process.env['SESSION_EVENT_METRIC_CHUNK_GAPS'] ?? 20),
-)
-const MAX_EVENT_METRIC_THINK_SAMPLES = Math.max(
-  0,
-  Number(process.env['SESSION_EVENT_METRIC_THINK_SAMPLES'] ?? 0),
-)
 
 const truncateLine = (line: string) =>
   truncate(line, MAX_AGENT_STDOUT_LOG_LINE_CHARS, '…')

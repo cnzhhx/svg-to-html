@@ -4,7 +4,8 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import archiver from "archiver";
 
-import { DIFF_RATIO_THRESHOLD, SESSION_LOCAL_STORAGE_ENABLED } from "../config/runtime.js";
+import { DIFF_RATIO_THRESHOLD, MAX_CONCURRENT_AGENTS, SESSION_LOCAL_STORAGE_ENABLED } from "../config/runtime.js";
+import { detectBrowserBinary } from "../core/cdp.js";
 import { truncate } from "../core/string-utils.js";
 import { getWorkspaceRoot } from "../core/utils.js";
 import { cancelSessionRun, enqueueSession } from "../pipeline/agent-runner.js";
@@ -305,12 +306,8 @@ router.delete("/sessions/:id", async (req, res) => {
 
 router.get("/runtime", (_req, res) => {
   res.json({
-    browserPath:
-      process.env["CHROMIUM_PATH"] ||
-      process.env["CHROME_PATH"] ||
-      process.env["BROWSER_PATH"] ||
-      null,
-    maxConcurrentAgents: Number(process.env["MAX_CONCURRENT_AGENTS"] ?? 3),
+    browserPath: detectBrowserBinary() ?? null,
+    maxConcurrentAgents: MAX_CONCURRENT_AGENTS,
     nodeVersion: process.version,
     platform: process.platform,
     release: os.release(),

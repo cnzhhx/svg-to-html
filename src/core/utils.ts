@@ -1,22 +1,7 @@
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const parsePositiveInteger = (value: string | undefined, fallback: number) => {
-  const parsed = Number(value ?? fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.floor(parsed));
-};
-
-const parseNonNegativeInteger = (
-  value: string | undefined,
-  fallback: number,
-) => {
-  const parsed = Number(value ?? fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(0, Math.floor(parsed));
-};
-
-export { isRecord, parseNonNegativeInteger, parsePositiveInteger };
+export { isRecord };
 
 // Compatibility re-exports for existing consumers.
 export type { Box, Region } from "./geometry.js";

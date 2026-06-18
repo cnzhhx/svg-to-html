@@ -2,6 +2,10 @@ import path from "node:path";
 import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
+import {
+  WORKFLOW_ARCHIVE_FULL_EVERY_N,
+  WORKFLOW_ARCHIVE_TEXT_MAX_CHARS,
+} from "../config/runtime.js";
 import { truncate } from "../core/string-utils.js";
 import { writeJsonFile, writeTextFile } from "../core/utils.js";
 
@@ -47,12 +51,6 @@ type WorkflowArchiveManifest = {
   updatedAt: number;
 };
 
-const WORKFLOW_ARCHIVE_FULL_EVERY_N = Number(
-  process.env["WORKFLOW_ARCHIVE_FULL_EVERY_N"] ?? 5,
-);
-const WORKFLOW_ARCHIVE_TEXT_MAX_CHARS = Number(
-  process.env["WORKFLOW_ARCHIVE_TEXT_MAX_CHARS"] ?? 12000,
-);
 const HEAVY_ARCHIVE_FILE_LABELS = new Set([
   "Rendered SVG PNG",
   "Rendered Output PNG",

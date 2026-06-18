@@ -1,4 +1,5 @@
 import { truncate } from '../../core/string-utils.js'
+import { ARCHIVE_COMMAND_OUTPUT_MAX_CHARS } from '../../config/runtime.js'
 import { sessionStore } from '../../session-store.js'
 import type { WorkflowArchiveMaterial } from '../workflow-archive.js'
 import { archiveSessionCheckpoint } from './checkpoint.js'
@@ -6,12 +7,6 @@ import { archiveSessionCheckpoint } from './checkpoint.js'
 import type {
   AgentCommandKind,
 } from './agent-turn-types.js'
-
-// Archive 命令输出截断限制（只影响本地存储，不影响发送给模型的内容）
-const ARCHIVE_COMMAND_OUTPUT_MAX_CHARS = Math.max(
-  0,
-  Number(process.env['ARCHIVE_COMMAND_OUTPUT_MAX_CHARS'] ?? 5000),
-)
 
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
