@@ -1,11 +1,7 @@
 import { sessionStore } from '../../session-store.js'
 import type { AgentInput, AgentThread } from '../agent-runtime/index.js'
 import {
-  AGENT_VERIFY_MIN_IMPROVEMENT,
   AGENT_VERIFY_ROLLBACK_THRESHOLD,
-  MAX_AGENT_STALLED_VERIFY_RUNS,
-  MAX_AGENT_TURN_COMMANDS,
-  MAX_AGENT_TURN_VERIFY_RUNS,
 } from './config.js'
 import {
   archiveAgentCommandCheckpoint,
@@ -170,7 +166,6 @@ export async function runAgentTurnCore(
   let internalRound = 1
   let bestVerifyDiffRatio: number | undefined
   let browserEvalBaselineBackedUp = false
-  let stalledVerifyRuns = 0
   let verifyRunCount = 0
   let completedShellCommandCount = 0
   let earlyStopReason: string | undefined
@@ -179,49 +174,6 @@ export async function runAgentTurnCore(
 
   const commandStartTimes = new Map<string, number>()
   const turnStartedAt = Date.now()
-
-  const maybeStopTurnEarly = () => {
-    if (earlyStopReason || controller.signal.aborted || turnController.signal.aborted) return
-    if (
-      verifyRunCount >= MAX_AGENT_TURN_VERIFY_RUNS &&
-      MAX_AGENT_TURN_VERIFY_RUNS > 0
-    ) {
-      earlyStopReason = `verify run limit reached (${verifyRunCount}/${MAX_AGENT_TURN_VERIFY_RUNS})`
-    }
-
-    if (earlyStopReason) {
-      sessionStore.addLog(
-        sessionId,
-        `[agent:early-stop] ${earlyStopReason}; stopping this turn and keeping the best verified state for the host workflow`,
-      )
-      turnController.abort('early-stopping')
-      if (timeoutTimer) {
-        clearTimeout(timeoutTimer)
-        timeoutTimer = null
-      }
-      return
-    }
-
-    if (
-      stalledVerifyRuns >= MAX_AGENT_STALLED_VERIFY_RUNS &&
-      MAX_AGENT_STALLED_VERIFY_RUNS > 0
-    ) {
-      earlyStopReason = `no material diff improvement across ${stalledVerifyRuns} verify run(s)`
-    } else if (
-      completedShellCommandCount >= MAX_AGENT_TURN_COMMANDS &&
-      MAX_AGENT_TURN_COMMANDS > 0 &&
-      verifyRunCount > 0
-    ) {
-      earlyStopReason = `command limit reached (${completedShellCommandCount}/${MAX_AGENT_TURN_COMMANDS}) after verification began`
-    }
-
-    if (!earlyStopReason) return
-    sessionStore.addLog(
-      sessionId,
-      `[agent:early-stop] ${earlyStopReason}; stopping this turn and keeping the best verified state for the host workflow`,
-    )
-    turnController.abort('early-stopping')
-  }
 
   const handleBrowserEvalCheckpoint = async () => {
     if (!input.rollbackFiles || input.rollbackFiles.length === 0) return
@@ -306,9 +258,6 @@ export async function runAgentTurnCore(
           ) {
             verifyRunCount++
             if (diffRatio !== undefined) {
-              const materiallyImproved =
-                bestVerifyDiffRatio === undefined ||
-                bestVerifyDiffRatio - diffRatio >= AGENT_VERIFY_MIN_IMPROVEMENT
               const degraded =
                 bestVerifyDiffRatio !== undefined &&
                 diffRatio > bestVerifyDiffRatio + AGENT_VERIFY_ROLLBACK_THRESHOLD
@@ -331,10 +280,8 @@ export async function runAgentTurnCore(
                 )
 
                 earlyStopReason = `verify-rollback-${rollbackCount}: diff degraded from ${(bestVerifyDiffRatio! * 100).toFixed(2)}% to ${(diffRatio * 100).toFixed(2)}%`
-                stalledVerifyRuns = 0
                 turnController.abort(earlyStopReason)
               } else {
-                stalledVerifyRuns = materiallyImproved ? 0 : stalledVerifyRuns + 1
                 if (
                   bestVerifyDiffRatio === undefined ||
                   diffRatio < bestVerifyDiffRatio
@@ -388,7 +335,6 @@ export async function runAgentTurnCore(
             )
           }
         }
-        maybeStopTurnEarly()
       }
 
       if (
@@ -431,7 +377,6 @@ export async function runAgentTurnCore(
           sessionId,
           `[agent:internal] round ${internalRound} browser-eval ${status} (mcp)`,
         )
-        maybeStopTurnEarly()
       }
 
       if (

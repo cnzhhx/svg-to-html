@@ -53,22 +53,7 @@ export const MAX_CONCURRENT_AGENTS = Number(
 export const MAX_PARALLEL_MODULE_AGENTS = Number(
   process.env['MAX_PARALLEL_MODULE_AGENTS'] ?? 10,
 )
-// 单个 agent turn 最多执行命令数（0 = 不限）
-export const MAX_AGENT_TURN_COMMANDS = Number(
-  process.env['MAX_AGENT_TURN_COMMANDS'] ?? 0,
-)
-// 单个 agent turn 最多验证次数（0 = 不限）
-export const MAX_AGENT_TURN_VERIFY_RUNS = Number(
-  process.env['MAX_AGENT_TURN_VERIFY_RUNS'] ?? 0,
-)
-// 连续无改善验证次数上限（0 = 不限）
-export const MAX_AGENT_STALLED_VERIFY_RUNS = Number(
-  process.env['MAX_AGENT_STALLED_VERIFY_RUNS'] ?? 0,
-)
-// diffRatio 至少改善多少才算有效
-export const AGENT_VERIFY_MIN_IMPROVEMENT = Number(
-  process.env['AGENT_VERIFY_MIN_IMPROVEMENT'] ?? 0.001,
-)
+
 // diffRatio 反弹超此值则回滚
 export const AGENT_VERIFY_ROLLBACK_THRESHOLD = Number(
   process.env['AGENT_VERIFY_ROLLBACK_THRESHOLD'] ?? 0.005,

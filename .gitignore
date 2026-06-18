@@ -5,11 +5,6 @@ dist/
 test/output/
 *.tsbuildinfo
 
-# Local environment files may contain secrets.
-.env
-.env.*
-!.env.example
-
 .DS_Store
 **/.DS_Store
 .runtime-traces/
