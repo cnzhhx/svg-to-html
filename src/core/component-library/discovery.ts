@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { isRecord } from "../utils.js";
+import { isRecord } from '../type-guards.js';
 import type {
   ComponentLibraryComponent,
   ComponentLibraryDescriptor,

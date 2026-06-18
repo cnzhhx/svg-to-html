@@ -2,7 +2,7 @@ import type { Session, SessionMessage } from './types.js'
 import {
   AGENT_MESSAGE_SAMPLE_CHARS,
   AGENT_REASONING_MESSAGE_CHARS,
-} from '../config/runtime.js'
+} from '../config/index.js'
 
 const sampleText = (value: string, maxChars = AGENT_MESSAGE_SAMPLE_CHARS) => {
   if (maxChars <= 0) return ''

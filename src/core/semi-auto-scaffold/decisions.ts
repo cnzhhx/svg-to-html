@@ -1,5 +1,5 @@
 import type { ContainerLayoutReport } from '../container-layout/types.js'
-import { resolveSvgDesign } from '../utils.js'
+import { resolveSvgDesign } from '../design-resolve.js';
 import type {
   StructureDraft,
 } from './types.js'

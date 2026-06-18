@@ -1,6 +1,6 @@
 import type { ContainerLayoutReport } from "../container-layout/types.js";
 import type { SvgLayoutResult } from "../svg-layout.js";
-import type { Box } from "../utils.js";
+import type { Box } from '../geometry.js';
 
 export type ModulePlannerMode = "auto" | "script" | "model";
 type SelectedModulePlanner = "single-page" | "model";

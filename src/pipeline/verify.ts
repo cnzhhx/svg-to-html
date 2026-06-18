@@ -1,9 +1,7 @@
-import { createPixelDiff } from "../core/diff.js";
+import { createPixelDiff } from "../core/diff/index.js";
 import { renderDesignTargets } from "../core/render.js";
-import {
-  resolveArtifactDir,
-  resolveRenderTarget,
-} from "../core/utils.js";
+import { resolveArtifactDir } from "../core/paths.js";
+import { resolveRenderTarget } from "../core/design-resolve.js";
 
 type VerifyMode = "full" | "fast";
 

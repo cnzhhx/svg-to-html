@@ -1,4 +1,4 @@
-import type { Box } from '../utils.js'
+import type { Box } from '../geometry.js';
 
 type StructureDraftNode = {
   box: Box

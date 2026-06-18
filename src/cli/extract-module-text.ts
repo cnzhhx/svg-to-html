@@ -3,11 +3,12 @@ import { readFile } from "node:fs/promises";
 
 import { shutdownBrowserPool } from "../core/cdp.js";
 import { createModuleTextBlocks } from "../core/module-text-blocks.js";
-import { toAbsolutePath, writeJsonFile } from "../core/utils.js";
+import { toAbsolutePath } from "../core/paths.js";
+import { writeJsonFile } from "../core/file-io.js";
 import {
   buildModuleSemanticTextHints,
   type ModuleSemanticDocument,
-} from "../pipeline/agent-runner/module-semantic.js";
+} from "../pipeline/agent-runner/module/module-semantic.js";
 import { parseCliFlags } from "./cli-utils.js";
 
 const VALUE_FLAGS = new Set([

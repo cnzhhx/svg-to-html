@@ -4,11 +4,11 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import archiver from "archiver";
 
-import { DIFF_RATIO_THRESHOLD, MAX_CONCURRENT_AGENTS, SESSION_LOCAL_STORAGE_ENABLED } from "../config/runtime.js";
+import { DIFF_RATIO_THRESHOLD, MAX_CONCURRENT_AGENTS, SESSION_LOCAL_STORAGE_ENABLED } from "../config/index.js";
 import { detectBrowserBinary } from "../core/cdp.js";
 import { truncate } from "../core/string-utils.js";
-import { getWorkspaceRoot } from "../core/utils.js";
-import { cancelSessionRun, enqueueSession } from "../pipeline/agent-runner.js";
+import { getWorkspaceRoot } from "../core/paths.js";
+import { cancelSessionRun, enqueueSession } from "../pipeline/agent-runner/index.js";
 import {
   sessionStore,
   type Session,

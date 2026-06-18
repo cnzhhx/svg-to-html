@@ -11,7 +11,8 @@ import type {
 } from './types.js'
 import { createDiffWrapper } from './wrapper.js'
 import { startStaticServer } from '../static-server.js'
-import { toUrlPath, writeTextFile } from '../utils.js'
+import { toUrlPath } from '../paths.js';
+import { writeTextFile } from '../file-io.js';
 
 const createPixelDiff = async ({
   artifactDir,

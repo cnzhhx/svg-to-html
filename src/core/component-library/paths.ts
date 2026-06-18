@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { getWorkspaceRoot, isInsidePath } from "../utils.js";
+import { getWorkspaceRoot, isInsidePath } from '../paths.js';
 
 const COMPONENT_LIBRARY_ROOT_DIR = "component-libraries";
 const COMPONENT_LIBRARY_DESCRIPTOR_FILE = "component-library.json";

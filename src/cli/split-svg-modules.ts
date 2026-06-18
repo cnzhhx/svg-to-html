@@ -6,7 +6,7 @@ import {
   type CreateAdaptiveModulePlanOptions,
   type ModulePlanMode,
   type ModulePlannerMode,
-} from '../core/svg-vertical-modules.js'
+} from '../core/svg-vertical-modules/index.js'
 import { parseFlagValue } from './cli-utils.js'
 
 const VALUE_FLAGS = new Set([

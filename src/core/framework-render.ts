@@ -6,10 +6,10 @@ import react from "@vitejs/plugin-react";
 import vue from "@vitejs/plugin-vue";
 import { build } from "vite";
 
-import type { ResolvedSvgDesign } from "./utils.js";
+import type { ResolvedSvgDesign } from './design-resolve.js';
 import type { SessionOutputTarget } from "./output-target.js";
 import type { ComponentLibraryBuildContext } from "./component-library/types.js";
-import { writeTextFile } from "./utils.js";
+import { writeTextFile } from './file-io.js';
 
 const normalizeImportPath = (fromDir: string, targetPath: string) => {
   let relative = path.relative(fromDir, targetPath).replaceAll(path.sep, "/");

@@ -6,12 +6,9 @@ import {
   type SvgLayoutNode,
   type SvgLayoutResult,
 } from "../svg-layout.js";
-import {
-  resolveArtifactDir,
-  resolveSvgDesign,
-  writeJsonFile,
-  writeTextFile,
-} from "../utils.js";
+import { resolveArtifactDir } from "../paths.js";
+import { resolveSvgDesign } from "../design-resolve.js";
+import { writeJsonFile, writeTextFile } from "../file-io.js";
 import {
   pruneInvisibleSvgNodes,
   shouldPruneInvisibleSvgNodes,

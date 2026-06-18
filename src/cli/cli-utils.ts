@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import type { ModulePlanModule } from "../pipeline/module-merge.js";
+import type { ModulePlanModule } from "../pipeline/module-merge/index.js";
 
 const normalizePlanModules = (modules: unknown): ModulePlanModule[] => {
   if (Array.isArray(modules)) return modules as ModulePlanModule[];

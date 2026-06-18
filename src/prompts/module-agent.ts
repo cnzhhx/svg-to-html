@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import type { ComponentLibraryAgentContext } from "../core/component-library/types.js";
-import type { ResolvedDesignTarget } from "../core/utils.js";
+import type { ResolvedDesignTarget } from "../core/design-resolve.js";
 import type {
   SvgVerticalModule,
   SvgVerticalModuleReport,

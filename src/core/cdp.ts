@@ -11,7 +11,7 @@ import {
   BROWSER_POOL_IDLE_MS,
   CDP_READY_TIMEOUT_MS,
   CDP_SEND_TIMEOUT_MS,
-} from "../config/runtime.js";
+} from "../config/index.js";
 
 type ServerWithEvents = Server & {
   on(event: "error", listener: (error: Error) => void): Server;

@@ -3,12 +3,12 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 import { isString } from "../core/type-guards.js";
+import { getWorkspaceRoot } from "../core/paths.js";
+import { isRecord } from "../core/type-guards.js";
 import {
-  getWorkspaceRoot,
-  isRecord,
   writeJsonFile,
   writeTextFile,
-} from "../core/utils.js";
+} from "../core/file-io.js";
 import { parseCliFlags } from "./cli-utils.js";
 
 type JsonRecord = Record<string, unknown>;

@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 
 import { evaluatePage, launchEdge } from "./cdp.js";
-import type { Box } from "./utils.js";
+import type { Box } from './geometry.js';
 
 type TextStyleInferenceInputBlock = {
   color?: string;

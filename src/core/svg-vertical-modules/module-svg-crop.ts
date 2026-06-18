@@ -1,11 +1,11 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
+import type { RootChildElement } from '../html-parse.js'
 import {
   findTagEnd,
   parseRootChildElements,
-  type RootChildElement,
-} from '../utils.js'
+} from '../html-parse.js'
 import type { SvgSharedLayer, SvgVerticalModule } from './types.js'
 
 type CropModuleSvgInput = {

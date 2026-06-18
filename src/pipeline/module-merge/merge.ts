@@ -3,8 +3,8 @@ import path from "node:path";
 import { buildFrameworkRenderEntry } from "../../core/framework-render.js";
 import { assertOutputFormat } from "../../core/output-target.js";
 import type { SessionOutputTarget } from "../../core/output-target.js";
-import type { ResolvedSvgDesign } from "../../core/utils.js";
-import { writeTextFile } from "../../core/utils.js";
+import type { ResolvedSvgDesign } from "../../core/design-resolve.js";
+import { writeTextFile } from "../../core/file-io.js";
 import type {
   ModuleMergeOptions,
   ModuleMergeResolvedModule,

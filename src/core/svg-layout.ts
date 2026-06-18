@@ -3,7 +3,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { evaluatePage, launchEdge } from "./cdp.js";
-import { type Box, ensureSvgViewBox, type ResolvedSvgDesign, writeTextFile } from "./utils.js";
+import type { Box } from './geometry.js';
+import { ensureSvgViewBox } from './svg-parse.js';
+import type { ResolvedSvgDesign } from './design-resolve.js';
+import { writeTextFile } from './file-io.js';
 
 type SvgLayoutNode = {
   attributes: Record<string, string>;

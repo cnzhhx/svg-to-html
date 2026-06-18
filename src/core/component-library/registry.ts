@@ -4,12 +4,12 @@ import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { isRecord } from "../utils.js";
+import { isRecord } from '../type-guards.js';
 import { writeJsonFile } from "../file-io.js";
 import {
   COMPONENT_LIBRARY_INSTALL_REGISTRY,
   COMPONENT_LIBRARY_INSTALL_TIMEOUT_MS,
-} from "../../config/runtime.js";
+} from "../../config/index.js";
 import {
   enrichComponentLibraryDescriptor,
   validateComponentLibraryDescriptor,

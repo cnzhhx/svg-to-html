@@ -13,7 +13,7 @@ import {
   uniqueStrings,
 } from "../geometry.js";
 import type { SvgLayoutNode } from "../svg-layout.js";
-import type { Box, Region } from "../utils.js";
+import type { Box, Region } from '../geometry.js';
 import {
   expandRegion,
   toModuleBox,

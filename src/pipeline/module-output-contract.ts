@@ -1,4 +1,4 @@
-import type { Region } from "../core/utils.js";
+import type { Region } from "../core/geometry.js";
 import { normalizeAssetRole } from "../core/asset-role.js";
 
 type GeneratedAssetManifestEntry = {

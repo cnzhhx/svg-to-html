@@ -6,7 +6,7 @@ import {
   type OutputFormat,
   type SessionOutputTarget,
 } from '../core/output-target.js'
-import { isRecord } from '../core/utils.js'
+import { isRecord } from '../core/type-guards.js'
 import { createSessionPaths, getSessionsRoot } from './paths.js'
 import { ensureWorkflowProgress } from './progress.js'
 import type { Session, SessionResult } from './types.js'

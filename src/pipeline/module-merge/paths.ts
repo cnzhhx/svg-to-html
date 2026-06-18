@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { toAbsolutePath } from "../../core/utils.js";
+import { toAbsolutePath } from "../../core/paths.js";
 import type { ModuleMergeOptions, ModulePlan } from "./types.js";
 import { resolveConfiguredPath } from "./utils.js";
 
