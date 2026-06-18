@@ -14,7 +14,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 export NODE_ENV="${NODE_ENV:-production}"
-export PORT="${PORT:-81}"
+export PORT="${PORT:-80}"
 export WORKSPACE="${WORKSPACE:-$ROOT_DIR/workspace}"
 export CDP_SEND_TIMEOUT_MS="${CDP_SEND_TIMEOUT_MS:-120000}"
 export CDP_READY_TIMEOUT_MS="${CDP_READY_TIMEOUT_MS:-60000}"
@@ -278,7 +278,7 @@ Commands:
   logs        Follow service log
 
 Common env:
-  PORT=81
+  PORT=80
   WORKSPACE=$ROOT_DIR/workspace
   ENV_FILE=$ROOT_DIR/.env
   CHROMIUM_PATH=/usr/bin/google-chrome-stable

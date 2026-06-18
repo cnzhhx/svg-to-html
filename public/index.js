@@ -7,6 +7,8 @@ const componentLibraryFeatureEnabled = false
 // Frontend runtime flag, sourced from /api/runtime via loadRuntimeInfo().
 // Default OFF; backend enables it via SESSION_LOCAL_STORAGE_ENABLED.
 let enableSessionLocalStorage = false
+// Whether session deletion is disabled (controlled by backend SESSION_DELETE_DISABLED).
+let sessionDeleteDisabled = false
 
 const fileInput = $('#fileInput')
 const uploadZone = $('#uploadZone')
@@ -1149,6 +1151,8 @@ async function loadRuntimeInfo() {
         renderSessionList()
       }
     }
+    sessionDeleteDisabled = Boolean(data.sessionDeleteDisabled)
+    deleteSessionBtn.style.display = sessionDeleteDisabled ? 'none' : ''
     syncComponentLibraryFeatureUi()
     runtimeInfo.textContent = ''
   } catch {
@@ -1795,6 +1799,7 @@ function upsertSession(session) {
 }
 
 async function deleteCurrentSession() {
+  if (sessionDeleteDisabled) return
   if (!currentSessionId || !currentSession) return
 
   const sessionId = currentSessionId
@@ -1995,7 +2000,7 @@ function renderSessionHeader() {
   const statusLabel = labelForSessionStatus(currentSession)
   sessionTitle.textContent = currentSession.designName
   sessionMeta.textContent = `${currentSession.id} · ${statusLabel} · ${scaleLabel} · ${formatLabel}${componentLibraryLabel ? ` · ${componentLibraryLabel}` : ''} · ${durationLabel} · ${progress.detail || labelForWorkflowNode(progress.currentNode || 'upload')}`
-  deleteSessionBtn.disabled = false
+  deleteSessionBtn.disabled = sessionDeleteDisabled
   chatStatus.textContent = `${statusLabel} · ${progress.detail || '可查看聊天记录'}`
   renderModulePicker()
   renderChatFilterTabs()
