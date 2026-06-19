@@ -4,7 +4,6 @@ import { readFile, stat } from "node:fs/promises";
 
 import type { AgentReasoningEffort } from "../../../config/agent-reasoning.js";
 import { MODULE_AGENT_TIMEOUT_MS } from "../../../config/index.js";
-import type { ComponentLibraryAgentContext } from "../../../core/component-library/types.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import { sessionStore } from "../../../session-store.js";
 import type { AgentThread } from "../../agent-runtime/index.js";
@@ -37,7 +36,6 @@ type AgentUnitInput = {
   reasoningEffort: AgentReasoningEffort;
   sessionId: string;
   controller: AbortController;
-  componentLibraryContext?: ComponentLibraryAgentContext;
   revisionPrompt?: string; // 可选的后续修复 prompt
   onThreadStarted?: (threadId: string) => void;
   round?: number;
@@ -46,7 +44,6 @@ type AgentUnitInput = {
 
 type AgentUnitThreadInput = {
   artifactDir: string;
-  componentLibrarySourceDir?: string;
   design: ResolvedDesignTarget;
   originalSvgPath: string;
   reasoningEffort: AgentReasoningEffort;
@@ -172,7 +169,6 @@ const ensureRequiredOutputFiles = async ({
 
 const createAgentUnitThread = ({
   artifactDir,
-  componentLibrarySourceDir,
   design,
   originalSvgPath,
   reasoningEffort,
@@ -184,7 +180,6 @@ const createAgentUnitThread = ({
     workingDirectory: workingDir,
     additionalDirectories: [
       path.join(path.dirname(originalSvgPath), "assets"),
-      componentLibrarySourceDir,
     ].filter(
       (dir): dir is string => typeof dir === "string" && existsSync(dir),
     ),
@@ -233,7 +228,6 @@ export async function runAgentUnit(
     reasoningEffort,
     sessionId,
     controller,
-    componentLibraryContext,
     revisionPrompt,
     onThreadStarted,
     round = 1,
@@ -262,7 +256,6 @@ export async function runAgentUnit(
   // 构造 prompt（初始或后续修复）
   const prompt = revisionPrompt
     ? `${buildAgentUnitFollowupBasePrompt({
-        componentLibraryContext,
         module,
         design,
         modulePlan,
@@ -270,7 +263,6 @@ export async function runAgentUnit(
         round,
       })}\n\n${revisionPrompt}`
     : buildAgentUnitPrompt({
-        componentLibraryContext,
         module,
         design,
         modulePlan,
@@ -280,7 +272,6 @@ export async function runAgentUnit(
     inputThread ??
     createAgentUnitThread({
       artifactDir,
-      componentLibrarySourceDir: componentLibraryContext?.sourceDir,
       design,
       originalSvgPath,
       reasoningEffort,

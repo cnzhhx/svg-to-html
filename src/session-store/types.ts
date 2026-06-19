@@ -2,7 +2,6 @@ import type {
   OutputFormat,
   SessionOutputTarget,
 } from '../core/output-target.js'
-import type { ComponentLibrarySessionRef } from '../core/component-library/types.js'
 
 type PipelineStep = 'agent' | 'verify'
 type WorkflowNodeKey =
@@ -154,8 +153,6 @@ type SessionResult = UploadResultFields
   & UsageResultFields
   & {
     outputTarget?: SessionOutputTarget
-    componentLibrary?: ComponentLibrarySessionRef
-    componentLibraryId?: string
     textTuningAppliedCount?: number
     textTuningReportPath?: string
     workflowHistoryDir?: string
@@ -181,8 +178,6 @@ type Session = {
   scale?: number
   sessionDir: string
   artifactDir: string
-  componentLibrary?: ComponentLibrarySessionRef
-  componentLibraryId?: string
   outputFormat: OutputFormat
   outputTarget: SessionOutputTarget
   status: SessionStatus

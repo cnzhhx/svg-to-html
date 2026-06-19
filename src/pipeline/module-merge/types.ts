@@ -1,5 +1,4 @@
 import type { OutputFormat, SessionOutputTarget } from "../../core/output-target.js";
-import type { ComponentLibrarySessionRef } from "../../core/component-library/types.js";
 import type { Region } from "../../core/geometry.js";
 import type { ResolvedSvgDesign } from "../../core/design-resolve.js";
 import type { ModuleOutputAllowedAsset } from "../module-output-policy.js";
@@ -27,8 +26,6 @@ type ModulePlan = {
     svgPath?: string;
     width?: number;
   };
-  componentAdoptionPlanPath?: string;
-  componentLibrary?: ComponentLibrarySessionRef;
   modules?: ModulePlanModule[] | Record<string, Omit<ModulePlanModule, "id">>;
   outputFormat?: OutputFormat;
   renderEntryPath?: string;

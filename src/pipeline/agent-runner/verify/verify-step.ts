@@ -8,7 +8,7 @@ import {
 } from "../../../session-store.js";
 import { verifyDesign, type VerifyResult } from "../../verify.js";
 import type { VerifyMode } from "../../verify.js";
-import { archiveSessionCheckpoint } from "../component/checkpoint.js";
+import { archiveSessionCheckpoint } from "../archive/checkpoint.js";
 
 const buildVerifyStepResult = (
   session: Session,

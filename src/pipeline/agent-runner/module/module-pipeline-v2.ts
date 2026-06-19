@@ -16,14 +16,7 @@ import { sessionStore } from "../../../session-store.js";
 import type { AgentThread } from "../../agent-runtime/index.js";
 import { mergeModulesIntoHtml, readModulePlan } from "../../module-merge/index.js";
 import type { VerifyResult } from "../../verify.js";
-import {
-  createComponentLibraryAgentContext,
-  createComponentLibraryPlanRef,
-} from "../component/component-library-context.js";
-import {
-  createComponentAdoptionPlan,
-  getComponentAdoptionPlanPath,
-} from "../component/component-adoption-plan.js";
+
 import {
   createAgentUnitThread,
   ModuleOutputIncompleteError,
@@ -33,7 +26,7 @@ import { buildUserModuleRevisionPrompt } from "../../../prompts/module-agent.js"
 import { runWithLimit } from "../queue/concurrency.js";
 import type { AgentTurnMetrics } from "../turn/agent-turn-types.js";
 import { isAbortError, throwIfRunAborted } from "../session/run-control.js";
-import { archiveSessionCheckpoint } from "../component/checkpoint.js";
+import { archiveSessionCheckpoint } from "../archive/checkpoint.js";
 import { runVerify } from "../verify/verify-step.js";
 import {
   analyzeModuleElements,
@@ -585,20 +578,8 @@ export async function runModulePipelineV2(
     design,
     modulesRootDir,
   });
-  const baseComponentLibraryContext = await createComponentLibraryAgentContext({
-    modulesRootDir,
-    session: currentSession,
-  });
-  const componentLibraryPlanRef = baseComponentLibraryContext
-    ? createComponentLibraryPlanRef({
-        descriptor: baseComponentLibraryContext.descriptor,
-        descriptorPath: baseComponentLibraryContext.descriptorPath,
-        sourceDir: baseComponentLibraryContext.sourceDir,
-      })
-    : undefined;
   const nextModulePlan = {
     ...modulePlan,
-    componentLibrary: componentLibraryPlanRef,
     outputFormat,
     renderEntryPath,
     scaffoldRenderPath: scaffoldHtmlPath,
@@ -610,9 +591,7 @@ export async function runModulePipelineV2(
     modulePlan.outputFormat !== nextModulePlan.outputFormat ||
     modulePlan.renderEntryPath !== nextModulePlan.renderEntryPath ||
     modulePlan.scaffoldRenderPath !== nextModulePlan.scaffoldRenderPath ||
-    modulePlan.sourceEntryPath !== nextModulePlan.sourceEntryPath ||
-    JSON.stringify(modulePlan.componentLibrary ?? null) !==
-      JSON.stringify(nextModulePlan.componentLibrary ?? null)
+    modulePlan.sourceEntryPath !== nextModulePlan.sourceEntryPath
   ) {
     modulePlan = {
       ...nextModulePlan,
@@ -622,37 +601,6 @@ export async function runModulePipelineV2(
   const modules = normalizeModules(modulePlan);
 
   if (!modules.length) throw new Error("No modules found in module plan");
-  const componentLibraryContext = baseComponentLibraryContext
-    ? {
-        ...baseComponentLibraryContext,
-        adoptionPlanPath: getComponentAdoptionPlanPath(modulesRootDir),
-      }
-    : undefined;
-  if (componentLibraryContext) {
-    const componentAdoptionPlan = await createComponentAdoptionPlan({
-      descriptor: componentLibraryContext.descriptor,
-      modules,
-      outputPath: componentLibraryContext.adoptionPlanPath,
-    });
-    const nextModulePlanWithAdoption = {
-      ...modulePlan,
-      componentAdoptionPlanPath: componentLibraryContext.adoptionPlanPath,
-    };
-    if (
-      modulePlan.componentAdoptionPlanPath !==
-      nextModulePlanWithAdoption.componentAdoptionPlanPath
-    ) {
-      modulePlan = nextModulePlanWithAdoption;
-      await writeJsonFile(modulePlanPath, modulePlan);
-    }
-    const requiredCount = componentAdoptionPlan.modules.filter(
-      (item) => item.intent === "required",
-    ).length;
-    sessionStore.addLog(
-      sessionId,
-      `[module-pipeline-v2] component adoption plan: ${componentLibraryContext.adoptionPlanPath}, requiredModules=${requiredCount}/${componentAdoptionPlan.modules.length}`,
-    );
-  }
   const moduleMergeManifestPath = path.join(
     modulesRootDir,
     "module-merge-manifest.json",
@@ -673,12 +621,6 @@ export async function runModulePipelineV2(
     sessionId,
     `[module-pipeline-v2] starting unified module pipeline: modules=${modules.length}, maxParallel=${maxParallelModuleAgents}`,
   );
-  if (componentLibraryContext) {
-    sessionStore.addLog(
-      sessionId,
-      `[module-pipeline-v2] component library enabled: ${componentLibraryContext.name} (${componentLibraryContext.id})`,
-    );
-  }
 
   const runInitialModuleRound = async ({
     modulesToRun,
@@ -749,7 +691,6 @@ export async function runModulePipelineV2(
           existingThread ??
           createAgentUnitThread({
             artifactDir,
-            componentLibrarySourceDir: componentLibraryContext?.sourceDir,
             design,
             originalSvgPath: design.svgPath,
             reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
@@ -790,7 +731,6 @@ export async function runModulePipelineV2(
             reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
             sessionId,
             controller,
-            componentLibraryContext,
             onThreadStarted: (threadId) => {
               persistedModuleThreadIds[module.id] = threadId;
               persistModuleAgentThreadId({
@@ -1003,10 +943,9 @@ export async function runModulePipelineV2(
         }
 
         let frameworkVerifyDiffRatio: number | undefined;
-        if (!mergeError && hasOutput && outputFormat !== "html" && componentLibraryContext) {
+        if (!mergeError && hasOutput && outputFormat !== "html") {
           try {
             const frameworkResult = await verifyModuleFrameworkLocal({
-              componentLibraryContext,
               design,
               module,
               moduleDir,
@@ -1423,22 +1362,8 @@ export async function runModuleUserRevision(
     throw new Error("Render entry path not available");
   }
   const modulesRootDir = path.dirname(modulePlanPath);
-  const baseComponentLibraryContext = currentSession
-    ? await createComponentLibraryAgentContext({
-        modulesRootDir,
-        session: currentSession,
-      })
-    : undefined;
-  const componentLibraryPlanRef = baseComponentLibraryContext
-    ? createComponentLibraryPlanRef({
-        descriptor: baseComponentLibraryContext.descriptor,
-        descriptorPath: baseComponentLibraryContext.descriptorPath,
-        sourceDir: baseComponentLibraryContext.sourceDir,
-      })
-    : undefined;
   const nextModulePlan = {
     ...modulePlan,
-    componentLibrary: componentLibraryPlanRef,
     outputFormat,
     renderEntryPath,
     scaffoldRenderPath: scaffoldHtmlPath,
@@ -1450,9 +1375,7 @@ export async function runModuleUserRevision(
     modulePlan.outputFormat !== nextModulePlan.outputFormat ||
     modulePlan.renderEntryPath !== nextModulePlan.renderEntryPath ||
     modulePlan.scaffoldRenderPath !== nextModulePlan.scaffoldRenderPath ||
-    modulePlan.sourceEntryPath !== nextModulePlan.sourceEntryPath ||
-    JSON.stringify(modulePlan.componentLibrary ?? null) !==
-      JSON.stringify(nextModulePlan.componentLibrary ?? null)
+    modulePlan.sourceEntryPath !== nextModulePlan.sourceEntryPath
   ) {
     modulePlan = nextModulePlan;
     await writeJsonFile(modulePlanPath, modulePlan);
@@ -1463,30 +1386,6 @@ export async function runModuleUserRevision(
     throw new Error(`模块不存在：${moduleId}`);
   }
 
-  const componentLibraryContext = baseComponentLibraryContext
-    ? {
-        ...baseComponentLibraryContext,
-        adoptionPlanPath: getComponentAdoptionPlanPath(modulesRootDir),
-      }
-    : undefined;
-  if (componentLibraryContext) {
-    await createComponentAdoptionPlan({
-      descriptor: componentLibraryContext.descriptor,
-      modules,
-      outputPath: componentLibraryContext.adoptionPlanPath,
-    });
-    const nextModulePlanWithAdoption = {
-      ...modulePlan,
-      componentAdoptionPlanPath: componentLibraryContext.adoptionPlanPath,
-    };
-    if (
-      modulePlan.componentAdoptionPlanPath !==
-      nextModulePlanWithAdoption.componentAdoptionPlanPath
-    ) {
-      modulePlan = nextModulePlanWithAdoption;
-      await writeJsonFile(modulePlanPath, modulePlan);
-    }
-  }
   const moduleAgentManifestPath = path.join(
     modulesRootDir,
     "module-agent-manifest.json",
@@ -1538,7 +1437,6 @@ export async function runModuleUserRevision(
 
   const thread = createAgentUnitThread({
     artifactDir,
-    componentLibrarySourceDir: componentLibraryContext?.sourceDir,
     design,
     originalSvgPath: design.svgPath,
     reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
@@ -1577,7 +1475,6 @@ export async function runModuleUserRevision(
     reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
     sessionId,
     controller,
-    componentLibraryContext,
     revisionPrompt,
     onThreadStarted: (threadId) => {
       persistedModuleThreadIds[module.id] = threadId;

@@ -5,18 +5,9 @@ import react from "@vitejs/plugin-react";
 import vue from "@vitejs/plugin-vue";
 import { build } from "vite";
 
-import { createComponentLibraryAliases } from "../../../core/framework-render.js";
-import type { ComponentLibraryAgentContext } from "../../../core/component-library/types.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { writeTextFile } from "../../../core/file-io.js";
 import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types.js";
-import {
-  createFrameworkComponentImportPlan,
-} from "../../module-merge/component-imports.js";
-import type {
-  ComponentImportModule,
-  FrameworkComponentImportPlan,
-} from "../../module-merge/component-imports.js";
 import {
   normalizeSourceFragment,
   rewriteModuleLocalAssetReferences,
@@ -94,14 +85,12 @@ const formatPx = (value: number) =>
   Number.isInteger(value) ? `${value}px` : `${value.toFixed(3)}px`;
 
 const buildVueModuleEntry = async ({
-  componentImportPlan,
   moduleCss,
   moduleId,
   region,
   sourceData,
   sourceFragment,
 }: {
-  componentImportPlan: { imports: string[]; styleImports: string[] };
   moduleCss: string;
   moduleId: string;
   region: SvgVerticalModule["region"];
@@ -126,8 +115,6 @@ ${sourceFragment
 
 <script setup lang="ts">
 ${[
-  ...componentImportPlan.styleImports.map((p) => `import ${JSON.stringify(p)};`),
-  ...componentImportPlan.imports,
   sourceDataStatement,
 ]
   .filter((line): line is string => Boolean(line))
@@ -154,14 +141,12 @@ ${moduleCss}
 };
 
 const buildReactModuleEntry = async ({
-  componentImportPlan,
   moduleCss,
   moduleId,
   region,
   sourceData,
   sourceFragment,
 }: {
-  componentImportPlan: { imports: string[]; styleImports: string[] };
   moduleCss: string;
   moduleId: string;
   region: SvgVerticalModule["region"];
@@ -174,12 +159,6 @@ const buildReactModuleEntry = async ({
   });
   const jsx = `
 import React from "react";
-${[
-  ...componentImportPlan.styleImports.map((p) => `import ${JSON.stringify(p)};`),
-  ...componentImportPlan.imports,
-]
-  .filter((line): line is string => Boolean(line))
-  .join("\n")}
 
 export default function ModulePage() {
 ${sourceDataStatement ? `  ${sourceDataStatement}\n` : ""}\
@@ -202,7 +181,6 @@ const getFrameworkVerifyArtifactDir = (moduleDir: string, round: number) =>
   path.join(moduleDir, "verify", `framework-round-${round}`);
 
 export const verifyModuleFrameworkLocal = async ({
-  componentLibraryContext,
   design,
   module,
   moduleDir,
@@ -211,28 +189,16 @@ export const verifyModuleFrameworkLocal = async ({
   outputFormat,
   round,
 }: {
-  componentLibraryContext?: ComponentLibraryAgentContext;
   design: { scale?: number; width: number; height: number };
   module: SvgVerticalModule;
   moduleDir: string;
   moduleSvgPath: string;
   onProgress?: (message: string) => void;
-  /**
-   * Explicit output format. When provided ("vue" | "react") the framework
-   * verify runs even without a component library, so agents on plain Vue/React
-   * sessions get real build+render feedback. When omitted, falls back to the
-   * legacy component-library-driven path.
-   */
   outputFormat?: "vue" | "react";
   round: number;
 }): Promise<ModuleFrameworkLocalVerifyResult | null> => {
-  // Resolve the effective output format and component-library gating.
-  const frameworkFormat =
-    outputFormat ?? componentLibraryContext?.framework ?? null;
+  const frameworkFormat = outputFormat ?? null;
   if (!frameworkFormat) return null;
-  // Legacy path: when no explicit format is given, require a component library
-  // context (kept for backwards compatibility with existing callers).
-  if (!outputFormat && !componentLibraryContext) return null;
 
   const artifactDir = getFrameworkVerifyArtifactDir(moduleDir, round);
   const manifestPath = path.join(moduleDir, "manifest.json");
@@ -273,35 +239,6 @@ export const verifyModuleFrameworkLocal = async ({
   const distDir = path.join(entryDir, "dist");
   await rm(artifactDir, { force: true, recursive: true });
   await mkdir(srcDir, { recursive: true });
-
-  const componentImportPlan: FrameworkComponentImportPlan = componentLibraryContext
-    ? await createFrameworkComponentImportPlan({
-        componentLibrary: {
-          descriptor: componentLibraryContext.descriptor,
-          ref: {
-            descriptorPath: componentLibraryContext.descriptorPath,
-            framework: componentLibraryContext.framework,
-            id: componentLibraryContext.id,
-            importPath:
-              componentLibraryContext.descriptor.package.importPath ??
-              componentLibraryContext.descriptor.package.name,
-            name: componentLibraryContext.name,
-            packageName: componentLibraryContext.descriptor.package.name,
-            sourceDir: componentLibraryContext.sourceDir,
-          },
-        },
-        modules: [
-          {
-            id: module.id,
-            manifest,
-            moduleCss: cssRaw,
-            sourceFragment,
-          },
-        ] satisfies ComponentImportModule[],
-        outputFormat: frameworkFormat,
-        sourceEntryPath: path.join(srcDir, `Module.${frameworkFormat === "vue" ? "vue" : "tsx"}`),
-      })
-    : { imports: [], styleImports: [], usedComponents: [] };
 
   const semanticAssetRefs = (allowedAssetsRaw ?? [])
     .flatMap((asset) => [
@@ -382,7 +319,6 @@ export const verifyModuleFrameworkLocal = async ({
 
   if (frameworkFormat === "vue") {
     const vueSource = await buildVueModuleEntry({
-      componentImportPlan,
       moduleCss: rewrittenCss,
       moduleId: module.id,
       region: module.region,
@@ -396,7 +332,6 @@ export const verifyModuleFrameworkLocal = async ({
     );
   } else {
     const { jsx, moduleCss } = await buildReactModuleEntry({
-      componentImportPlan,
       moduleCss: rewrittenCss,
       moduleId: module.id,
       region: module.region,
@@ -424,9 +359,7 @@ export const verifyModuleFrameworkLocal = async ({
       logLevel: "warn",
       plugins: frameworkFormat === "vue" ? [vue()] : [react()],
       resolve: {
-        alias: componentImportPlan.buildContext
-          ? createComponentLibraryAliases(componentImportPlan.buildContext)
-          : [],
+        alias: [],
       },
       root: entryDir,
     });

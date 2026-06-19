@@ -7,7 +7,6 @@ import express from 'express'
 import { detectBrowserBinary } from './core/cdp.js'
 import { setWorkspaceRoot } from './core/paths.js'
 import { processQueuedSessions } from './pipeline/agent-runner/index.js'
-import componentLibrariesRouter from './routes/component-libraries.js'
 import eventsRouter from './routes/events.js'
 import jobRouter from './routes/job.js'
 import uploadRouter from './routes/upload.js'
@@ -54,7 +53,6 @@ router.use(express.json())
 
 // API routes
 router.use('/api', uploadRouter)
-router.use('/api', componentLibrariesRouter)
 router.use('/api', jobRouter)
 router.use('/api', eventsRouter)
 

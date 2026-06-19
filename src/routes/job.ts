@@ -126,8 +126,6 @@ const safeResultForApi = (
   ];
   const detailKeys: Array<keyof SessionResult> = [
     "artifactDir",
-    "componentLibrary",
-    "componentLibraryId",
     "compareEntryPath",
     "containerLayoutPath",
     "designWidth",

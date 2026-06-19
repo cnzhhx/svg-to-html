@@ -1,8 +1,6 @@
 const $ = (sel) => document.querySelector(sel)
 
 const basePath = '/transformer'
-// Frontend-only feature switch. Set to true to show component library controls again.
-const componentLibraryFeatureEnabled = false
 
 // Frontend runtime flag, sourced from /api/runtime via loadRuntimeInfo().
 // Default OFF; backend enables it via SESSION_LOCAL_STORAGE_ENABLED.
@@ -23,19 +21,6 @@ const uploadDialogCancel = $('#uploadDialogCancel')
 const uploadSessionCount = $('#uploadSessionCount')
 const uploadScaleSelect = $('#uploadScaleSelect')
 const uploadFormatOptions = $('#uploadFormatOptions')
-const uploadComponentLibrarySelect = $('#uploadComponentLibrarySelect')
-const uploadComponentLibraryHint = $('#uploadComponentLibraryHint')
-const componentLibraryBtn = $('#componentLibraryBtn')
-const componentLibraryStatus = $('#componentLibraryStatus')
-const componentLibraryDialog = $('#componentLibraryDialog')
-const componentLibraryDialogCancel = $('#componentLibraryDialogCancel')
-const componentLibraryList = $('#componentLibraryList')
-const componentLibraryFrameworkSelect = $('#componentLibraryFrameworkSelect')
-const componentLibrarySourceDirInput = $('#componentLibrarySourceDirInput')
-const componentLibraryUrlInput = $('#componentLibraryUrlInput')
-const componentLibraryForceInput = $('#componentLibraryForceInput')
-const componentLibraryCompileBtn = $('#componentLibraryCompileBtn')
-const componentLibraryCompileStatus = $('#componentLibraryCompileStatus')
 const chatToggleBtn = $('#chatToggleBtn')
 const chatDrawer = $('#chatDrawer')
 const chatCloseBtn = $('#chatCloseBtn')
@@ -80,15 +65,6 @@ let uploadInFlight = false
 let chatDrawerOpen = false
 let selectedModuleId = null
 let chatFilterModuleId = null
-let componentLibraries = []
-let selectedUploadComponentLibraryId = ''
-let componentLibraryCompileInFlight = false
-let componentLibraryCompileNotice = ''
-let componentLibraryCompileNoticeTimer = null
-let componentLibraryCompileJobId = ''
-let componentLibraryCompilePollTimer = null
-// 正在安装依赖的组件库 id 集合，避免重复点击 + 让列表渲染"安装中"态
-const componentLibraryInstallingIds = new Set()
 const autoArtifactCacheStarted = new Set()
 const localArtifactCacheInFlight = new Set()
 const localArtifactCacheMetaBySession = new Map()
@@ -125,8 +101,6 @@ const LOCAL_ARTIFACT_RESULT_KEYS = [
 ]
 const UPLOAD_SCALE_KEY = 'svg2html:uploadScale'
 const UPLOAD_FORMAT_KEY = 'svg2html:uploadFormat'
-const UPLOAD_COMPONENT_LIBRARY_KEY = 'svg2html:uploadComponentLibraryId'
-const COMPONENT_LIBRARY_COMPILE_JOB_KEY = 'svg2html:componentLibraryCompileJobId'
 const DEFAULT_DIFF_RATIO_THRESHOLD = 0.15
 const DEFAULT_MODULE_CONCURRENCY_LIMIT = 5
 const urlParams = new URLSearchParams(location.search)
@@ -153,8 +127,6 @@ const OUTPUT_FORMAT_VALUES = new Set(OUTPUT_FORMAT_OPTIONS.map((option) => optio
 
 let selectedUploadScale = readStoredUploadScale()
 let selectedUploadFormat = readStoredUploadFormat()
-selectedUploadComponentLibraryId = readStoredUploadComponentLibraryId()
-componentLibraryCompileJobId = readStoredComponentLibraryCompileJobId()
 
 function getLocalSessionIds() {
   try {
@@ -255,8 +227,6 @@ function compactResultForLocalStorage(result) {
   if (!result || typeof result !== 'object') return {}
   const keys = [
     'artifactDir',
-    'componentLibrary',
-    'componentLibraryId',
     'compareEntryPath',
     'designWidth',
     'designHeight',
@@ -333,8 +303,6 @@ function sanitizeLocalSessionSnapshot(snapshot) {
     scale: Number(snapshot.scale || 1),
     sessionDir: String(snapshot.sessionDir || ''),
     artifactDir: String(snapshot.artifactDir || snapshot.result?.artifactDir || ''),
-    componentLibrary: snapshot.componentLibrary || snapshot.result?.componentLibrary,
-    componentLibraryId: snapshot.componentLibraryId || snapshot.result?.componentLibraryId,
     outputFormat,
     outputTarget,
     status: snapshot.status || 'completed',
@@ -378,8 +346,6 @@ function createLocalSessionSnapshot(session) {
     scale: Number(session.scale || 1),
     sessionDir: session.sessionDir || '',
     artifactDir: session.artifactDir || result.artifactDir || '',
-    componentLibrary: session.componentLibrary || result.componentLibrary,
-    componentLibraryId: session.componentLibraryId || result.componentLibraryId,
     outputFormat,
     outputTarget,
     status: session.status || 'completed',
@@ -566,22 +532,6 @@ function readStoredUploadFormat() {
   }
 }
 
-function readStoredUploadComponentLibraryId() {
-  try {
-    return String(localStorage.getItem(UPLOAD_COMPONENT_LIBRARY_KEY) || '').trim()
-  } catch {
-    return ''
-  }
-}
-
-function readStoredComponentLibraryCompileJobId() {
-  try {
-    return String(localStorage.getItem(COMPONENT_LIBRARY_COMPILE_JOB_KEY) || '').trim()
-  } catch {
-    return ''
-  }
-}
-
 function setUploadScale(scale) {
   selectedUploadScale = scale === 2 ? 2 : 1
   try {
@@ -597,32 +547,6 @@ function setUploadFormat(format) {
     localStorage.setItem(UPLOAD_FORMAT_KEY, selectedUploadFormat)
   } catch {}
   syncUploadFormatOptions()
-  syncUploadComponentLibrarySelect()
-}
-
-function setUploadComponentLibraryId(id) {
-  selectedUploadComponentLibraryId = componentLibraryFeatureEnabled
-    ? String(id || '').trim()
-    : ''
-  try {
-    if (selectedUploadComponentLibraryId) {
-      localStorage.setItem(UPLOAD_COMPONENT_LIBRARY_KEY, selectedUploadComponentLibraryId)
-    } else {
-      localStorage.removeItem(UPLOAD_COMPONENT_LIBRARY_KEY)
-    }
-  } catch {}
-  syncUploadComponentLibrarySelect()
-}
-
-function setComponentLibraryCompileJobId(id) {
-  componentLibraryCompileJobId = String(id || '').trim()
-  try {
-    if (componentLibraryCompileJobId) {
-      localStorage.setItem(COMPONENT_LIBRARY_COMPILE_JOB_KEY, componentLibraryCompileJobId)
-    } else {
-      localStorage.removeItem(COMPONENT_LIBRARY_COMPILE_JOB_KEY)
-    }
-  } catch {}
 }
 
 function syncUploadFormatOptions() {
@@ -637,196 +561,6 @@ function getSelectedOutputFormat() {
   return OUTPUT_FORMAT_OPTIONS.some((option) => option.value === checked?.value)
     ? checked.value
     : selectedUploadFormat
-}
-
-function getLibrariesForUploadFormat(format = selectedUploadFormat) {
-  if (!componentLibraryFeatureEnabled) return []
-  if (format !== 'vue' && format !== 'react') return []
-  return componentLibraries.filter((library) => library.framework === format)
-}
-
-function syncUploadComponentLibrarySelect() {
-  if (!uploadComponentLibrarySelect) return
-  const field = uploadComponentLibrarySelect.closest('.upload-dialog-field')
-  if (field) field.hidden = !componentLibraryFeatureEnabled
-  if (!componentLibraryFeatureEnabled) {
-    selectedUploadComponentLibraryId = ''
-    uploadComponentLibrarySelect.disabled = true
-    uploadComponentLibrarySelect.innerHTML = '<option value="">不使用组件库</option>'
-    if (uploadComponentLibraryHint) uploadComponentLibraryHint.textContent = '组件库功能已关闭'
-    return
-  }
-  const format = getSelectedOutputFormat()
-  const libraries = getLibrariesForUploadFormat(format)
-  const currentAvailable = libraries.some((library) => library.id === selectedUploadComponentLibraryId)
-  if (!currentAvailable) selectedUploadComponentLibraryId = ''
-  uploadComponentLibrarySelect.disabled = format !== 'vue' && format !== 'react'
-  uploadComponentLibrarySelect.innerHTML = [
-    '<option value="">不使用组件库</option>',
-    ...libraries.map((library) => {
-      const meta = `${library.name} · ${library.componentCount || 0} 组件`
-      return `<option value="${escapeHtml(library.id)}">${escapeHtml(meta)}</option>`
-    }),
-  ].join('')
-  uploadComponentLibrarySelect.value = selectedUploadComponentLibraryId
-  if (uploadComponentLibraryHint) {
-    if (componentLibraryCompileInFlight) {
-      uploadComponentLibraryHint.textContent = '组件库摘要正在生成，关闭弹窗也会继续'
-    } else if (format === 'html') {
-      uploadComponentLibraryHint.textContent = 'HTML 输出不接入组件库'
-    } else if (!libraries.length) {
-      if (componentLibraryCompileNotice && componentLibraryCompileNotice.includes('失败')) {
-        uploadComponentLibraryHint.textContent = `${componentLibraryCompileNotice} 可在侧边栏重新生成摘要。`
-      } else {
-        uploadComponentLibraryHint.textContent = `暂无 ${labelForOutputFormat(format)} 组件库，可先在侧边栏生成摘要`
-      }
-    } else {
-      uploadComponentLibraryHint.textContent = '模块 agent 会按摘要读取组件目录，使用时由 merge 统一导入'
-    }
-  }
-}
-
-function renderComponentLibraryCompileState() {
-  if (!componentLibraryFeatureEnabled) {
-    syncComponentLibraryFeatureUi()
-    return
-  }
-  componentLibraryBtn?.classList.toggle('is-busy', componentLibraryCompileInFlight)
-  if (componentLibraryStatus) {
-    const text = componentLibraryCompileInFlight ? '生成中…' : componentLibraryCompileNotice
-    componentLibraryStatus.hidden = !text
-    componentLibraryStatus.textContent = text
-  }
-  syncUploadComponentLibrarySelect()
-  renderComponentLibraryList()
-}
-
-function setComponentLibraryCompileNotice(text, timeoutMs = 0) {
-  componentLibraryCompileNotice = text || ''
-  if (componentLibraryCompileNoticeTimer) {
-    clearTimeout(componentLibraryCompileNoticeTimer)
-    componentLibraryCompileNoticeTimer = null
-  }
-  renderComponentLibraryCompileState()
-  if (componentLibraryCompileNotice && timeoutMs > 0) {
-    componentLibraryCompileNoticeTimer = setTimeout(() => {
-      componentLibraryCompileNotice = ''
-      componentLibraryCompileNoticeTimer = null
-      renderComponentLibraryCompileState()
-    }, timeoutMs)
-  }
-}
-
-function syncComponentLibraryFeatureUi() {
-  if (!componentLibraryFeatureEnabled) {
-    clearComponentLibraryCompilePoll()
-    componentLibraryCompileInFlight = false
-    componentLibraryCompileNotice = ''
-    componentLibraries = []
-    componentLibraryInstallingIds.clear()
-    selectedUploadComponentLibraryId = ''
-    setComponentLibraryCompileJobId('')
-    try {
-      localStorage.removeItem(UPLOAD_COMPONENT_LIBRARY_KEY)
-    } catch {}
-  }
-  if (componentLibraryBtn) {
-    componentLibraryBtn.hidden = !componentLibraryFeatureEnabled
-    componentLibraryBtn.classList.toggle('is-busy', componentLibraryFeatureEnabled && componentLibraryCompileInFlight)
-  }
-  if (componentLibraryStatus && !componentLibraryFeatureEnabled) {
-    componentLibraryStatus.hidden = true
-    componentLibraryStatus.textContent = ''
-  }
-  if (componentLibraryDialog) {
-    componentLibraryDialog.hidden = !componentLibraryFeatureEnabled
-  }
-  if (componentLibraryDialog?.open && !componentLibraryFeatureEnabled) {
-    componentLibraryDialog.close()
-  }
-  if (componentLibraryCompileBtn && !componentLibraryFeatureEnabled) {
-    componentLibraryCompileBtn.disabled = true
-  }
-  if (componentLibraryCompileStatus && !componentLibraryFeatureEnabled) {
-    componentLibraryCompileStatus.textContent = '组件库功能已关闭'
-  }
-  syncUploadComponentLibrarySelect()
-  renderComponentLibraryList()
-}
-
-function clearComponentLibraryCompilePoll() {
-  if (!componentLibraryCompilePollTimer) return
-  clearTimeout(componentLibraryCompilePollTimer)
-  componentLibraryCompilePollTimer = null
-}
-
-function scheduleComponentLibraryCompilePoll(delayMs = 1200) {
-  clearComponentLibraryCompilePoll()
-  if (!componentLibraryFeatureEnabled) return
-  if (!componentLibraryCompileJobId) return
-  componentLibraryCompilePollTimer = setTimeout(() => {
-    void pollComponentLibraryCompileJob(componentLibraryCompileJobId)
-  }, delayMs)
-}
-
-async function pollComponentLibraryCompileJob(jobId) {
-  if (!componentLibraryFeatureEnabled) return
-  if (!jobId) return
-  try {
-    const res = await fetch(`${basePath}/api/component-libraries/compile-jobs/${encodeURIComponent(jobId)}`)
-    const data = await readJsonResponse(res)
-    if (res.status === 404) {
-      setComponentLibraryCompileJobId('')
-      componentLibraryCompileInFlight = false
-      setComponentLibraryCompileNotice('服务端找不到该摘要生成任务，可能已重启，请重新尝试生成。', 0)
-      renderComponentLibraryCompileState()
-      return
-    }
-    if (!res.ok) throw new Error(data.error || `读取摘要任务失败：HTTP ${res.status}`)
-    const job = data.job
-    const status = String(job?.status || '')
-    componentLibraryCompileInFlight = status === 'queued' || status === 'running'
-    if (componentLibraryCompileInFlight) {
-      renderComponentLibraryCompileState()
-      scheduleComponentLibraryCompilePoll()
-      return
-    }
-    clearComponentLibraryCompilePoll()
-    setComponentLibraryCompileJobId('')
-    if (status === 'completed') {
-      await loadComponentLibraries()
-      const id = job?.result?.library?.id
-      if (id) {
-        const library = componentLibraries.find((item) => item.id === id)
-        if (library) setUploadFormat(library.framework)
-        setUploadComponentLibraryId(id)
-      }
-      if (componentLibraryCompileStatus) componentLibraryCompileStatus.textContent = '摘要已生成，上传 SVG 时可选择该组件库'
-      setComponentLibraryCompileNotice('已生成', 3500)
-      return
-    }
-    const message = job?.error || '生成失败'
-    if (componentLibraryCompileStatus) componentLibraryCompileStatus.textContent = message
-    setComponentLibraryCompileNotice('生成失败', 5000)
-  } catch (error) {
-    componentLibraryCompileInFlight = false
-    const message = error instanceof Error ? error.message : '读取摘要任务失败'
-    if (componentLibraryCompileStatus) componentLibraryCompileStatus.textContent = message
-    setComponentLibraryCompileNotice('生成失败', 5000)
-  } finally {
-    if (!componentLibraryCompileInFlight && componentLibraryCompileBtn) {
-      componentLibraryCompileBtn.disabled = false
-    }
-    renderComponentLibraryCompileState()
-  }
-}
-
-function resumeComponentLibraryCompileJobIfNeeded() {
-  if (!componentLibraryFeatureEnabled) return
-  if (!componentLibraryCompileJobId) return
-  componentLibraryCompileInFlight = true
-  renderComponentLibraryCompileState()
-  void pollComponentLibraryCompileJob(componentLibraryCompileJobId)
 }
 
 function showExpiredNotice(count) {
@@ -909,7 +643,6 @@ function openUploadDialog(preselectedFile) {
   if (uploadScaleSelect) uploadScaleSelect.value = String(selectedUploadScale)
   if (uploadSessionCount) uploadSessionCount.value = '1'
   syncUploadFormatOptions()
-  syncUploadComponentLibrarySelect()
   if (preselectedFile) {
     setDialogFile(preselectedFile)
   }
@@ -933,46 +666,6 @@ uploadFormatOptions?.addEventListener('change', () => {
   setUploadFormat(getSelectedOutputFormat())
 })
 
-uploadComponentLibrarySelect?.addEventListener('change', () => {
-  setUploadComponentLibraryId(uploadComponentLibrarySelect.value)
-})
-
-componentLibraryBtn?.addEventListener('click', () => {
-  openComponentLibraryDialog()
-})
-
-componentLibraryDialogCancel?.addEventListener('click', () => {
-  componentLibraryDialog.close()
-})
-
-componentLibraryCompileBtn?.addEventListener('click', () => {
-  void compileComponentLibraryFromDialog()
-})
-
-componentLibraryList?.addEventListener('click', (event) => {
-  const target = event.target instanceof Element ? event.target : null
-  const button = target?.closest('[data-component-library-action]')
-  if (!button) return
-  const id = button.getAttribute('data-component-library-id')
-  const action = button.getAttribute('data-component-library-action')
-  if (!id) return
-  if (action === 'select') {
-    const library = componentLibraries.find((item) => item.id === id)
-    if (library) {
-      setUploadFormat(library.framework)
-      setUploadComponentLibraryId(id)
-      componentLibraryDialog.close()
-      openUploadDialog()
-    }
-  }
-  if (action === 'install') {
-    void installComponentLibraryDependencies(id)
-  }
-  if (action === 'delete') {
-    void deleteComponentLibraryFromDialog(id)
-  }
-})
-
 uploadDialogCancel.addEventListener('click', () => {
   uploadDialog.close()
 })
@@ -986,7 +679,6 @@ uploadDialogSubmit.addEventListener('click', async () => {
   uploadDialog.close()
   setUploadScale(scale)
   setUploadFormat(outputFormat)
-  setUploadComponentLibraryId(outputFormat === 'html' ? '' : uploadComponentLibrarySelect?.value || '')
   await uploadFile(file, { sessionCount })
 })
 
@@ -1125,12 +817,8 @@ setInterval(() => {
 
 async function bootstrap() {
   await loadRuntimeInfo()
-  await Promise.all([
-    componentLibraryFeatureEnabled ? loadComponentLibraries() : Promise.resolve(),
-    loadSessions(),
-  ])
+  await loadSessions()
   scheduleAutoCacheCompletedSessionArtifacts()
-  resumeComponentLibraryCompileJobIfNeeded()
 }
 
 async function loadRuntimeInfo() {
@@ -1160,191 +848,15 @@ async function loadRuntimeInfo() {
     sessionChatDisabled = data.sessionChatDisabled !== false
     deleteSessionBtn.style.display = sessionDeleteDisabled ? 'none' : ''
     syncChatFeatureUi()
-    syncComponentLibraryFeatureUi()
     runtimeInfo.textContent = ''
   } catch {
     enableSessionLocalStorage = false
     sessionChatDisabled = true
     syncChatFeatureUi()
-    syncComponentLibraryFeatureUi()
     runtimeInfo.textContent = ''
   } finally {
     runtimeInfoLoaded = true
     scheduleAutoCacheCompletedSessionArtifacts()
-  }
-}
-
-async function loadComponentLibraries() {
-  if (!componentLibraryFeatureEnabled) {
-    componentLibraries = []
-    syncComponentLibraryFeatureUi()
-    return
-  }
-  try {
-    const res = await fetch(`${basePath}/api/component-libraries`)
-    const data = await readJsonResponse(res)
-    componentLibraries = Array.isArray(data.libraries) ? data.libraries : []
-  } catch {
-    componentLibraries = []
-  }
-  syncUploadComponentLibrarySelect()
-  renderComponentLibraryList()
-}
-
-function renderComponentLibraryList() {
-  if (!componentLibraryList) return
-  if (!componentLibraryFeatureEnabled) {
-    componentLibraryList.innerHTML = '<div class="empty-list">组件库功能已关闭</div>'
-    return
-  }
-  const busyRow = componentLibraryCompileInFlight
-    ? `
-        <div class="component-library-item is-busy">
-          <span>
-            <span class="component-library-item-title">正在生成组件库摘要</span>
-            <span class="component-library-item-meta">可以关闭弹窗，完成后会自动出现在列表里</span>
-          </span>
-        </div>
-      `
-    : ''
-  if (!componentLibraries.length) {
-    componentLibraryList.innerHTML = busyRow || '<div class="empty-list">还没有组件库摘要</div>'
-    return
-  }
-  componentLibraryList.innerHTML = busyRow + componentLibraries
-    .map((library) => {
-      const installing = componentLibraryInstallingIds.has(library.id)
-      const installStatus = library.install?.status
-      // 摘要生成不再自动安装依赖，无 install 字段即视为“未安装”
-      let installText = ''
-      let installBtn = ''
-      if (installing) {
-        installText = ' · 安装中…'
-        installBtn = '<button class="component-library-mini-btn" type="button" disabled>安装中…</button>'
-      } else if (installStatus === 'completed') {
-        installText = ' · 已安装'
-      } else if (installStatus === 'failed') {
-        installText = ' · 安装失败'
-        installBtn = `<button class="component-library-mini-btn" type="button" data-component-library-action="install" data-component-library-id="${escapeHtml(library.id)}">重装依赖</button>`
-      } else {
-        // 'skipped' 或无字段：都允许手动安装（merge 时也会自动尝试）
-        installText = installStatus === 'skipped' ? ' · 未安装' : ' · 未安装'
-        installBtn = `<button class="component-library-mini-btn" type="button" data-component-library-action="install" data-component-library-id="${escapeHtml(library.id)}">安装依赖</button>`
-      }
-      return `
-        <div class="component-library-item">
-          <span>
-            <span class="component-library-item-title">${escapeHtml(library.name || library.id)}</span>
-            <span class="component-library-item-meta">${escapeHtml(library.id)} · ${escapeHtml(labelForOutputFormat(library.framework))} · ${Number(library.componentCount || 0)} 组件${escapeHtml(installText)}</span>
-          </span>
-          <span class="component-library-item-actions">
-            ${installBtn}
-            <button class="component-library-mini-btn" type="button" data-component-library-action="select" data-component-library-id="${escapeHtml(library.id)}">选择</button>
-            <button class="component-library-mini-btn" type="button" data-component-library-action="delete" data-component-library-id="${escapeHtml(library.id)}">删除</button>
-          </span>
-        </div>
-      `
-    })
-    .join('')
-}
-
-function openComponentLibraryDialog() {
-  if (!componentLibraryFeatureEnabled) return
-  if (!componentLibraryDialog) return
-  renderComponentLibraryList()
-  if (componentLibraryFrameworkSelect) componentLibraryFrameworkSelect.value = selectedUploadFormat === 'react' ? 'react' : 'vue'
-  if (componentLibraryCompileStatus) {
-    componentLibraryCompileStatus.textContent = componentLibraryCompileInFlight
-      ? '正在复制代码库并生成摘要，关闭弹窗也会继续。'
-      : componentLibraryCompileNotice
-  }
-  componentLibraryDialog.showModal()
-}
-
-async function compileComponentLibraryFromDialog() {
-  if (!componentLibraryFeatureEnabled) return
-  if (componentLibraryCompileInFlight) return
-  const sourceDir = componentLibrarySourceDirInput?.value.trim()
-  const url = componentLibraryUrlInput?.value.trim()
-  if (!sourceDir && !url) {
-    alert('本地代码库路径 和 Git URL 至少填写一个')
-    return
-  }
-  componentLibraryCompileInFlight = true
-  componentLibraryCompileNotice = ''
-  if (componentLibraryCompileBtn) componentLibraryCompileBtn.disabled = true
-  if (componentLibraryCompileStatus) componentLibraryCompileStatus.textContent = '正在复制代码库并生成摘要，关闭弹窗也会继续。'
-  renderComponentLibraryCompileState()
-  let jobStarted = false
-  try {
-    const res = await fetch(`${basePath}/api/component-libraries/compile-jobs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        framework: componentLibraryFrameworkSelect?.value || 'vue',
-        force: Boolean(componentLibraryForceInput?.checked),
-        sourceDir: sourceDir || undefined,
-        url: url || undefined,
-      }),
-    })
-    const data = await readJsonResponse(res)
-    if (!res.ok) throw new Error(data.error || `启动生成失败：HTTP ${res.status}`)
-    const jobId = data.job?.id
-    if (!jobId) throw new Error('启动生成成功但响应缺少 jobId')
-    setComponentLibraryCompileJobId(jobId)
-    jobStarted = true
-    scheduleComponentLibraryCompilePoll(400)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '生成失败'
-    if (componentLibraryCompileStatus) {
-      componentLibraryCompileStatus.textContent = message
-    }
-    setComponentLibraryCompileNotice('生成失败', 5000)
-  } finally {
-    if (!jobStarted) {
-      componentLibraryCompileInFlight = false
-      if (componentLibraryCompileBtn) componentLibraryCompileBtn.disabled = false
-      renderComponentLibraryCompileState()
-    }
-  }
-}
-
-async function installComponentLibraryDependencies(id) {
-  if (!componentLibraryFeatureEnabled) return
-  if (!id || componentLibraryInstallingIds.has(id)) return
-  componentLibraryInstallingIds.add(id)
-  renderComponentLibraryList()
-  try {
-    const res = await fetch(`${basePath}/api/component-libraries/${encodeURIComponent(id)}/install`, {
-      method: 'POST',
-    })
-    const data = await readJsonResponse(res)
-    if (!res.ok) throw new Error(data.error || `安装依赖失败：HTTP ${res.status}`)
-    await loadComponentLibraries()
-  } catch (error) {
-    alert(error instanceof Error ? error.message : '安装依赖失败')
-    // 失败也要重新拉取，确保列表展示后端最新 install 状态
-    await loadComponentLibraries()
-  } finally {
-    componentLibraryInstallingIds.delete(id)
-    renderComponentLibraryList()
-  }
-}
-
-async function deleteComponentLibraryFromDialog(id) {
-  if (!componentLibraryFeatureEnabled) return
-  const library = componentLibraries.find((item) => item.id === id)
-  if (!window.confirm(`确认删除组件库「${library?.name || id}」？`)) return
-  try {
-    const res = await fetch(`${basePath}/api/component-libraries/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    })
-    const data = await readJsonResponse(res)
-    if (!res.ok) throw new Error(data.error || `删除失败：HTTP ${res.status}`)
-    if (selectedUploadComponentLibraryId === id) setUploadComponentLibraryId('')
-    await loadComponentLibraries()
-  } catch (error) {
-    alert(error instanceof Error ? error.message : '删除失败')
   }
 }
 
@@ -1533,13 +1045,6 @@ async function uploadFile(file, options = {}) {
     form.append('outputFormat', selectedUploadFormat)
     if (options.sessionCount && options.sessionCount > 1) {
       form.append('sessionCount', String(options.sessionCount))
-    }
-    if (
-      componentLibraryFeatureEnabled &&
-      selectedUploadFormat !== 'html' &&
-      selectedUploadComponentLibraryId
-    ) {
-      form.append('componentLibraryId', selectedUploadComponentLibraryId)
     }
 
     const res = await fetch(`${basePath}/api/upload`, { method: 'POST', body: form })
@@ -2005,10 +1510,9 @@ function renderSessionHeader() {
   const durationLabel = formatSessionDuration(currentSession)
   const scaleLabel = `${Number(currentSession.scale || 1)}x`
   const formatLabel = labelForOutputFormat(getSessionOutputFormat(currentSession))
-  const componentLibraryLabel = currentSession.componentLibrary?.name || currentSession.result?.componentLibrary?.name
   const statusLabel = labelForSessionStatus(currentSession)
   sessionTitle.textContent = currentSession.designName
-  sessionMeta.textContent = `${currentSession.id} · ${statusLabel} · ${scaleLabel} · ${formatLabel}${componentLibraryLabel ? ` · ${componentLibraryLabel}` : ''} · ${durationLabel} · ${progress.detail || labelForWorkflowNode(progress.currentNode || 'upload')}`
+  sessionMeta.textContent = `${currentSession.id} · ${statusLabel} · ${scaleLabel} · ${formatLabel} · ${durationLabel} · ${progress.detail || labelForWorkflowNode(progress.currentNode || 'upload')}`
   deleteSessionBtn.disabled = sessionDeleteDisabled
   chatStatus.textContent = sessionChatDisabled
     ? '聊天功能已关闭'
@@ -4353,5 +3857,4 @@ async function fetchLocalFileBlob(filePath, session = currentSession) {
 
 setUploadScale(selectedUploadScale)
 setUploadFormat(selectedUploadFormat)
-setUploadComponentLibraryId(selectedUploadComponentLibraryId)
 bootstrap()

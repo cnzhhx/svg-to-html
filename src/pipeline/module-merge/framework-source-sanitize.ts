@@ -18,7 +18,7 @@
  * `buildReactModuleEntry` (module-local verify Module.tsx) already do.
  *
  * Vue is a no-op here: `<script setup>` is host-generated and only ever
- * contains component-library imports + the `sourceData` constant (no Vue API
+ * contains the `sourceData` constant (no Vue API
  * calls), and module fragments are normalized to bare template bodies, so
  * there is no analogous runtime ReferenceError surface. Diagnostic warnings
  * for unusual Vue/React fragments live in `module-output-policy`.

@@ -26,7 +26,6 @@
 - **智能预处理** — 预提取文本（OCR）、布局框、颜色、图标、背景
 - **验证闭环** — 模块级 + 全页级像素 diff 反馈，自动修复
 - **自动回滚** — diff 退化时自动回滚到最优快照
-- **组件库支持** — 可采纳已有的 Vue/React 组件库
 - **Web UI + CLI** — 提供浏览器界面和完整 CLI 工具集
 
 ## 快速开始
@@ -136,9 +135,6 @@ pnpm run task:verify-module -- --module-dir <dir> --module-id <id> ...
 
 # 拆分模块
 pnpm run task:split-svg-modules -- <svg-path>
-
-# 编译组件库
-pnpm run task:compile-component-library -- --source-dir <path> --framework vue|react
 
 # 环境诊断
 pnpm run doctor

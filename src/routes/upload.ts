@@ -11,8 +11,6 @@ import {
   resolveOutputTarget,
 } from "../core/output-target.js";
 import type { OutputFormat } from "../core/output-target.js";
-import { getComponentLibrary } from "../core/component-library/index.js";
-import type { ComponentLibrarySessionRef } from "../core/component-library/types.js";
 import { getWorkspaceRoot } from "../core/paths.js";
 import { sessionStore } from "../session-store.js";
 
@@ -38,7 +36,6 @@ const parseUploadSessionCount = (value: unknown) => {
 };
 
 const UPLOAD_FIELD_KEYS = new Set([
-  "componentLibraryId",
   "outputFormat",
   "scale",
   "sessionCount",
@@ -128,36 +125,6 @@ router.post("/upload", async (req, res) => {
         await writeFile(svgPath, file.buffer);
       }
 
-      let componentLibraryId: string | undefined;
-      let componentLibrary: ComponentLibrarySessionRef | undefined;
-      const rawComponentLibraryId = String(
-        req.body?.componentLibraryId ?? "",
-      ).trim();
-      if (rawComponentLibraryId) {
-        if (outputFormat !== "vue" && outputFormat !== "react") {
-          await badRequest(
-            "componentLibraryId is only supported for vue/react output",
-          );
-          return;
-        }
-        try {
-          const library = await getComponentLibrary(rawComponentLibraryId);
-          if (library.descriptor.framework !== outputFormat) {
-            await badRequest(
-              `Component library framework (${library.descriptor.framework}) does not match outputFormat (${outputFormat})`,
-            );
-            return;
-          }
-          componentLibraryId = rawComponentLibraryId;
-          componentLibrary = library.sessionRef;
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          await badRequest(`Component library not available: ${message}`);
-          return;
-        }
-      }
-
       const sessions = [];
       for (let i = 0; i < sessionCount; i++) {
         const sessionId = sessionIds[i]!;
@@ -175,8 +142,6 @@ router.post("/upload", async (req, res) => {
           svgPath,
           scale,
           artifactDir,
-          componentLibrary,
-          componentLibraryId,
           sessionDir,
           outputFormat,
           outputTarget,
@@ -193,9 +158,6 @@ router.post("/upload", async (req, res) => {
             renderEntryPath: outputTarget.renderEntryPath,
             sourceEntryPath: outputTarget.sourceEntryPath,
             sourceStylePath: outputTarget.sourceStylePath,
-            ...(componentLibrary
-              ? { componentLibrary, componentLibraryId }
-              : {}),
           },
           logs: [],
           messages: [
@@ -204,11 +166,7 @@ router.post("/upload", async (req, res) => {
               role: "system",
               kind: "chat",
               text:
-                `已创建 session ${sessionId}，设计文件为 ${originalName}，SVG 渲染缩放为 ${scale}x，输出格式为 ${getOutputFormatLabel(outputFormat)}。` +
-                (componentLibrary
-                  ? ` 已选择组件库 ${componentLibrary.name}（${componentLibrary.id}）。`
-                  : "") +
-                " 上传完成后将直接进入结构解析、模块生成、合并与 verify。可读文本必须保留为真实 DOM，复杂无文本视觉元素可在模块内按需导出为局部资产。",
+                `已创建 session ${sessionId}，设计文件为 ${originalName}，SVG 渲染缩放为 ${scale}x，输出格式为 ${getOutputFormatLabel(outputFormat)}。上传完成后将直接进入结构解析、模块生成、合并与 verify。可读文本必须保留为真实 DOM，复杂无文本视觉元素可在模块内按需导出为局部资产。`,
               createdAt: Date.now(),
             },
           ],

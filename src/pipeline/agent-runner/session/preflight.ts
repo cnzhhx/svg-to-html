@@ -7,7 +7,7 @@ import { buildSemiAutoScaffoldArtifacts } from "../../../core/semi-auto-scaffold
 import { createAdaptiveModulePlan } from "../../../core/svg-vertical-modules/index.js";
 import { cropAllModuleSvgs } from "../../../core/svg-vertical-modules/module-svg-crop.js";
 import { sessionStore } from "../../../session-store.js";
-import { archiveSessionCheckpoint } from "../component/checkpoint.js";
+import { archiveSessionCheckpoint } from "../archive/checkpoint.js";
 import { throwIfRunAborted } from "./run-control.js";
 
 const prepareStructuredSessionInputs = async ({

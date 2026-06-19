@@ -28,16 +28,6 @@ export const SESSION_CHAT_DISABLED =
 export const VISION_TEXT_TIMEOUT_MS = Number(
   process.env['VISION_TEXT_TIMEOUT_MS'] ?? 300_000,
 )
-// 组件库 pnpm install 超时（毫秒）
-export const COMPONENT_LIBRARY_INSTALL_TIMEOUT_MS = Number(
-  process.env['COMPONENT_LIBRARY_INSTALL_TIMEOUT_MS'] ?? 300_000,
-)
-
-// ─── 组件库 ─────────────────────────────────────────────────
-// 组件库安装时使用的 npm registry
-export const COMPONENT_LIBRARY_INSTALL_REGISTRY =
-  process.env['COMPONENT_LIBRARY_INSTALL_REGISTRY'] ??
-  'https://registry.npmjs.org/'
 
 // ─── Session 消息格式化 ──────────────────────────────────────
 // agent 消息采样字符数

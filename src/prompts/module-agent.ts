@@ -1,6 +1,5 @@
 import path from "node:path";
 
-import type { ComponentLibraryAgentContext } from "../core/component-library/types.js";
 import type { ResolvedDesignTarget } from "../core/design-resolve.js";
 import type {
   SvgVerticalModule,
@@ -79,7 +78,6 @@ const buildModuleInputPathList = ({
 };
 
 function buildAgentUnitFollowupBasePrompt(input: {
-  componentLibraryContext?: ComponentLibraryAgentContext;
   module: SvgVerticalModule;
   design: ResolvedDesignTarget;
   modulePlan: SvgVerticalModuleReport;
@@ -87,7 +85,6 @@ function buildAgentUnitFollowupBasePrompt(input: {
   round: number;
 }): string {
   const {
-    componentLibraryContext,
     module,
     design,
     modulePlan,
@@ -113,16 +110,13 @@ function buildAgentUnitFollowupBasePrompt(input: {
   const sharedLayerNote = sharedLayers.length
     ? ` | 共享层: ${sharedLayers.map((l) => l.id).join(",")}`
     : "";
-  const componentLibraryNote = componentLibraryContext
-    ? ` | 组件库: ${componentLibraryContext.name} (${componentLibraryContext.framework})`
-    : "";
   const inputPathList = buildModuleInputPathList({ round, workingDir });
 
   return `
 ## 第 ${round} 轮模块继续修复（模块 ${module.id}）
 
 继续遵守之前的基础约束。模块上下文不变：
-- ${module.id} | ${module.kind}${moduleReasonLine} | ${module.region.width}x${module.region.height}${sharedLayerNote}${componentLibraryNote}
+- ${module.id} | ${module.kind}${moduleReasonLine} | ${module.region.width}x${module.region.height}${sharedLayerNote}
 - outputFormat: ${outputFormat}
 - Semantic JSON: ${moduleSemanticJsonPath}
 
@@ -140,14 +134,12 @@ ${inputPathList}
 }
 
 function buildAgentUnitPrompt(input: {
-  componentLibraryContext?: ComponentLibraryAgentContext;
   module: SvgVerticalModule;
   design: ResolvedDesignTarget;
   modulePlan: SvgVerticalModuleReport;
   workingDir: string;
 }): string {
   const {
-    componentLibraryContext,
     module,
     design,
     modulePlan,
@@ -210,25 +202,8 @@ function buildAgentUnitPrompt(input: {
       ? `- planner reason: ${module.reason.trim()}`
       : "";
 
-  const componentLibrarySection = componentLibraryContext
-    ? `
-## 组件库（${componentLibraryContext.name}）
-- 框架: ${componentLibraryContext.framework} | 摘要: ${componentLibraryContext.markdownPath} | 目录: ${componentLibraryContext.descriptorPath}
-- 只使用 ${componentLibraryContext.framework} 公开 API；import 包名必须从组件库目录 JSON 的 package.name 自行读取，禁止写 sourceDir 路径
-- **组件库模式采用视觉优先流程**：先打开 module-reference.png / composite.png 判断模块属于表格、列表、筛选栏、分页、按钮组、卡片、导航等哪类通用 UI，再决定是否用组件库；不要一开始通读或 dump 全量 module-semantic.json / nodes。
-- 判断组件可用性时，只读取 component-library-context.md、component-library-context.json 或组件目录里的少量候选 docs/examples；不要扫描整个组件库源码。
-- 先拆语义单元再匹配组件；adoption plan 和组件目录只作为候选提示，公开 API 能自然表达该语义单元时优先用组件库组件
-- 禁止自己写 import/export；source fragment 中直接使用组件库公开组件标签即可，宿主会根据组件库目录自动导入顶层组件
-- manifest 不需要写 usedComponents 或 componentDecision；除非你必须给组件设置非默认 tag/importName，否则不要写组件相关 manifest 字段
-- preview.fragment.html 仍是普通 HTML 预览片段；source fragment 可用组件库组件，保持语义/文本/资产与 preview 对齐
-`
-    : "";
-  const semanticJsonUsageLine = componentLibraryContext
-    ? "- module-semantic.json：结构化落地数据，磁盘文件，必须按需选择性读取；组件库模式下先读图判断 UI 语义，再读取 module/textBlocks/generatedAssets/summaryStats/guidance 等轻量字段。generatedAssets 可能为空；需要视觉资源时从 nodes 查 nodeId/inspectIndex/bbox/semantic 后按需导出。只有定位特殊资产、装饰层级或缺失坐标时才查少量 nodes"
-    : "- module-semantic.json：结构化主输入，磁盘文件，必须读";
-  const methodFirstStep = componentLibraryContext
-    ? "1. **组件库模式先看图，再读轻量 JSON**：先打开 module-reference.png / composite.png，判断模块的宏观 UI 类型和组件库适配可能性；随后只选择性读取 module-semantic.json 的 module/summaryStats/textBlocks/generatedAssets/svgSummary/guidance 等轻量字段，用 textBlocks 取文本与样式；generatedAssets 仅代表已按需导出的资产，启动时可以为空。需要图片资源时，从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断并导出。不要把全量 nodes 当第一输入逐项啃；只有在需要确认 z-index、特殊图形、装饰层级或导出局部 PNG 时，才按 bbox/id/inspectIndex 查询少量相关 nodes。截图只用于语义判断和整体视觉理解，坐标、文本、样式落地仍以结构化数据为准。"
-    : "1. 按路径快速读取 module-semantic.json；按需读取 module-reference.png / composite.png，只确认语义层级、关键视觉块、关键文本框和区域类型。generatedAssets 初始可能为空；需要图片资源时，从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断并导出。不要把所有节点坐标逐项重算成超长“几何账本”。结构化坐标（已导出图片资产用 generatedAssets[].box，其余按需参考 nodes[].bbox）是坐标主来源，截图只用于理解语义和验证。";
+  const semanticJsonUsageLine = "- module-semantic.json：结构化主输入，磁盘文件，必须读";
+  const methodFirstStep = "1. 按路径快速读取 module-semantic.json；按需读取 module-reference.png / composite.png，只确认语义层级、关键视觉块、关键文本框和区域类型。generatedAssets 初始可能为空；需要图片资源时，从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断并导出。不要把所有节点坐标逐项重算成超长“几何账本”。结构化坐标（已导出图片资产用 generatedAssets[].box，其余按需参考 nodes[].bbox）是坐标主来源，截图只用于理解语义和验证。";
   const dualFragmentSection = isFrameworkOutput
     ? `
 ## 双片段对齐（${outputFormat === "vue" ? "Vue" : "React"}）
@@ -245,7 +220,7 @@ function buildAgentUnitPrompt(input: {
 - id: ${module.id} | kind: ${module.kind}
 ${moduleReasonLine}
 - size: ${region.width}x${region.height} | scale: ${scaleLabel}
-${componentLibrarySection}${dualFragmentSection}
+${dualFragmentSection}
 ## 输入与数据契约
 本轮不会直接附加 module-semantic.json 内容、参考图片或资产图片。你只会拿到路径，必须按需自行读取：
 ${inputPathList}
