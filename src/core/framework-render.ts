@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
@@ -8,7 +7,6 @@ import { build } from "vite";
 
 import type { ResolvedSvgDesign } from './design-resolve.js';
 import type { SessionOutputTarget } from "./output-target.js";
-import type { ComponentLibraryBuildContext } from "./component-library/types.js";
 import { writeTextFile } from './file-io.js';
 
 const normalizeImportPath = (fromDir: string, targetPath: string) => {
@@ -102,63 +100,6 @@ const rewriteJsAssetRefs = ({
       return `new URL(${quote}${nextRef}${quote},import.meta.url)`;
     },
   );
-
-const escapeRegExp = (value: string) =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const resolvePackageInNodeModules = (packageName: string) => {
-  const candidate = path.resolve(
-    process.cwd(),
-    "node_modules",
-    packageName,
-    "package.json",
-  );
-  return existsSync(candidate) ? candidate : undefined;
-};
-
-const createComponentLibraryAliases = (
-  componentLibrary?: ComponentLibraryBuildContext,
-) => {
-  if (!componentLibrary?.sourceDir) return [];
-  const importPaths = [
-    componentLibrary.importPath,
-    componentLibrary.packageName,
-  ].filter((value): value is string => Boolean(value?.trim()));
-
-  // 如果 node_modules 中已经存在该预构建包，优先使用 node_modules 版本，
-  // 不创建源码 alias，避免把 package name 指向不可直接编译的源码目录。
-  const prebuiltPackage = importPaths.find((importPath) =>
-    resolvePackageInNodeModules(importPath),
-  );
-  if (prebuiltPackage) return [];
-
-  const exactSourceEntry = [
-    "index.ts",
-    "index.tsx",
-    "index.js",
-    "src/index.ts",
-    "src/index.tsx",
-    "src/index.js",
-  ]
-    .map((candidate) => path.join(componentLibrary.sourceDir, candidate))
-    .find((candidate) => existsSync(candidate));
-  const exactReplacement = exactSourceEntry?.replaceAll(path.sep, "/");
-  const sourceDir = componentLibrary.sourceDir.replaceAll(path.sep, "/");
-  return [...new Set(importPaths)].flatMap((importPath) => [
-    ...(exactReplacement
-      ? [
-          {
-            find: importPath,
-            replacement: exactReplacement,
-          },
-        ]
-      : []),
-    {
-      find: new RegExp(`^${escapeRegExp(importPath)}/(.+)$`),
-      replacement: `${sourceDir}/$1`,
-    },
-  ]);
-};
 
 const getAttrValue = (tag: string, attr: string) => {
   const match = tag.match(new RegExp(`\\b${attr}\\s*=\\s*["']([^"']+)["']`, "i"));
@@ -298,11 +239,9 @@ const createFrameworkIndexHtml = ({
 `;
 
 const buildFrameworkRenderEntry = async ({
-  componentLibrary,
   design,
   outputTarget,
 }: {
-  componentLibrary?: ComponentLibraryBuildContext;
   design: ResolvedSvgDesign;
   outputTarget: SessionOutputTarget;
 }) => {
@@ -365,7 +304,7 @@ const buildFrameworkRenderEntry = async ({
     logLevel: "warn",
     plugins: outputTarget.format === "vue" ? [vue()] : [react()],
     resolve: {
-      alias: createComponentLibraryAliases(componentLibrary),
+      alias: [],
     },
     root: entryDir,
   });
@@ -382,4 +321,4 @@ const buildFrameworkRenderEntry = async ({
   return outputTarget.renderEntryPath;
 };
 
-export { buildFrameworkRenderEntry, createComponentLibraryAliases };
+export { buildFrameworkRenderEntry };

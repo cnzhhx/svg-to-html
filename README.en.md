@@ -26,7 +26,6 @@ Below is a comparison between the original SVG render and the generated HTML ren
 - **Smart preprocessing** — Pre-extracts text (OCR), layout boxes, colors, icons, backgrounds
 - **Verification loop** — Module-level and full-page pixel diff feedback with auto-repair
 - **Auto rollback** — Automatically rolls back to the best verified snapshot when diff degrades
-- **Component library support** — Adopts existing Vue/React component libraries
 - **Web UI + CLI** — Browser interface for uploads and a full set of CLI tools
 
 ## Quick Start
@@ -136,9 +135,6 @@ pnpm run task:verify-module -- --module-dir <dir> --module-id <id> ...
 
 # Split design into modules
 pnpm run task:split-svg-modules -- <svg-path>
-
-# Compile component library
-pnpm run task:compile-component-library -- --source-dir <path> --framework vue|react
 
 # Environment check
 pnpm run doctor

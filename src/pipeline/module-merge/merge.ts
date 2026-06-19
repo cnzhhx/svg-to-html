@@ -42,11 +42,6 @@ import {
   createFrameworkSourceDataPlan,
   type FrameworkSourceDataPlan,
 } from "./source-data.js";
-import {
-  createFrameworkComponentImportPlan,
-  loadComponentLibraryForMerge,
-  type FrameworkComponentImportPlan,
-} from "./component-imports.js";
 import { formatPx, readRequiredText, resolveConfiguredPath } from "./utils.js";
 import { sanitizeFrameworkSourceEntry } from "./framework-source-sanitize.js";
 
@@ -275,12 +270,10 @@ body {
 `;
 
 const createVueSourceEntry = ({
-  componentImportPlan,
   css,
   sourceDataPlan,
   sections,
 }: {
-  componentImportPlan: FrameworkComponentImportPlan;
   css: string;
   sourceDataPlan: FrameworkSourceDataPlan;
   sections: string;
@@ -293,10 +286,6 @@ const createVueSourceEntry = ({
 
 <script setup lang="ts">
 ${[
-  ...componentImportPlan.styleImports.map(
-    (importPath) => `import ${JSON.stringify(importPath)};`,
-  ),
-  ...componentImportPlan.imports,
   sourceDataPlan.statement,
 ]
   .filter((line): line is string => Boolean(line))
@@ -309,21 +298,15 @@ ${css}
 `;
 
 const createReactSourceEntry = ({
-  componentImportPlan,
   cssFileName,
   sourceDataPlan,
   sections,
 }: {
-  componentImportPlan: FrameworkComponentImportPlan;
   cssFileName: string;
   sourceDataPlan: FrameworkSourceDataPlan;
   sections: string;
 }) => `\
 ${[
-  ...componentImportPlan.styleImports.map(
-    (importPath) => `import ${JSON.stringify(importPath)};`,
-  ),
-  ...componentImportPlan.imports,
   `import "./${cssFileName}";`,
 ]
   .filter((line): line is string => Boolean(line))
@@ -429,16 +412,6 @@ const mergeSourceEntry = async ({
   const sourceDesign = resolveSourceDesign({ design, modulePlan });
   const sourceModules = rewriteModulesForSourceEntry({ modules, outputTarget });
   const sourceDataPlan = createFrameworkSourceDataPlan(sourceModules);
-  const componentLibrary = await loadComponentLibraryForMerge({
-    modulePlan,
-    outputFormat: outputTarget.format,
-  });
-  const componentImportPlan = await createFrameworkComponentImportPlan({
-    componentLibrary,
-    modules,
-    outputFormat: outputTarget.format,
-    sourceEntryPath: outputTarget.sourceEntryPath,
-  });
   const sourceCss = [
     createFrameworkBaseCss({
       design: sourceDesign,
@@ -469,7 +442,6 @@ const mergeSourceEntry = async ({
     await writeTextFile(
       outputTarget.sourceEntryPath,
       createVueSourceEntry({
-        componentImportPlan,
         css: sourceCss,
         sourceDataPlan,
         sections: sourceSections,
@@ -485,7 +457,6 @@ const mergeSourceEntry = async ({
     // the classic JSX runtime (the host import block above omits it).
     const reactSource = sanitizeFrameworkSourceEntry(
       createReactSourceEntry({
-        componentImportPlan,
         cssFileName: path.basename(outputTarget.sourceStylePath),
         sourceDataPlan,
         sections: sourceSections,
@@ -497,7 +468,6 @@ const mergeSourceEntry = async ({
   }
 
   await buildFrameworkRenderEntry({
-    componentLibrary: componentImportPlan.buildContext,
     design: sourceDesign,
     outputTarget,
   });

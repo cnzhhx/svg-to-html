@@ -2,7 +2,7 @@ import { truncate } from '../../../core/string-utils.js'
 import { ARCHIVE_COMMAND_OUTPUT_MAX_CHARS } from '../../../config/index.js'
 import { sessionStore } from '../../../session-store.js'
 import type { WorkflowArchiveMaterial } from '../../workflow-archive.js'
-import { archiveSessionCheckpoint } from '../component/checkpoint.js'
+import { archiveSessionCheckpoint } from '../archive/checkpoint.js'
 
 import type {
   AgentCommandKind,
