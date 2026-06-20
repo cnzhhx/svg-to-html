@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -229,7 +229,8 @@ const pickImportantAttrs = (attrs: Record<string, string>) =>
     Object.entries(attrs).filter(([name]) => IMPORTANT_ATTRS.has(name)),
   );
 
-const nodePathToSelector = (nodePath: string) => {
+export const nodePathToSelector = (nodePath: string | undefined) => {
+  if (!nodePath) return undefined;
   const trimmed = nodePath.trim();
   if (!trimmed || trimmed === "svg:nth-of-type(1)") return undefined;
   return trimmed.replace(/^svg:nth-of-type\(1\)\s*>\s*/, "");
@@ -907,15 +908,19 @@ const stripBase64Attrs = (attrs: ModuleSemanticNodeAttrs): ModuleSemanticNodeAtt
   return next;
 };
 
+// Compact the semantic document for agent consumption. Based on trace analysis
+// across 8 modules (2 sessions), the fields removed here had 0 reasoning
+// references or were 100% redundant with kept fields. Diagnostic data is
+// preserved in module-semantic.debug.json (written before this runs).
+// KEPT despite low refs: visibleBox (35 refs, used for clip/mask reasoning),
+// selector (shorter equivalent of nodePath), inspectIndex (documented z-index),
+// visualEffects (documented, 3 refs).
 const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
   document: T,
 ): T => {
   const isVisibleNode = (node: ModuleSemanticNode) =>
     node.visible === true ||
     (node.visible !== false && hasMeaningfulBox(node.bbox));
-  const visibleNodeIds = new Set(
-    document.nodes.filter(isVisibleNode).map((n) => n.id),
-  );
 
   const compactedNodes = document.nodes
     .filter(isVisibleNode)
@@ -923,15 +928,8 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
       id: node.id,
       tag: node.tag,
       attrs: stripBase64Attrs(node.attrs),
-      bbox: node.bbox,
-      childIds: node.childIds.filter((id) => visibleNodeIds.has(id)),
-      depth: node.depth,
+      ...(node.bbox ? { bbox: node.bbox } : {}),
       inspectIndex: node.inspectIndex,
-      nodePath: node.nodePath,
-      parentId:
-        node.parentId && visibleNodeIds.has(node.parentId)
-          ? node.parentId
-          : null,
       ...(node.selector ? { selector: node.selector } : {}),
       semantic: {
         exportDecision: node.semantic.exportDecision,
@@ -946,10 +944,13 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
         node.semantic.lineCount >= 1
           ? { lineCount: Math.round(node.semantic.lineCount) }
           : {}),
-        ...(node.semantic.textKind ? { textKind: node.semantic.textKind } : {}),
-        ...(node.semantic.contentType ? { contentType: node.semantic.contentType } : {}),
+        ...(node.semantic.textKind
+          ? { textKind: node.semantic.textKind }
+          : {}),
+        ...(node.semantic.contentType
+          ? { contentType: node.semantic.contentType }
+          : {}),
       },
-      siblingIndex: node.siblingIndex,
       visible: true,
       ...(node.visibleBox ? { visibleBox: node.visibleBox } : {}),
       ...(node.visualEffects?.length
@@ -962,31 +963,53 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
     nodes: compactedNodes,
   } as Record<string, unknown>;
 
+  // Diagnostic-only top-level fields (kept in module-semantic.debug.json).
+  // svgNodeAssets/textResources/textAppearanceHints had 0 useful reasoning
+  // refs; svgNodeAssets actively distracted the agent (2 refs both "looked
+  // and ignored"); textAppearanceHints duplicated styleInference and confused
+  // the agent about color source. guidance/inputContract duplicated the prompt
+  // and inputContract.focusOrder misdirected the agent to redundant arrays.
   delete result.analysisSheets;
   delete result.runtime;
   delete result.textContentBlocks;
   delete result.visualTextElements;
   delete result.textGeometryDisagreements;
   delete result.svgTextNodes;
+  delete result.svgNodeAssets;
+  delete result.textResources;
+  delete result.textAppearanceHints;
+  delete result.guidance;
+  delete result.inputContract;
+  delete result.summaryStats;
+  delete result.graphicAssets;
+  delete result.summaryVersion;
 
-  if (isRecord(result.svgNodeAssets)) {
-    const svgNodeAssets = result.svgNodeAssets as Record<string, unknown>;
-    const elements = Array.isArray(svgNodeAssets.elements)
-      ? svgNodeAssets.elements
-      : undefined;
-    const skipIndices = Array.isArray(svgNodeAssets.skipIndices)
-      ? svgNodeAssets.skipIndices
-      : undefined;
-    if (elements || skipIndices) {
-      result.svgNodeAssets = {
-        ...(elements ? { elements } : {}),
-        ...(skipIndices ? { skipIndices } : {}),
-      };
-    } else {
-      delete result.svgNodeAssets;
-    }
-  } else {
-    delete result.svgNodeAssets;
+  // Compact textBlocks: keep only {id, text, color?, lineCount?,
+  // layoutTargetRegion, styleInference}. Verified across 8 modules / 48 blocks:
+  // region==textRegion, renderedTextRegion==layoutTargetRegion,
+  // sourceBlockText==text, sourceBlockId==id (all 100% identical, 0 refs).
+  if (Array.isArray(result.textBlocks)) {
+    result.textBlocks = (result.textBlocks as ModuleSemanticTextBlock[]).map(
+      (block) => {
+        const compacted: Record<string, unknown> = {
+          id: block.id,
+          text: block.text,
+          ...(block.styleInference
+            ? { styleInference: block.styleInference }
+            : {}),
+        };
+        // layoutTargetRegion is the authoritative DOM container box
+        // (documented in prompt + layoutTargetRule). Falls back to region
+        // only if layoutTargetRegion is missing.
+        const layoutBox = block.layoutTargetRegion ?? block.region;
+        if (layoutBox) compacted.layoutTargetRegion = layoutBox;
+        if (typeof block.lineCount === "number" && block.lineCount >= 1) {
+          compacted.lineCount = Math.round(block.lineCount);
+        }
+        if (block.color) compacted.color = block.color;
+        return compacted;
+      },
+    );
   }
 
   if (isRecord(result.svgSummary)) {
@@ -1015,6 +1038,58 @@ const writeModuleSemanticDocument = async ({
 
 const moduleSemanticLocks = new Map<string, Promise<void>>();
 
+// Cross-process lock: parallel `pnpm exec tsx export-svg-node-asset.ts`
+// invocations each run in their own Node process, so the in-process
+// `moduleSemanticLocks` Map cannot serialize their read-modify-write of
+// module-semantic.json. A lock file with O_EXCL atomic create + stale
+// detection makes the read-modify-write safe across processes. The slow
+// browser render/capture happens before `updateModuleSemanticDocument` is
+// called, so parallel exports still run their browser work concurrently;
+// only the quick JSON write is serialized.
+const MODULE_SEMANTIC_LOCK_STALE_MS = 30_000;
+const MODULE_SEMANTIC_LOCK_TIMEOUT_MS = 10_000;
+const MODULE_SEMANTIC_LOCK_RETRY_MS = 50;
+
+const sleepLock = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const acquireModuleSemanticLock = async (lockPath: string): Promise<void> => {
+  const startedAt = Date.now();
+  const token = `${process.pid}\n${startedAt}\n`;
+  while (true) {
+    try {
+      const handle = await open(lockPath, "wx");
+      await handle.writeFile(token);
+      await handle.close();
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") throw error;
+      try {
+        const st = await stat(lockPath);
+        if (Date.now() - st.mtimeMs > MODULE_SEMANTIC_LOCK_STALE_MS) {
+          await unlink(lockPath).catch(() => {});
+          continue;
+        }
+      } catch {
+        // lock file disappeared between open and stat — retry
+      }
+      if (Date.now() - startedAt > MODULE_SEMANTIC_LOCK_TIMEOUT_MS) {
+        throw new Error(
+          `Timed out acquiring module-semantic lock: ${lockPath}`,
+        );
+      }
+      await sleepLock(MODULE_SEMANTIC_LOCK_RETRY_MS);
+    }
+  }
+};
+
+const releaseModuleSemanticLock = async (lockPath: string): Promise<void> => {
+  await unlink(lockPath).catch(() => {});
+};
+
 const updateModuleSemanticDocument = async ({
   moduleDir,
   updater,
@@ -1029,16 +1104,25 @@ const updateModuleSemanticDocument = async ({
     release = resolve;
   });
   moduleSemanticLocks.set(normalizedDir, next);
+  const lockPath = path.join(normalizedDir, "module-semantic.json.lock");
 
   try {
     await prev;
-    const document = await readModuleSemanticDocument(normalizedDir);
-    if (!document) {
-      throw new Error(`module-semantic.json not found in ${normalizedDir}`);
+    await acquireModuleSemanticLock(lockPath);
+    try {
+      const document = await readModuleSemanticDocument(normalizedDir);
+      if (!document) {
+        throw new Error(`module-semantic.json not found in ${normalizedDir}`);
+      }
+      const nextDocument = updater(document);
+      await writeModuleSemanticDocument({
+        document: nextDocument,
+        moduleDir: normalizedDir,
+      });
+      return nextDocument;
+    } finally {
+      await releaseModuleSemanticLock(lockPath);
     }
-    const nextDocument = updater(document);
-    await writeModuleSemanticDocument({ document: nextDocument, moduleDir: normalizedDir });
-    return nextDocument;
   } finally {
     release!();
     if (moduleSemanticLocks.get(normalizedDir) === next) {

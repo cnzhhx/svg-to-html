@@ -866,41 +866,47 @@ const writeModuleSemanticPayload = async ({
       .filter((hint) => typeof hint.id === "string" && hint.id.length > 0)
       .map((hint) => [hint.id, hint]),
   );
-  const textSummary = textBlocks.map((block) => ({
-    bboxIncludesIcon: block.bboxIncludesIcon,
-    confidence: block.confidence,
-    color: typeof block.color === "string" ? block.color : undefined,
-    id: block.id,
-    kind: block.kind,
-    layoutTargetRegion: pickLayoutTargetRegion({
+  const textSummary = textBlocks.map((block) => {
+    const lineRegions = compactBoxList(block.lineRegions);
+    const lines = compactTextLines(block.lines);
+    return {
+      bboxIncludesIcon: block.bboxIncludesIcon,
+      confidence: block.confidence,
+      color: typeof block.color === "string" ? block.color : undefined,
+      id: block.id,
+      kind: block.kind,
+      layoutTargetRegion: pickLayoutTargetRegion({
+        region: readNumericBox(block.region),
+        renderedTextRegion: readNumericBox(block.renderedTextRegion),
+        textRegion: readNumericBox(block.textRegion),
+      }),
+      layoutTargetSource: pickLayoutTargetSource({
+        region: readNumericBox(block.region),
+        renderedTextRegion: readNumericBox(block.renderedTextRegion),
+        textRegion: readNumericBox(block.textRegion),
+      }),
+      lineCount:
+        typeof block.lineCount === "number" && Number.isFinite(block.lineCount)
+          ? Math.round(block.lineCount)
+          : countExplicitTextLines(block.text, block.sourceBlockText),
+      ...(lineRegions.length > 0 ? { lineRegions } : {}),
+      ...(lines.length > 0 ? { lines } : {}),
       region: readNumericBox(block.region),
       renderedTextRegion: readNumericBox(block.renderedTextRegion),
+      source: block.source,
+      sourceBlockId:
+        typeof block.sourceBlockId === "string"
+          ? block.sourceBlockId
+          : undefined,
+      sourceBlockText: block.sourceBlockText,
+      styleInference:
+        typeof block.id === "string"
+          ? textStyleSummaryById.get(block.id)?.declarations
+          : undefined,
+      text: block.text,
       textRegion: readNumericBox(block.textRegion),
-    }),
-    layoutTargetSource: pickLayoutTargetSource({
-      region: readNumericBox(block.region),
-      renderedTextRegion: readNumericBox(block.renderedTextRegion),
-      textRegion: readNumericBox(block.textRegion),
-    }),
-    lineCount:
-      typeof block.lineCount === "number" && Number.isFinite(block.lineCount)
-        ? Math.round(block.lineCount)
-        : countExplicitTextLines(block.text, block.sourceBlockText),
-    lineRegions: compactBoxList(block.lineRegions),
-    lines: compactTextLines(block.lines),
-    region: readNumericBox(block.region),
-    renderedTextRegion: readNumericBox(block.renderedTextRegion),
-    source: block.source,
-    sourceBlockId:
-      typeof block.sourceBlockId === "string" ? block.sourceBlockId : undefined,
-    sourceBlockText: block.sourceBlockText,
-    styleInference:
-      typeof block.id === "string"
-        ? textStyleSummaryById.get(block.id)?.declarations
-        : undefined,
-    text: block.text,
-    textRegion: readNumericBox(block.textRegion),
-  }));
+    };
+  });
   const textGeometryDisagreements = buildTextGeometryDisagreements({
     textContentBlocks,
     textSummary,
@@ -1024,20 +1030,6 @@ const writeModuleSemanticPayload = async ({
       const geometryMatches = overlapRatioOrZero(blockBox, element.bbox) >= 0.28;
       return idMatches || (textMatches && geometryMatches);
     });
-    const matchedSvgDomTextNodes = svgDomTextNodes
-      .filter((node) => {
-        const textMatches =
-          normalizeComparableText(node.text) !== "" &&
-          (normalizeComparableText(node.text) ===
-            normalizeComparableText(block.text) ||
-            normalizeComparableText(node.text) ===
-              normalizeComparableText(block.sourceBlockText ?? ""));
-        const geometryMatches =
-          overlapRatioOrZero(blockBox, node.pixelBox) >= 0.28 ||
-          overlapRatioOrZero(blockBox, node.viewBoxBox) >= 0.28;
-        return textMatches || (geometryMatches && textMatches);
-      })
-      .map((node) => node.nodePath);
     const hasAtomicVisualTextAsset = matchedSvgElements.some(
       (element) =>
         element.classification === "atomic-visual-text" &&
@@ -1050,17 +1042,12 @@ const writeModuleSemanticPayload = async ({
       matchedContentBox: matchedContent?.bbox,
       matchedContentId:
         typeof matchedContent?.id === "string" ? matchedContent.id : undefined,
-      matchedSvgDomTextNodePaths: matchedSvgDomTextNodes,
       matchedSvgElementNodeIds: matchedSvgElements
         .map((element) => element.nodeId)
         .filter((value): value is string => typeof value === "string"),
       matchedSvgElementNodePaths: matchedSvgElements
         .map((element) => element.nodePath)
         .filter((value): value is string => typeof value === "string"),
-      matchedSvgElementIndices: matchedSvgElements.map((element) => element.index),
-      matchedSvgElementKinds: matchedSvgElements.map(
-        (element) => `${element.index}:${element.classification}`,
-      ),
       recommendedHandling: hasAtomicVisualTextAsset
         ? "single-node-visual-text-asset"
         : "dom-text",
@@ -1082,10 +1069,7 @@ const writeModuleSemanticPayload = async ({
     return {
       ...block,
       sourceNodeIds: textResource?.matchedSvgElementNodeIds ?? [],
-      sourceNodePaths: [
-        ...(textResource?.matchedSvgElementNodePaths ?? []),
-        ...(textResource?.matchedSvgDomTextNodePaths ?? []),
-      ],
+      sourceNodePaths: textResource?.matchedSvgElementNodePaths ?? [],
       styleInference:
         typeof block.id === "string"
           ? textStyleSummaryById.get(block.id)?.declarations
@@ -1204,7 +1188,22 @@ const writeModuleSemanticPayload = async ({
     ...(elementAnalysis
       ? {
           svgNodeAssets: {
-            elements: elementAnalysis.elements,
+            elements: elementAnalysis.elements.map((element) => ({
+              bbox: element.bbox,
+              classification: element.classification,
+              containsText: element.containsText,
+              dLength: element.dLength,
+              exportDecision: element.exportDecision,
+              fill: element.fill,
+              hasImage: element.hasImage,
+              index: element.index,
+              matchedTextBlockIds: element.matchedTextBlockIds,
+              matchedTextBlocks: element.matchedTextBlocks,
+              nodeId: element.nodeId,
+              nodePath: element.nodePath,
+              semanticText: element.semanticText,
+              tag: element.tag,
+            })),
             skipIndices: elementAnalysis.skipIndices,
           },
         }
