@@ -252,7 +252,7 @@ module-semantic.json 关键字段（按此优先级取用）：
 
 ## 硬约束（凌驾于一切视觉判断；与截图冲突时以结构化数据为准）
 1. **文本来源唯一性**：只有 \`module-semantic.json\` 的 \`textBlocks\` 中列出的文案才需要还原为真实 DOM 文本。\`textBlocks\` 未覆盖的内容，agent 不得自行从截图、参考图或已导出资产中识别为 DOM 文本，应以预处理结果为准。禁止把 \`textBlocks\` 中的可读文本烤进图片；禁止用 transform/scale/matrix/skew 校准文字几何。
-2. **文本归属以预处理为终审，禁止回看参考图二次确认**：某个文字是否进 textBlocks、某个节点是否含可读文本，预处理已经做了最终判定，截图/参考图上"看起来像字"或"看起来像装饰"都不构成推翻理由。节点 \`semantic.textHandling === "ignore"\` 或 \`semantic.exportDecision === "export"\`（即已被导出为资产）的内容，一律按资产/装饰处理，**不得**为了"确认它到底是不是字"去读取或反复对照 module-reference.png / composite.png / shared-underlay.png。textBlocks 未覆盖、但参考图上明显的文字（标题、副标题、按钮文字等），必须信任预处理结论：要么已作为资产的一部分渲染，要么不还原为 DOM 文本，二者皆可，不要纠结、不要推理其归属。
+2. **文本归属以预处理为终审，禁止回看参考图二次确认**：某个文字是否进 textBlocks、某个节点是否含可读文本，预处理已经做了最终判定，截图/参考图上"看起来像字"或"看起来像装饰"都不构成推翻理由。节点 \`semantic.textHandling === "ignore"\` 或 \`semantic.exportDecision === "export"\`（即已被导出为资产）的内容，一律按资产/装饰处理，**不得**为了"确认它到底是不是字"去读取或反复对照 module-reference.png / composite.png / shared-underlay.png。textBlocks 未覆盖的内容按约束 1 处理，不要纠结其归属、不要反复推理。
 3. 禁止引用/内联/裁剪原始完整 SVG，禁止 data:image/* 或 base64，禁止写原始 inline <svg>；禁止把整张卡片/整个导航/整块区域拍成一张大图替代应有结构。
 4. textBlocks[].styleInference 的文本样式是预处理像素级算好的硬约束，一经使用永不修改（即便 verify diff 有偏差，也只能靠改位置/父容器解决，不许动 font-size/weight/color/line-height/letter-spacing/font-family）。仅当某样式缺失时才按视觉推断；推断颜色须取文字本身颜色，不得从邻近背景/装饰借色。
 5. **字体渲染差异是不可避免且必须接受的**：原始 SVG 使用文字路径（path data）渲染，而 HTML 使用系统字体（Noto Sans CJK SC 等），两者在抗锯齿、字重、hinting 上必然存在差异。禁止通过修改 font-size/weight/line-height/font-family 来"消除"这种差异。文本位置的微调（left/top 偏移 1-3px）可以容忍；若差异较大，优先检查文本外盒（layoutTargetRegion）是否被父容器正确约束，而不是改字体属性。
@@ -273,11 +273,9 @@ ${methodFirstStep}
 6. **选实现手段（默认图片优先，能用 PNG 就不手绘）**：非文本视觉样式默认优先导出 PNG；只有纯色背景、单层边框、简单圆角、简单横/竖条、状态圆点、分隔线这类简单到不能再简单的元素才用 CSS。渐变、纹理、阴影组合、clip-path 异形、mask、图标、多 path 组合、徽章、装饰壳、图片内容等都优先导出 PNG。一个视觉由多个节点组成时（icon 多 path、按钮背景+边框+高光）用 exportSvgNode 合并导出为一张。
 7. **browser-eval 是首选调试工具，verify 是最终验收工具**。三件套产物可运行后，**立即先用 browser-eval** 做局部自检，优先把内容缺失、错图、明显重叠、明显布局/裁切错误消灭在 verify 之前；在觉得自己"已经做完了"、所有关键元素位置都正确对齐之后，再运行 verify。不要把 verify 当调试工具频繁运行——每轮 verify 成本高，应该只有在 browser-eval 显示布局基本对齐后再进 verify 做最终 diff 检查。
 8. 不确定真实 DOM 位置、尺寸、gap、行列数、裁切或 computed style 时，立即用 browser-eval 查询浏览器实际结果；如果你准备在脑中推算某个具体坐标/尺寸超过 3 行，必须改用 browser-eval。查询后只做局部、批量修 CSS/HTML，不要推倒重来；修改后如果觉得问题已解决，再跑 verify。browser-eval 通过 browser_eval MCP tool 调用，把 JS 直接传入 script 参数，最后 return JSON，禁止再写 browser-eval.js 文件。
-9. 骨架可运行后 → browser-eval 查关键容器/重复结构/文本/图片实际 rect 和 computed style → 批量修明显问题 → 确认"做完了" → verify → **读取 render.png + svg.png → 写区域级差异清单** → 按区域批量修复 → 再 verify：
+9. 骨架可运行后 → browser-eval 查关键容器/重复结构/文本/图片实际 rect 和 computed style → 批量修明显问题 → 确认"做完了" → verify → 按下方"校验与停损"规则决定是否读图对比与修复 → 再 verify：
    - group bbox 明显被 mask/clip/溢出图/横向裁切/透明区放大时，改用稳定子节点（主图框、标题、标签、图标、背景壳）反推父盒，不要直接拿被放大的 group bbox 当父盒。
    - verify 图与结构化数据冲突时，先用 browser-eval 核对真实 DOM，再解释冲突来源（坐标系/scale/crop/mask/资源裁切/父盒选错），改父容器/网格参数，不得直接采信截图估值。
-   - **低 diff 停损**：若 verify 的 diffRatio 已低于 0.05（5%），只继续处理明确、肉眼显著、且能通过结构化数据或 browser-eval 定位的问题；对轻微文本偏移、抗锯齿、字重/字体渲染、1-3px 抖动、小面积颜色差这类小问题，最多做一次批量修复并复验。复验没有改善（diffRatio 未下降至少 0.001）时，立即停止纠结该点，保留当前最佳版本并结束/转向其它明确问题。
-   - **不要读取 diff.png**：diff.png 只是像素差异热力图，对定位具体问题帮助很小，且非常消耗 token。只读 \`render.png\`（当前渲染）和 \`svg.png\`（原设计参考）做对比。
 
 ## 输出目录 ${workingDir}（outputFormat: ${outputFormat}）
 - ${previewFragmentHtmlPath}（HTML 片段，不含 html/head/body）
@@ -293,6 +291,7 @@ ${sourceDataContractSection}
       ? `\n  - 这是**框架级 verify**：会用真实 Vite 构建你的 source fragment + source-data + module.css，渲染并和 module SVG 做像素 diff。所以你必须保证 source fragment 能编译、source-data 引用名正确（sourceData["${module.id}"].xxx），否则页面会白屏、diff 极高。`
       : ""
   }
+  - verify 输出固定落在 \`${workingDir}/verify/round-<N>/\`（N 从 0 开始）：\`render.png\`（当前 HTML 渲染）、\`svg.png\`（原 SVG 参考）、\`diff.png\`（不要读）。直接按此路径读取，**禁止用 find/ls -R 搜索 verify 输出**。
 - 浏览器自测（查真实 DOM rect/style/数量；用于布局定位，不替代最终 verify）:
   直接调用 browser_eval tool，传入 moduleDir 和 script 参数。
   script 是在页面上下文执行的 JS，最后 return JSON。
@@ -300,6 +299,15 @@ ${sourceDataContractSection}
   页面自动加载最新的 HTML/CSS，不需要手动 reload。
 - 导出 SVG 节点为 PNG: \`pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --node-id <节点id> --output assets/<name>.png --register-semantic --padding 0 --scale ${scaleLabel}\`
   - 合并多个节点：追加多个 \`--node-id n0001 --node-id n0002\`；导出后直接在 HTML 引用 \`./assets/<name>.png\`
+  - **并行导出多个独立资产**：需要导出多张**互相独立**的 PNG 时（例如多个不相关图标），用 shell \`&\` + \`wait\` 并行执行多个命令，可把总等待时间从 N×单次降到约 1×单次。module-semantic.json 的写入已加跨进程锁，\`--node-id\` 并行导出安全。
+    示例（3 个独立图标并行）：
+    \`\`\`bash
+    pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --node-id n0001 --output assets/icon-a.png --register-semantic --padding 0 --scale ${scaleLabel} &
+    pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --node-id n0002 --output assets/icon-b.png --register-semantic --padding 0 --scale ${scaleLabel} &
+    pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --node-id n0003 --output assets/icon-c.png --register-semantic --padding 0 --scale ${scaleLabel} &
+    wait
+    \`\`\`
+    每条命令的 stdout 会输出 JSON（含 \`clip\`/\`renderedBox\`/\`registeredAsset\`），需要定位信息时从对应命令的输出解析。**禁止并行**：写同一输出文件、verify 命令本身、以及会冲突的文件改写。并行的目的只是省等待时间，不要为了并行而并行 1-2 个资产。
 - Semantic JSON: ${moduleSemanticJsonPath}
 
 ## 校验与停损
@@ -308,7 +316,7 @@ ${sourceDataContractSection}
 - 修复优先级用可观察现象判断，不要给问题贴等级标签：先批量修内容缺失、结构层级错、错误资产、明显重叠、明显布局/裁切错误；轻微文本位置、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差不要反复追。不要每个小改动都 verify。
 - **宿主自动回滚机制**：每次 verify 后，如果 diffRatio 比当前最佳值反弹超过 0.5 个百分点，宿主会自动回滚到上一次最佳版本的文件状态，并终止本轮 agent。你不需要手动恢复文件。因此：如果一轮修改后 verify 结果变差，不要慌张，宿主已帮你回滚；你只需要在下一轮重新分析原因、换一种修复策略即可。
 - **browser-eval 阶段无自动回滚**：browser-eval 只返回坐标信息，不产生 diffRatio，因此不会触发自动回滚。如果你在 browser-eval 后发现关键元素位置偏差很大（如 >5px），可以自行撤销最近的修改（重新写入文件），或者继续调整后再 verify——verify 阶段的自动回滚会保护你。
-- Verify 后必须读图对比：每次 verify 完成后，读取同目录下的 \`render.png\`（当前 HTML 渲染）和 \`svg.png\`（原 SVG 参考），列出区域级差异清单（偏移/缺失/错位/颜色差异），再一次性批量修复。**不要读取 diff.png**。
+- Verify 后读图对比（按 diffRatio 决定，避免低 diff 时的冗余人工对比）：首轮 verify \`diffRatio < 0.05\` → 渲染与参考图差异已在允许范围内，直接结束本轮（优先于下方"低 diff 小问题停损"，首轮即通过时不再修小问题），**不读 render.png / svg.png / diff.png**。\`diffRatio >= 0.05\` 时，读取同目录下的 \`render.png\`（当前 HTML 渲染）和 \`svg.png\`（原 SVG 参考），列出区域级差异清单（偏移/缺失/错位/颜色差异），再一次性批量修复。**任何情况下都不要读取 diff.png**（像素差异热力图，对定位问题帮助小且极耗 token）。
 - Verify 螺旋停损：每轮 verify 后先列出区域级差异清单，再一次性批量修复；禁止一次只改一个元素的 1-3px left/top。若同一模块/同一区域相邻三次 verify 的 diffRatio 改善都 < 0.1 个百分点（绝对值降幅 < 0.001），或出现明显反弹，保留当前最佳版本停止，转去别处或结束。
 - 低 diff 小问题停损：当 diffRatio < 0.05 且剩余问题只是轻微文本偏移、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差时，只允许围绕同一问题做一次修复和一次复验；若复验 diffRatio 没有下降至少 0.001，禁止继续实验、查源码、查字体、拆字符或反复改 DOM 结构，直接保留当前最佳版本并结束。
 

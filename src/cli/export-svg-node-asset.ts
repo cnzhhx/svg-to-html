@@ -7,6 +7,7 @@ import { PNG_RASTER_SCALE_MULTIPLIER } from "../config/index.js";
 import { capturePage, evaluatePage, launchEdge } from "../core/cdp.js";
 import { readSvgDimensions } from "../core/svg-parse.js";
 import {
+  nodePathToSelector,
   readModuleSemanticDocument,
   updateModuleSemanticDocument,
   type ModuleSemanticGeneratedAsset,
@@ -291,9 +292,12 @@ const buildNodeIndexMaps = (nodes: ModuleSemanticNode[]) => ({
   nodeById: new Map(nodes.map((node) => [node.id, node] as const)),
   nodeByIndex: new Map(nodes.map((node) => [node.inspectIndex, node] as const)),
   nodeBySelector: new Map(
-    nodes.flatMap((node) =>
-      node.selector ? [[node.selector, node] as const] : [],
-    ),
+    nodes.flatMap((node) => {
+      // Prefer the compacted `selector` field; fall back to deriving from
+      // nodePath for documents written before compact stripped it.
+      const selector = node.selector ?? nodePathToSelector(node.nodePath);
+      return selector ? [[selector, node] as const] : [];
+    }),
   ),
 });
 
@@ -320,7 +324,7 @@ const subtreeContainsText = ({
     const current = currentId === node.id ? node : nodeById.get(currentId);
     if (!current) continue;
     if (nodeHasTextEvidence(current)) return true;
-    queuedIds.push(...current.childIds);
+    queuedIds.push(...(current.childIds ?? []));
   }
   return false;
 };
@@ -901,7 +905,12 @@ const registerGeneratedAsset = async ({
     args.textTreatment ?? GENERATED_ASSET_NO_ORDINARY_TEXT_TREATMENT;
   const assetBaseName = path.basename(outputRef, path.extname(outputRef));
   const sourceNodeIds = selectedNodes.map((node) => node.id);
-  const sourceNodePaths = selectedNodes.map((node) => node.nodePath);
+  // nodePath is stripped by compactDocumentForAgent; fall back to selector
+  // (equivalent after the svg:nth-of-type(1) prefix is stripped) so the
+  // generatedAsset still records a usable path for re-export/debugging.
+  const sourceNodePaths = selectedNodes.map(
+    (node) => node.nodePath ?? node.selector,
+  );
 
   let registeredAsset: ModuleSemanticGeneratedAsset | undefined;
   await updateModuleSemanticDocument({
