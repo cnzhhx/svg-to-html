@@ -2,7 +2,7 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 
 import { AGENT_REASONING_EFFORTS } from "../../../config/agent-reasoning.js";
-import { MODULE_DIFF_RATIO_THRESHOLD } from "../../../config/index.js";
+import { MODULE_DIFF_RATIO_THRESHOLD, SEMANTIC_VISION_CONCURRENCY } from "../../../config/index.js";
 import { normalizeOutputFormat } from "../../../core/output-target.js";
 import {
   createModuleTextBlocks,
@@ -23,7 +23,7 @@ import {
   runAgentUnit,
 } from "./agent-unit.js";
 import { buildUserModuleRevisionPrompt } from "../../../prompts/module-agent.js";
-import { runWithLimit } from "../queue/concurrency.js";
+import { runWithLimit, Semaphore } from "../queue/concurrency.js";
 import type { AgentTurnMetrics } from "../turn/agent-turn-types.js";
 import { isAbortError, throwIfRunAborted } from "../session/run-control.js";
 import { archiveSessionCheckpoint } from "../archive/checkpoint.js";
@@ -388,18 +388,21 @@ const preprocessModuleSemantic = async ({
   moduleDir,
   moduleSvgPath,
   sessionId,
+  visionSemaphore,
 }: {
   design: ResolvedDesignTarget;
   module: SvgVerticalModule;
   moduleDir: string;
   moduleSvgPath: string;
   sessionId: string;
+  visionSemaphore: Semaphore;
 }) => {
   const elementAnalysis = await analyzeModuleElements({
     module,
     moduleDir,
     scale: design.scale,
     sessionId,
+    visionSemaphore,
   });
   const currentSemantic = await readModuleSemanticDocument(moduleDir);
   if (!currentSemantic) {
@@ -617,9 +620,11 @@ export async function runModulePipelineV2(
   const failedModuleKinds = new Map<string, ModuleValidationFailureKind>();
   const persistedModuleThreadIds = readPersistedModuleAgentThreadIds(sessionId);
 
+  const visionSemaphore = new Semaphore(SEMANTIC_VISION_CONCURRENCY);
+
   sessionStore.addLog(
     sessionId,
-    `[module-pipeline-v2] starting unified module pipeline: modules=${modules.length}, maxParallel=${maxParallelModuleAgents}`,
+    `[module-pipeline-v2] starting unified module pipeline: modules=${modules.length}, maxParallel=${maxParallelModuleAgents}, visionConcurrency=${SEMANTIC_VISION_CONCURRENCY}`,
   );
 
   const runInitialModuleRound = async ({
@@ -683,6 +688,7 @@ export async function runModulePipelineV2(
           moduleDir,
           moduleSvgPath,
           sessionId,
+          visionSemaphore,
         });
         const moduleTextBlockCount = textBlocksFile.blockCount;
         const existingThread = moduleThreads.get(module.id);
@@ -1433,6 +1439,7 @@ export async function runModuleUserRevision(
     moduleDir,
     moduleSvgPath,
     sessionId,
+    visionSemaphore: new Semaphore(SEMANTIC_VISION_CONCURRENCY),
   });
 
   const thread = createAgentUnitThread({

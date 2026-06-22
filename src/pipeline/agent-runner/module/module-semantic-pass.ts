@@ -14,6 +14,7 @@ import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types
 import type { Box } from "../../../core/geometry.js";
 import { runVisionLlm } from "../../llm-client.js";
 import { sessionStore } from "../../../session-store.js";
+import { Semaphore } from "../queue/concurrency.js";
 import {
   writeModuleSemanticDocument,
   readModuleSemanticDocument,
@@ -632,6 +633,18 @@ const normalizeVisionNodeSemantic = (
   };
 };
 
+/** Minimum dimension (px) below which a node is too small to carry readable text. */
+const TINY_NODE_MIN_DIMENSION = 6;
+/** Maximum area (px²) below which a node is too small to carry readable text. */
+const TINY_NODE_MAX_AREA = 36;
+/**
+ * Maximum pathDataLength-to-perimeter ratio for a path to be considered a simple geometric
+ * shape (not text). Text paths pack dense curve commands into their bounding box; simple
+ * shapes (rounded rects, decorative outlines) have very few commands relative to perimeter.
+ * Empirically: text paths >= 0.98, simple shapes <= 0.22. Threshold at 0.5 gives ~2x margin.
+ */
+const SIMPLE_SHAPE_PDL_PER_PERIMETER_MAX = 0.5;
+
 const buildDeterministicSemantic = (
   node: ModuleSemanticNode,
 ): ModuleSemanticNodeSemantic | null => {
@@ -708,6 +721,44 @@ const buildDeterministicSemantic = (
           : "simple geometric node cannot be pure DOM text",
       textHandling: "ignore",
     };
+  }
+  // --- Size-based deterministic rules (primarily reduces path candidates) ---
+  const bbox = node.bbox;
+  if (bbox) {
+    const bboxWidth = bbox.width;
+    const bboxHeight = bbox.height;
+    const bboxArea = bboxWidth * bboxHeight;
+    // Rule: extremely small nodes cannot carry readable text
+    if (
+      Math.min(bboxWidth, bboxHeight) < TINY_NODE_MIN_DIMENSION ||
+      bboxArea < TINY_NODE_MAX_AREA
+    ) {
+      return {
+        containsReadableText: false,
+        exportDecision: "export",
+        kind: "decoration",
+        notes: `tiny node (${bboxWidth.toFixed(1)}×${bboxHeight.toFixed(1)}) cannot carry readable text`,
+        textHandling: "ignore",
+      };
+    }
+    // Rule: path with very low pathDataLength relative to perimeter is a simple geometric
+    // shape (rounded rect, outline, separator) — not text.
+    const pathDataLength = Number(node.attrs.pathDataLength ?? 0);
+    if (node.tag === "path" && pathDataLength > 0) {
+      const perimeter = 2 * (bboxWidth + bboxHeight);
+      if (
+        perimeter > 0 &&
+        pathDataLength / perimeter < SIMPLE_SHAPE_PDL_PER_PERIMETER_MAX
+      ) {
+        return {
+          containsReadableText: false,
+          exportDecision: "export",
+          kind: "shape",
+          notes: `simple path shape (pdl/perimeter=${(pathDataLength / perimeter).toFixed(2)}, threshold=${SIMPLE_SHAPE_PDL_PER_PERIMETER_MAX})`,
+          textHandling: "ignore",
+        };
+      }
+    }
   }
   return null;
 };
@@ -1022,12 +1073,14 @@ const runSuspiciousTextRecheck = async ({
   probeArtifacts,
   semanticsById,
   sessionId,
+  visionSemaphore,
 }: {
   module: SvgVerticalModule;
   moduleDir: string;
   probeArtifacts: ProbeArtifact[];
   semanticsById: Map<string, ModuleSemanticNodeSemantic>;
   sessionId: string;
+  visionSemaphore: Semaphore;
 }) => {
   const recheckCandidates = probeArtifacts
     .filter((probe) =>
@@ -1046,50 +1099,61 @@ const runSuspiciousTextRecheck = async ({
 
   const nextSemantics = new Map(semanticsById);
   const analysisSheetsDir = path.join(moduleDir, "analysis-sheets");
+
+  const recheckBatches: { probes: ProbeArtifact[]; sheetNumber: number }[] = [];
   for (
     let batchStart = 0;
     batchStart < recheckCandidates.length;
     batchStart += RECHECK_BATCH_SIZE
   ) {
-    const probes = recheckCandidates.slice(batchStart, batchStart + RECHECK_BATCH_SIZE);
-    const sheetNumber = Math.floor(batchStart / RECHECK_BATCH_SIZE) + 1;
-    const sheetId = `sheet-recheck-${String(sheetNumber).padStart(3, "0")}`;
-    const sheetPath = path.join(analysisSheetsDir, `${sheetId}.png`);
-    const layout = await renderAnalysisSheet({
-      outputPath: sheetPath,
-      probes,
-      sheetId,
-      variant: "recheck",
+    recheckBatches.push({
+      probes: recheckCandidates.slice(batchStart, batchStart + RECHECK_BATCH_SIZE),
+      sheetNumber: Math.floor(batchStart / RECHECK_BATCH_SIZE) + 1,
     });
-    try {
-      const recheckedSemantics = await classifySheetWithVision({
-        cells: layout.cellPlacements,
-        moduleDir,
-        moduleId: module.id,
-        moduleRegion: module.region,
-        probes,
-        sessionId,
-        sheetId,
-        sheetPath,
-      });
-      recheckedSemantics.forEach((semantic, id) => {
-        if (
-          shouldAdoptRecheckSemantic({
-            current: nextSemantics.get(id),
-            next: semantic,
-          })
-        ) {
-          nextSemantics.set(id, semantic);
-        }
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      sessionStore.addLog(
-        sessionId,
-        `[module-semantic] ${module.id}: ${sheetId} recheck failed: ${message}; keeping primary classifications`,
-      );
-    }
   }
+
+  await Promise.all(
+    recheckBatches.map(async ({ probes, sheetNumber }) => {
+      const sheetId = `sheet-recheck-${String(sheetNumber).padStart(3, "0")}`;
+      const sheetPath = path.join(analysisSheetsDir, `${sheetId}.png`);
+      const layout = await renderAnalysisSheet({
+        outputPath: sheetPath,
+        probes,
+        sheetId,
+        variant: "recheck",
+      });
+      try {
+        const recheckedSemantics = await visionSemaphore.run(() =>
+          classifySheetWithVision({
+            cells: layout.cellPlacements,
+            moduleDir,
+            moduleId: module.id,
+            moduleRegion: module.region,
+            probes,
+            sessionId,
+            sheetId,
+            sheetPath,
+          }),
+        );
+        recheckedSemantics.forEach((semantic, id) => {
+          if (
+            shouldAdoptRecheckSemantic({
+              current: nextSemantics.get(id),
+              next: semantic,
+            })
+          ) {
+            nextSemantics.set(id, semantic);
+          }
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        sessionStore.addLog(
+          sessionId,
+          `[module-semantic] ${module.id}: ${sheetId} recheck failed: ${message}; keeping primary classifications`,
+        );
+      }
+    }),
+  );
 
   return nextSemantics;
 };
@@ -1099,11 +1163,13 @@ const runSemanticVisionPass = async ({
   moduleDir,
   probeArtifacts,
   sessionId,
+  visionSemaphore,
 }: {
   module: SvgVerticalModule;
   moduleDir: string;
   probeArtifacts: ProbeArtifact[];
   sessionId: string;
+  visionSemaphore: Semaphore;
 }) => {
   const analysisSheetsDir = path.join(moduleDir, "analysis-sheets");
   await rm(analysisSheetsDir, { force: true, recursive: true });
@@ -1149,16 +1215,18 @@ const runSemanticVisionPass = async ({
       sheetId,
     });
     try {
-      const sheetSemantics = await classifySheetWithVision({
-        cells: layout.cellPlacements,
-        moduleDir,
-        moduleId: module.id,
-        moduleRegion: module.region,
-        probes,
-        sessionId,
-        sheetId,
-        sheetPath,
-      });
+      const sheetSemantics = await visionSemaphore.run(() =>
+        classifySheetWithVision({
+          cells: layout.cellPlacements,
+          moduleDir,
+          moduleId: module.id,
+          moduleRegion: module.region,
+          probes,
+          sessionId,
+          sheetId,
+          sheetPath,
+        }),
+      );
       sheets.push({
         batchSize,
         id: sheetId,
@@ -1190,16 +1258,17 @@ const runSemanticVisionPass = async ({
           sessionId,
           `[module-semantic] ${module.id}: ${sheetId} batch size ${batchSize} failed: ${batchError.message}; retrying ${probes.length} node(s) with batch size ${nextBatchSize}`,
         );
+        const retryBatches: ProbeArtifact[][] = [];
         for (
           let batchStart = 0;
           batchStart < probes.length;
           batchStart += nextBatchSize
         ) {
-          await classifyBatch(
-            probes.slice(batchStart, batchStart + nextBatchSize),
-            batchSizeIndex + 1,
-          );
+          retryBatches.push(probes.slice(batchStart, batchStart + nextBatchSize));
         }
+        await Promise.all(
+          retryBatches.map((batch) => classifyBatch(batch, batchSizeIndex + 1)),
+        );
         return;
       }
       sessionStore.addLog(
@@ -1232,16 +1301,17 @@ const runSemanticVisionPass = async ({
   };
 
   const initialBatchSize = ANALYSIS_BATCH_SIZES[0];
+  const primaryBatches: ProbeArtifact[][] = [];
   for (
     let batchStart = 0;
     batchStart < probeArtifacts.length;
     batchStart += initialBatchSize
   ) {
-    await classifyBatch(
+    primaryBatches.push(
       probeArtifacts.slice(batchStart, batchStart + initialBatchSize),
-      0,
     );
   }
+  await Promise.all(primaryBatches.map((batch) => classifyBatch(batch, 0)));
 
   const recheckedSemanticsById = await runSuspiciousTextRecheck({
     module,
@@ -1249,6 +1319,7 @@ const runSemanticVisionPass = async ({
     probeArtifacts,
     semanticsById,
     sessionId,
+    visionSemaphore,
   });
   return { semanticsById: recheckedSemanticsById, sheetAssignments, sheets };
 };
@@ -1305,11 +1376,13 @@ const analyzeModuleElements = async ({
   moduleDir,
   scale,
   sessionId,
+  visionSemaphore,
 }: {
   module: SvgVerticalModule;
   moduleDir: string;
   scale: number;
   sessionId: string;
+  visionSemaphore: Semaphore;
 }): Promise<ModuleElementAnalysisResult> => {
   const semantic = await readModuleSemanticDocument(moduleDir);
   if (!semantic) {
@@ -1422,6 +1495,7 @@ const analyzeModuleElements = async ({
     moduleDir,
     probeArtifacts,
     sessionId,
+    visionSemaphore,
   });
 
   // Backfill skipped parent nodes from their child semantic/sheet
