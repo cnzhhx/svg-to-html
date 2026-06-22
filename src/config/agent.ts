@@ -8,6 +8,11 @@ export const MAX_CONCURRENT_AGENTS = Number(
 export const MAX_PARALLEL_MODULE_AGENTS = Number(
   process.env['MAX_PARALLEL_MODULE_AGENTS'] ?? 10,
 )
+// 单 session 内跨模块共享的视觉模型并发上限
+export const SEMANTIC_VISION_CONCURRENCY = Number(
+  process.env['SEMANTIC_VISION_CONCURRENCY'] ??
+    Math.min(Number(process.env['MAX_PARALLEL_MODULE_AGENTS'] ?? 10), 3),
+)
 
 // diffRatio 反弹超此值则回滚
 export const AGENT_VERIFY_ROLLBACK_THRESHOLD = Number(
