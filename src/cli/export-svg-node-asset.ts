@@ -148,9 +148,6 @@ const parseArgs = (args: string[]): ParsedArgs => {
     .flatMap((value) => value.split(","))
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
-  if (nodeIds.length > 10) {
-    throw new Error("--node-id supports at most 10 selected nodes");
-  }
 
   const rawIndex = values.get("--index");
   const elementIndex = rawIndex === undefined ? undefined : Number(rawIndex);
@@ -217,7 +214,7 @@ const usage = () =>
     "",
     "Notes:",
     "  - Exports one or more visible SVG nodes from module.svg with a transparent page background.",
-    "  - --node-id reads node ids from module-semantic.json and supports at most 10 selected nodes.",
+    "  - --node-id reads node ids from module-semantic.json; pass multiple --node-id flags to merge any number of nodes into one export.",
     "  - Selected semantic nodes must not be text nodes and must not contain text descendants.",
     "  - --allow-text bypasses that semantic text validation and is intended for internal probe rendering only.",
     "  - Overlap with text outside the selected nodes is allowed.",

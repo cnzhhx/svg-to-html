@@ -299,7 +299,6 @@ ${sourceDataContractSection}
   页面自动加载最新的 HTML/CSS，不需要手动 reload。
 - 导出 SVG 节点为 PNG: \`pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --node-id <节点id> --output assets/<name>.png --register-semantic --padding 0 --scale ${scaleLabel}\`
   - 合并多个节点：追加多个 \`--node-id n0001 --node-id n0002\`；导出后直接在 HTML 引用 \`./assets/<name>.png\`
-  - **单次调用最多 10 个 \`--node-id\`**（CLI 硬限制）。需要合并超过 10 个节点的视觉组时，按子元素拆成多次导出或按视觉子组分别导出，不要尝试一次性打包整块区域。
   - **并行导出多个独立资产**：需要导出多张**互相独立**的 PNG 时（例如多个不相关图标），用 shell \`&\` + \`wait\` 并行执行多个命令，可把总等待时间从 N×单次降到约 1×单次。module-semantic.json 的写入已加跨进程锁，\`--node-id\` 并行导出安全。
     示例（3 个独立图标并行）：
     \`\`\`bash
