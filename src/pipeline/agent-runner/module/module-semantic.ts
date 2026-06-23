@@ -893,28 +893,55 @@ const readModuleSemanticDocument = async (
   }
 };
 
-const stripBase64Attrs = (attrs: ModuleSemanticNodeAttrs): ModuleSemanticNodeAttrs => {
+// Attrs whitelist for agent-facing compact output. Only fields that provide
+// direct CSS decision value (colors, opacity) or semantic grouping hints.
+// All geometry (cx/cy/r/x/y/width/height/transform), text styling
+// (font-*/computed-font-*/letter-spacing/dominant-baseline/text-anchor),
+// SVG internals (pathDataLength/clip-path/mask/filter/href/xlink:href),
+// and display/visibility (already filtered by isVisibleNode) are excluded
+// because they are either redundant with bbox/textBlocks.styleInference or
+// meaningless without SVG defs context.
+const AGENT_COMPACT_ATTRS = new Set([
+  "class",
+  "fill",
+  "fill-opacity",
+  "opacity",
+  "stroke",
+  "stroke-opacity",
+]);
+
+const URL_REFERENCE_RE = /^url\(/i;
+
+const pickAgentAttrs = (attrs: ModuleSemanticNodeAttrs): ModuleSemanticNodeAttrs | null => {
   const next: ModuleSemanticNodeAttrs = {};
+  let hasEntries = false;
   for (const [key, value] of Object.entries(attrs)) {
-    if (
-      typeof value === "string" &&
-      value.startsWith("data:") &&
-      value.includes("base64,")
-    ) {
-      continue;
-    }
+    if (!AGENT_COMPACT_ATTRS.has(key)) continue;
+    if (typeof value !== "string") continue;
+    // Skip url() references (e.g. "url(#gradient-1)") — meaningless without SVG defs
+    if (URL_REFERENCE_RE.test(value)) continue;
+    // Skip base64 data URIs
+    if (value.startsWith("data:") && value.includes("base64,")) continue;
+    // Skip "none" values — no informational value
+    if (value === "none") continue;
     next[key] = value;
+    hasEntries = true;
   }
-  return next;
+  return hasEntries ? next : null;
 };
 
 // Compact the semantic document for agent consumption. Based on trace analysis
 // across 8 modules (2 sessions), the fields removed here had 0 reasoning
 // references or were 100% redundant with kept fields. Diagnostic data is
 // preserved in module-semantic.debug.json (written before this runs).
-// KEPT despite low refs: visibleBox (35 refs, used for clip/mask reasoning),
-// selector (shorter equivalent of nodePath), inspectIndex (documented z-index),
-// visualEffects (documented, 3 refs).
+//
+// Optimization notes (2026-06):
+// - attrs: reduced from 33-field IMPORTANT_ATTRS to 6-field AGENT_COMPACT_ATTRS;
+//   agent prompt never references attrs for decisions (uses bbox/semantic/textBlocks).
+// - skip nodes: kept with minimal fields (id/tag/bbox/inspectIndex/semantic) for
+//   z-order context; attrs/selector/visibleBox/visualEffects stripped since skip
+//   nodes are not exported or styled by the agent.
+// - export nodes: full compact treatment with visibleBox/visualEffects retained.
 const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
   document: T,
 ): T => {
@@ -922,41 +949,60 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
     node.visible === true ||
     (node.visible !== false && hasMeaningfulBox(node.bbox));
 
+  const compactSemantic = (node: ModuleSemanticNode) => ({
+    exportDecision: node.semantic.exportDecision,
+    kind: node.semantic.kind,
+    textHandling: node.semantic.textHandling,
+    ...(typeof node.semantic.containsReadableText === "boolean"
+      ? { containsReadableText: node.semantic.containsReadableText }
+      : {}),
+    ...(node.semantic.text ? { text: node.semantic.text } : {}),
+    ...(typeof node.semantic.lineCount === "number" &&
+    Number.isFinite(node.semantic.lineCount) &&
+    node.semantic.lineCount >= 1
+      ? { lineCount: Math.round(node.semantic.lineCount) }
+      : {}),
+    ...(node.semantic.textKind
+      ? { textKind: node.semantic.textKind }
+      : {}),
+    ...(node.semantic.contentType
+      ? { contentType: node.semantic.contentType }
+      : {}),
+  });
+
   const compactedNodes = document.nodes
     .filter(isVisibleNode)
-    .map((node) => ({
-      id: node.id,
-      tag: node.tag,
-      attrs: stripBase64Attrs(node.attrs),
-      ...(node.bbox ? { bbox: node.bbox } : {}),
-      inspectIndex: node.inspectIndex,
-      ...(node.selector ? { selector: node.selector } : {}),
-      semantic: {
-        exportDecision: node.semantic.exportDecision,
-        kind: node.semantic.kind,
-        textHandling: node.semantic.textHandling,
-        ...(typeof node.semantic.containsReadableText === "boolean"
-          ? { containsReadableText: node.semantic.containsReadableText }
+    .map((node) => {
+      const isSkipNode = node.semantic.exportDecision === "skip";
+
+      // Skip nodes: minimal footprint — only id/tag/bbox/inspectIndex/semantic.
+      // They provide z-order context for text layering but don't need attrs,
+      // selector, visibleBox, or visualEffects (agent never exports/styles them).
+      if (isSkipNode) {
+        return {
+          id: node.id,
+          tag: node.tag,
+          ...(node.bbox ? { bbox: node.bbox } : {}),
+          inspectIndex: node.inspectIndex,
+          semantic: compactSemantic(node),
+        };
+      }
+
+      // Export nodes: full compact treatment with trimmed attrs.
+      const agentAttrs = pickAgentAttrs(node.attrs);
+      return {
+        id: node.id,
+        tag: node.tag,
+        ...(agentAttrs ? { attrs: agentAttrs } : {}),
+        ...(node.bbox ? { bbox: node.bbox } : {}),
+        inspectIndex: node.inspectIndex,
+        semantic: compactSemantic(node),
+        ...(node.visibleBox ? { visibleBox: node.visibleBox } : {}),
+        ...(node.visualEffects?.length
+          ? { visualEffects: node.visualEffects }
           : {}),
-        ...(node.semantic.text ? { text: node.semantic.text } : {}),
-        ...(typeof node.semantic.lineCount === "number" &&
-        Number.isFinite(node.semantic.lineCount) &&
-        node.semantic.lineCount >= 1
-          ? { lineCount: Math.round(node.semantic.lineCount) }
-          : {}),
-        ...(node.semantic.textKind
-          ? { textKind: node.semantic.textKind }
-          : {}),
-        ...(node.semantic.contentType
-          ? { contentType: node.semantic.contentType }
-          : {}),
-      },
-      visible: true,
-      ...(node.visibleBox ? { visibleBox: node.visibleBox } : {}),
-      ...(node.visualEffects?.length
-        ? { visualEffects: node.visualEffects }
-        : {}),
-    }));
+      };
+    });
 
   const result = {
     ...document,
