@@ -38,6 +38,7 @@ const runVerify = async (
   manageNode = true,
   options: {
     mode?: VerifyMode;
+    signal?: AbortSignal;
   } = {},
 ): Promise<VerifyResult> => {
   const iterLabel = iteration !== undefined ? ` (round ${iteration})` : "";
@@ -78,6 +79,7 @@ const runVerify = async (
       mode,
       renderEntryPath: currentSession.outputTarget.renderEntryPath,
       scale,
+      signal: options.signal,
     },
   );
   const session = sessionStore.get(sessionId);

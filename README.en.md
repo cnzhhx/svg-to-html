@@ -113,7 +113,7 @@ All settings can be configured via the `.env` file. Key variables:
 | `WORKSPACE` | `./workspace` | Session artifacts root |
 | `NODE_ENV` | `development` | Runtime environment |
 | `MAX_CONCURRENT_AGENTS` | `2` | Concurrent session limit |
-| `MAX_PARALLEL_MODULE_AGENTS` | `10` | Parallel modules per session |
+| `MAX_PARALLEL_MODULE_AGENTS` | `5` | Parallel modules per session |
 | `DIFF_RATIO_THRESHOLD` | `0.05` | Full-page diff pass threshold (5%) |
 | `CHROMIUM_PATH` | auto-detect | Browser binary path |
 | `SESSION_CHAT_DISABLED` | `1` | Disable the chat repair UI and backend message endpoint |

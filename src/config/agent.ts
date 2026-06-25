@@ -6,7 +6,7 @@ export const MAX_CONCURRENT_AGENTS = Number(
 )
 // 单 session 内同时跑的模块 agent 数
 export const MAX_PARALLEL_MODULE_AGENTS = Number(
-  process.env['MAX_PARALLEL_MODULE_AGENTS'] ?? 10,
+  process.env['MAX_PARALLEL_MODULE_AGENTS'] ?? 5,
 )
 // 单 session 内跨模块共享的视觉模型并发上限
 export const SEMANTIC_VISION_CONCURRENCY = Number(

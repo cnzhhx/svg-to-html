@@ -14,6 +14,7 @@ import {
   threadOptions,
 } from "../../llm-client.js";
 import { runAgentTurnCore } from "../turn/agent-turn-core.js";
+import { throwIfRunAborted } from "../session/run-control.js";
 import { verifyModuleLocal } from "./module-local-verify.js";
 import { verifyModuleFrameworkLocal } from "./module-framework-local-verify.js";
 import type {
@@ -355,10 +356,12 @@ export async function runAgentUnit(
     throw error;
   }
 
+  throwIfRunAborted(controller);
   const sanitizeResult = await sanitizeModuleOutputFiles({
     module,
     moduleDir: workingDir,
   });
+  throwIfRunAborted(controller);
   const turnRanVerify = turn.turnSummary.verifyUsage.verifyCount > 0;
   if (sanitizeResult.changed) {
     sessionStore.addLog(
@@ -380,7 +383,9 @@ export async function runAgentUnit(
         round,
         scale: design.scale,
         scaffoldHtmlPath: path.join(path.dirname(workingDir), "modules-scaffold.html"),
+        signal: controller.signal,
       });
+      throwIfRunAborted(controller);
       finalDiffRatio = localVerify.diffRatio;
       sessionStore.addLog(
         sessionId,
@@ -399,7 +404,9 @@ export async function runAgentUnit(
             ),
           outputFormat,
           round,
+          signal: controller.signal,
         });
+        throwIfRunAborted(controller);
         if (frameworkVerify) {
           finalDiffRatio = Math.max(finalDiffRatio, frameworkVerify.diffRatio);
           sessionStore.addLog(
@@ -411,6 +418,7 @@ export async function runAgentUnit(
     }
   }
 
+  throwIfRunAborted(controller);
   // 读取输出文件
   const [
     previewFragmentHtml,

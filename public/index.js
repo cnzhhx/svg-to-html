@@ -74,6 +74,7 @@ let syncingResultPreviewScroll = false
 
 const LOCAL_STORAGE_KEY = 'svg2html:sessions'
 const LOCAL_SESSION_SNAPSHOT_KEY = 'svg2html:sessionSnapshots'
+const LOCAL_CLIENT_ID_KEY = 'svg2html:clientId'
 const LOCAL_SESSION_LIMIT = Number.POSITIVE_INFINITY
 const LOCAL_SESSION_MESSAGE_LIMIT = 80
 const LOCAL_SESSION_TEXT_LIMIT = Number.POSITIVE_INFINITY
@@ -115,6 +116,7 @@ const SESSION_DURATION_NODE_ORDER = ['analysis', 'agent', 'verify', 'done']
 
 let diffRatioThreshold = DEFAULT_DIFF_RATIO_THRESHOLD
 let runtimeWorkspaceRoot = null
+let localClientId = null
 let resultViewMode = readStoredResultViewMode()
 let resultComparePosition = readStoredResultComparePosition()
 
@@ -127,6 +129,48 @@ const OUTPUT_FORMAT_VALUES = new Set(OUTPUT_FORMAT_OPTIONS.map((option) => optio
 
 let selectedUploadScale = readStoredUploadScale()
 let selectedUploadFormat = readStoredUploadFormat()
+
+function createLocalClientId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID()
+  const random = new Uint8Array(16)
+  if (window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(random)
+    return Array.from(random, (value) => value.toString(16).padStart(2, '0')).join('')
+  }
+  return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function getLocalClientId() {
+  if (localClientId) return localClientId
+  try {
+    const stored = String(localStorage.getItem(LOCAL_CLIENT_ID_KEY) || '').trim()
+    if (stored) {
+      localClientId = stored
+      return localClientId
+    }
+    localClientId = createLocalClientId()
+    localStorage.setItem(LOCAL_CLIENT_ID_KEY, localClientId)
+    return localClientId
+  } catch {
+    localClientId = localClientId || createLocalClientId()
+    return localClientId
+  }
+}
+
+function isSessionOwnedByCurrentClient(session) {
+  return Boolean(session?.localOwnerId && session.localOwnerId === getLocalClientId())
+}
+
+function isLocalSessionIdOwned(id) {
+  const snapshot = readLocalSessionSnapshots()[id]
+  return Boolean(snapshot?.localOwnerId === getLocalClientId())
+}
+
+function canPersistSessionLocally(session) {
+  if (!enableSessionLocalStorage || !session?.id) return false
+  if (isSessionOwnedByCurrentClient(session)) return true
+  return isLocalSessionIdOwned(session.id)
+}
 
 function getLocalSessionIds() {
   try {
@@ -149,6 +193,11 @@ function saveLocalSessionId(id) {
   }
 }
 
+function markSessionOwnedByCurrentClient(id) {
+  if (!enableSessionLocalStorage || !id) return
+  saveLocalSessionId(id)
+}
+
 function removeLocalSessionId(id) {
   const ids = getLocalSessionIds().filter((i) => i !== id)
   try {
@@ -166,7 +215,7 @@ function readLocalSessionSnapshots() {
     return Object.fromEntries(
       Object.entries(value).flatMap(([, snapshot]) => {
         const sanitized = sanitizeLocalSessionSnapshot(snapshot)
-        return sanitized ? [[sanitized.id, sanitized]] : []
+        return sanitized?.localOwnerId === getLocalClientId() ? [[sanitized.id, sanitized]] : []
       }),
     )
   } catch {
@@ -298,6 +347,7 @@ function sanitizeLocalSessionSnapshot(snapshot) {
   if (!id || !outputTarget) return null
   return {
     id,
+    localOwnerId: String(snapshot.localOwnerId || ''),
     designName: String(snapshot.designName || id),
     svgPath: String(snapshot.svgPath || ''),
     scale: Number(snapshot.scale || 1),
@@ -336,13 +386,14 @@ function mergeLocalArtifactResult(sourceResult, targetResult = {}) {
 }
 
 function createLocalSessionSnapshot(session) {
-  if (!session?.id) return null
+  if (!canPersistSessionLocally(session)) return null
   const result = compactResultForLocalStorage(session.result)
   const outputFormat = getSessionOutputFormat(session)
   const outputTarget = getOutputTarget(session)
   if (!outputFormat || !outputTarget) return null
   return {
     id: session.id,
+    localOwnerId: getLocalClientId(),
     designName: session.designName || session.id,
     svgPath: session.svgPath || '',
     scale: Number(session.scale || 1),
@@ -371,7 +422,7 @@ function createLocalSessionSnapshot(session) {
 }
 
 function saveLocalSessionSnapshot(session, options = {}) {
-  if (!enableSessionLocalStorage) return
+  if (!canPersistSessionLocally(session)) return
   const snapshot = createLocalSessionSnapshot(session)
   if (!snapshot) return
   const ids = getLocalSessionIds()
@@ -395,12 +446,12 @@ function saveLocalSessionSnapshot(session, options = {}) {
 
 function saveServerSessionsToLocal(serverSessions) {
   if (!enableSessionLocalStorage) return
-  const validSessions = Array.isArray(serverSessions)
-    ? serverSessions.filter((session) => session?.id)
+  const ownServerSessions = Array.isArray(serverSessions)
+    ? serverSessions.filter((session) => session?.id && canPersistSessionLocally(session))
     : []
-  if (!validSessions.length) return
+  if (!ownServerSessions.length) return
 
-  const serverIds = validSessions.map((session) => session.id)
+  const serverIds = ownServerSessions.map((session) => session.id)
   const serverIdSet = new Set(serverIds)
   const existingIds = uniqueIds([
     ...getLocalSessionIds(),
@@ -417,7 +468,7 @@ function saveServerSessionsToLocal(serverSessions) {
   }
 
   const snapshots = readLocalSessionSnapshots()
-  validSessions.forEach((session) => {
+  ownServerSessions.forEach((session) => {
     const snapshot = createLocalSessionSnapshot(session)
     if (snapshot) {
       if (snapshots[snapshot.id]?.result) {
@@ -885,7 +936,7 @@ async function loadSessions() {
     sessions = serverSessionsLoaded ? serverSessions : []
   } else {
     const snapshotIds = getLocalSessionSnapshotIds()
-    const localIds = getLocalSessionIds()
+    const localIds = getLocalSessionIds().filter(isLocalSessionIdOwned)
     const serverIds = serverSessions.map((session) => session.id).filter(Boolean)
     const idsToLoad = uniqueIds([
       ...serverIds,
@@ -1059,14 +1110,20 @@ async function uploadFile(file, options = {}) {
 
     if (data.sessions && data.sessionIds) {
       for (let i = 0; i < data.sessionIds.length; i++) {
-        saveLocalSessionId(data.sessionIds[i])
-        upsertSession(data.sessions[i])
+        markSessionOwnedByCurrentClient(data.sessionIds[i])
+        upsertSession({
+          ...data.sessions[i],
+          localOwnerId: getLocalClientId(),
+        })
       }
       selectSession(data.sessionIds[0])
       await Promise.all(data.sessionIds.map((id, i) => startUploadedSessionIfNeeded(id, data.sessions[i])))
     } else if (data.sessionId && data.session) {
-      saveLocalSessionId(data.sessionId)
-      upsertSession(data.session)
+      markSessionOwnedByCurrentClient(data.sessionId)
+      upsertSession({
+        ...data.session,
+        localOwnerId: getLocalClientId(),
+      })
       selectSession(data.sessionId)
       await startUploadedSessionIfNeeded(data.sessionId, data.session)
     } else {
@@ -1109,7 +1166,10 @@ async function fetchSessionDetails(sessionId) {
     const session = await readJsonResponse(res)
     if (!session?.id || currentSessionId !== sessionId) return
     await hydrateLocalArtifactCacheMetadataForSessions([session])
-    upsertSession(session)
+    upsertSession({
+      ...session,
+      ...(isLocalSessionIdOwned(session.id) ? { localOwnerId: getLocalClientId() } : {}),
+    })
     currentSession = sessions.find((item) => item.id === sessionId) || session
     renderCurrentSession()
   } catch {
@@ -1132,9 +1192,12 @@ async function startUploadedSessionIfNeeded(sessionId, session) {
   if (sessionRes.ok) {
     const freshSession = await readJsonResponse(sessionRes)
     if (freshSession?.id) {
-      upsertSession(freshSession)
+      upsertSession({
+        ...freshSession,
+        ...(isLocalSessionIdOwned(freshSession.id) ? { localOwnerId: getLocalClientId() } : {}),
+      })
       if (currentSessionId === sessionId) {
-        currentSession = freshSession
+        currentSession = sessions.find((item) => item.id === sessionId) || freshSession
         renderCurrentSession()
       }
       return
@@ -1148,6 +1211,9 @@ async function startUploadedSessionIfNeeded(sessionId, session) {
       detail: '已进入队列，等待执行',
     },
     status: data.status || 'queued',
+  }
+  if (isLocalSessionIdOwned(sessionId)) {
+    nextSession.localOwnerId = getLocalClientId()
   }
   upsertSession(nextSession)
   if (currentSessionId === sessionId) {
@@ -1179,9 +1245,12 @@ function closeSSE() {
 
 function handleSessionEvent(event) {
   if (event.type === 'init') {
-    currentSession = event.session
+    currentSession = {
+      ...event.session,
+      ...(isLocalSessionIdOwned(event.session.id) ? { localOwnerId: getLocalClientId() } : {}),
+    }
     currentSessionId = event.session.id
-    upsertSession(event.session)
+    upsertSession(currentSession)
     renderCurrentSession()
     return
   }
@@ -1306,6 +1375,9 @@ function upsertSession(session) {
         ...(existing.result || {}),
         ...(session.result || {}),
       },
+    }
+    if (!merged.localOwnerId && existing.localOwnerId) {
+      merged.localOwnerId = existing.localOwnerId
     }
     if (isSummary) merged.__summary = true
     else delete merged.__summary
@@ -2029,7 +2101,7 @@ function renderResults(result) {
       '<button class="link-btn download-btn" type="button" onclick="downloadCurrentSessionZip()">下载 ZIP</button>',
     )
   }
-  if (localFilesAvailable && currentSessionId && renderEntryPath) {
+  if (localFilesAvailable && currentSessionId && renderEntryPath && canPersistSessionLocally(currentSession)) {
     const cacheLabel = localCacheBusy
       ? '缓存中…'
       : localCacheReady
@@ -2595,6 +2667,7 @@ async function hydrateLocalArtifactCacheMetadataForSessions(sessionList) {
   await Promise.all(
     sessionList.map(async (session) => {
       if (!session?.id) return
+      if (!canPersistSessionLocally(session)) return
       try {
         const meta = await getCachedArtifactSessionMeta(session.id)
         if (meta?.status === 'cached') {
@@ -2701,6 +2774,7 @@ async function maybeAutoCacheSessionArtifacts(session) {
   if (
     !session ||
     isLocalOnlySession(session) ||
+    !canPersistSessionLocally(session) ||
     !isCompletedStatus(session.status) ||
     !renderEntryPath
   ) return
@@ -2731,6 +2805,7 @@ async function autoCacheCompletedSessionArtifacts() {
   const candidates = sessions.filter((session) => {
     if (!session?.id) return false
     if (isLocalOnlySession(session)) return false
+    if (!canPersistSessionLocally(session)) return false
     if (!isCompletedStatus(session.status)) return false
     if (!getSessionRenderEntryPath(session)) return false
     if (session.result?.localArtifactCacheStatus === 'error') return false
@@ -2761,6 +2836,10 @@ async function cacheSessionArtifactsForSession(targetSession, options = {}) {
   }
   if (isLocalOnlySession(targetSession)) {
     if (!options.silent) alert('本地归档记录不能重新从后端缓存文件')
+    return null
+  }
+  if (!canPersistSessionLocally(targetSession)) {
+    if (!options.silent) alert('只能缓存当前浏览器创建的 session')
     return null
   }
   const sessionId = targetSession.id

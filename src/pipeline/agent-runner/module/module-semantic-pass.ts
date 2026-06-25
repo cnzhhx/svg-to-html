@@ -600,14 +600,17 @@ const withVisionTimeout = ({
   prompt,
   runtimeTraceDir,
   runtimeTraceLabel,
+  signal,
 }: {
   imagePath: string;
   prompt: string;
   runtimeTraceDir: string;
   runtimeTraceLabel: string;
+  signal?: AbortSignal;
 }) => {
   const controller = new AbortController();
   return new Promise<string>((resolve, reject) => {
+    const relayAbort = () => controller.abort(signal?.reason ?? "aborted");
     const timer = setTimeout(() => {
       controller.abort("module-semantic-vision-timeout");
       reject(
@@ -616,6 +619,8 @@ const withVisionTimeout = ({
         ),
       );
     }, VISION_TEXT_TIMEOUT_MS);
+    signal?.addEventListener("abort", relayAbort, { once: true });
+    if (signal?.aborted) relayAbort();
     runVisionLlm({
       imagePath,
       prompt,
@@ -625,10 +630,12 @@ const withVisionTimeout = ({
     }).then(
       (value) => {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", relayAbort);
         resolve(value);
       },
       (error) => {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", relayAbort);
         reject(error);
       },
     );
@@ -1197,6 +1204,7 @@ const classifySheetWithVision = async ({
   moduleId,
   moduleRegion,
   probes,
+  signal,
   sessionId,
   sheetId,
   sheetPath,
@@ -1206,6 +1214,7 @@ const classifySheetWithVision = async ({
   moduleId: string;
   moduleRegion: SvgVerticalModule["region"];
   probes: ProbeArtifact[];
+  signal?: AbortSignal;
   sessionId: string;
   sheetId: string;
   sheetPath: string;
@@ -1227,6 +1236,7 @@ const classifySheetWithVision = async ({
     prompt,
     runtimeTraceDir: traceDir,
     runtimeTraceLabel: `${moduleId}-${sheetId}`,
+    signal,
   });
   const parsed = JSON.parse(stripJsonMarkdown(raw)) as unknown;
   if (!Array.isArray(parsed)) {
@@ -1310,6 +1320,7 @@ const runSuspiciousTextRecheck = async ({
   moduleDir,
   probeArtifacts,
   semanticsById,
+  signal,
   sessionId,
   visionSemaphore,
 }: {
@@ -1317,6 +1328,7 @@ const runSuspiciousTextRecheck = async ({
   moduleDir: string;
   probeArtifacts: ProbeArtifact[];
   semanticsById: Map<string, ModuleSemanticNodeSemantic>;
+  signal?: AbortSignal;
   sessionId: string;
   visionSemaphore: Semaphore;
 }) => {
@@ -1368,6 +1380,7 @@ const runSuspiciousTextRecheck = async ({
             moduleId: module.id,
             moduleRegion: module.region,
             probes,
+            signal,
             sessionId,
             sheetId,
             sheetPath,
@@ -1400,12 +1413,14 @@ const runSemanticVisionPass = async ({
   module,
   moduleDir,
   probeArtifacts,
+  signal,
   sessionId,
   visionSemaphore,
 }: {
   module: SvgVerticalModule;
   moduleDir: string;
   probeArtifacts: ProbeArtifact[];
+  signal?: AbortSignal;
   sessionId: string;
   visionSemaphore: Semaphore;
 }) => {
@@ -1460,6 +1475,7 @@ const runSemanticVisionPass = async ({
           moduleId: module.id,
           moduleRegion: module.region,
           probes,
+          signal,
           sessionId,
           sheetId,
           sheetPath,
@@ -1556,6 +1572,7 @@ const runSemanticVisionPass = async ({
     moduleDir,
     probeArtifacts,
     semanticsById,
+    signal,
     sessionId,
     visionSemaphore,
   });
@@ -1613,12 +1630,14 @@ const analyzeModuleElements = async ({
   module,
   moduleDir,
   scale,
+  signal,
   sessionId,
   visionSemaphore,
 }: {
   module: SvgVerticalModule;
   moduleDir: string;
   scale: number;
+  signal?: AbortSignal;
   sessionId: string;
   visionSemaphore: Semaphore;
 }): Promise<ModuleElementAnalysisResult> => {
@@ -1825,6 +1844,7 @@ const analyzeModuleElements = async ({
     module,
     moduleDir,
     probeArtifacts,
+    signal,
     sessionId,
     visionSemaphore,
   });
