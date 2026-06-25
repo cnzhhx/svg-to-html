@@ -539,6 +539,14 @@ const collectRegionEdgesForRepair = (
   return edges;
 };
 
+const collectSeamEdges = (
+  boxes: ValidationSourceBox[],
+  side: BoundaryRepair["side"],
+) =>
+  side === "top" || side === "bottom"
+    ? boxes.flatMap((source) => [source.box.y, bottomOf(source.box)])
+    : boxes.flatMap((source) => [source.box.x, rightOf(source.box)]);
+
 const proposedBoundary = ({
   edgeValue,
   boxes,
@@ -549,16 +557,12 @@ const proposedBoundary = ({
   side: BoundaryRepair["side"];
 }) => {
   if (!boxes.length) return undefined;
-  const candidates =
-    side === "top" || side === "bottom"
-      ? [
-          Math.min(...boxes.map((source) => source.box.y)),
-          Math.max(...boxes.map((source) => bottomOf(source.box))),
-        ]
-      : [
-          Math.min(...boxes.map((source) => source.box.x)),
-          Math.max(...boxes.map((source) => rightOf(source.box))),
-        ];
+  // Every crossing box contributes BOTH of its perpendicular edges as snap
+  // candidates. The old "min(all starts), max(all ends)" reduction collapsed
+  // every box's inner edges and could snap a boundary onto a far-side box's
+  // outer edge, swallowing every box in between. Picking the nearest edge per
+  // box mirrors normalize-plan's avoidCuttingSourceBands fix.
+  const candidates = collectSeamEdges(boxes, side);
   return candidates
     .map((candidate) => ({
       candidate,

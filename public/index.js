@@ -317,6 +317,8 @@ function sanitizeLocalSessionSnapshot(snapshot) {
     messages: compactMessagesForLocalStorage(snapshot.messages),
     pendingUserMessages: [],
     progress: snapshot.progress,
+    queuedAt: toTimestamp(snapshot.queuedAt),
+    executionStartedAt: toTimestamp(snapshot.executionStartedAt),
     createdAt: Number(snapshot.createdAt) || Date.now(),
     updatedAt: Number(snapshot.updatedAt) || Date.now(),
     localSavedAt: Number(snapshot.localSavedAt || snapshot.updatedAt || Date.now()),
@@ -360,6 +362,8 @@ function createLocalSessionSnapshot(session) {
     messages: compactMessagesForLocalStorage(session.messages),
     pendingUserMessages: [],
     progress: session.progress,
+    queuedAt: toTimestamp(session.queuedAt),
+    executionStartedAt: toTimestamp(session.executionStartedAt),
     createdAt: Number(session.createdAt) || Date.now(),
     updatedAt: Number(session.updatedAt) || Date.now(),
     localSavedAt: Date.now(),
@@ -2267,6 +2271,10 @@ function toTimestamp(value) {
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : undefined
 }
 
+function getSessionStep(session, key) {
+  return session?.steps?.[key]
+}
+
 function normalizeWorkflowNodeKey(node) {
   if (node === LEGACY_ANALYSIS_NODE_KEY) return 'analysis'
   return WORKFLOW_NODE_ORDER.includes(node) ? node : null
@@ -2280,8 +2288,12 @@ function getProgressNode(session, key) {
 
 function getSessionExecutionStartAt(session) {
   if (!session) return undefined
+  if (session.status === 'queued') return undefined
+  const explicitStartedAt = toTimestamp(session.executionStartedAt)
+  if (explicitStartedAt) return explicitStartedAt
   return (
-    toTimestamp(session.executionStartedAt) ??
+    toTimestamp(getSessionStep(session, 'agent')?.startedAt) ??
+    toTimestamp(getSessionStep(session, 'verify')?.startedAt) ??
     SESSION_DURATION_NODE_ORDER
       .map((key) => toTimestamp(getProgressNode(session, key)?.startedAt))
       .find((timestamp) => timestamp !== undefined) ??

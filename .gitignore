@@ -2,7 +2,7 @@ node_modules/
 workspace/
 docs/
 dist/
-test/output/
+test
 *.tsbuildinfo
 
 .DS_Store

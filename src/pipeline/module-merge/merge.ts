@@ -21,7 +21,6 @@ import {
   renderModuleSourceSections,
   renderSharedLayerSections,
   renderSharedLayerSourceSections,
-  renderSingleModuleFastCss,
   renderSingleModuleCss,
   rewriteModuleLocalAssetReferences,
   rewriteModuleLocalAssetReferencesInValue,
@@ -160,11 +159,7 @@ const buildMergedModuleCss = ({
 }: {
   modules: ModuleMergeResolvedModule[];
 }) => {
-  const moduleCss =
-    modules.length === 1
-      ? renderSingleModuleFastCss(modules[0]!)
-      : renderModuleCss(modules);
-  return moduleCss;
+  return renderModuleCss(modules);
 };
 
 type MergePreviewDocumentResult = {
@@ -410,12 +405,13 @@ const mergeSourceEntry = async ({
   }
 
   const sourceDesign = resolveSourceDesign({ design, modulePlan });
+  const sourceFormat = outputTarget.format;
   const sourceModules = rewriteModulesForSourceEntry({ modules, outputTarget });
   const sourceDataPlan = createFrameworkSourceDataPlan(sourceModules);
   const sourceCss = [
     createFrameworkBaseCss({
       design: sourceDesign,
-      mountId: outputTarget.format === "vue" ? "app" : "root",
+      mountId: sourceFormat === "vue" ? "app" : "root",
     }),
     buildMergedModuleCss({ modules: sourceModules }),
   ]
@@ -426,19 +422,19 @@ const mergeSourceEntry = async ({
     renderSharedLayerSourceSections(
       sharedLayers,
       "shared-underlay",
-      outputTarget.format,
+      sourceFormat,
     ),
-    renderModuleSourceSections(sourceModules, outputTarget.format),
+    renderModuleSourceSections(sourceModules, sourceFormat),
     renderSharedLayerSourceSections(
       sharedLayers,
       "shared-overlay",
-      outputTarget.format,
+      sourceFormat,
     ),
   ]
     .filter((section) => section.trim())
     .join("\n      ");
 
-  if (outputTarget.format === "vue") {
+  if (sourceFormat === "vue") {
     await writeTextFile(
       outputTarget.sourceEntryPath,
       createVueSourceEntry({

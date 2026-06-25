@@ -400,13 +400,61 @@ const inferTextStyles = async ({
           return best;
         };
 
-        const hexLuminance = (hex) => {
-          if (!hex || hex.length < 4) return 0;
-          const h = hex.startsWith('#') ? hex.slice(1) : hex;
-          const r = parseInt(h.length >= 6 ? h.slice(0, 2) : h[0] + h[0], 16);
-          const g = parseInt(h.length >= 6 ? h.slice(2, 4) : h[1] + h[1], 16);
-          const b = parseInt(h.length >= 6 ? h.slice(4, 6) : h[2] + h[2], 16);
-          return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+        const scorePenalty = 1e12;
+        const finiteScore = (value) =>
+          Number.isFinite(value) ? value : scorePenalty;
+        const parseFontWeightNumber = (value) => {
+          const normalized = String(value ?? '').trim().toLowerCase();
+          if (normalized === 'normal') return 400;
+          if (normalized === 'bold') return 700;
+          const parsed = Number(normalized);
+          return Number.isFinite(parsed) ? parsed : 400;
+        };
+        const parseCssColor = (value) => {
+          const color = String(value ?? '').trim();
+          if (!color) return null;
+          const previous = ctx.fillStyle;
+          ctx.fillStyle = '#000000';
+          ctx.fillStyle = color;
+          const normalized = String(ctx.fillStyle);
+          ctx.fillStyle = previous;
+
+          const hex = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+          if (hex) {
+            const raw = hex[1];
+            const expand = (item) => item.length === 1 ? item + item : item;
+            const r = parseInt(raw.length <= 4 ? expand(raw[0]) : raw.slice(0, 2), 16);
+            const g = parseInt(raw.length <= 4 ? expand(raw[1]) : raw.slice(2, 4), 16);
+            const b = parseInt(raw.length <= 4 ? expand(raw[2]) : raw.slice(4, 6), 16);
+            const alpha =
+              raw.length === 4
+                ? parseInt(expand(raw[3]), 16) / 255
+                : raw.length === 8
+                  ? parseInt(raw.slice(6, 8), 16) / 255
+                  : 1;
+            return [r, g, b, alpha];
+          }
+
+          const rgb = normalized.match(/^rgba?\\(([^)]+)\\)$/i);
+          if (rgb) {
+            const parts = rgb[1].split(',').map((part) => Number.parseFloat(part.trim()));
+            if (parts.length >= 3 && parts.slice(0, 3).every(Number.isFinite)) {
+              return [
+                Math.max(0, Math.min(255, parts[0])),
+                Math.max(0, Math.min(255, parts[1])),
+                Math.max(0, Math.min(255, parts[2])),
+                Number.isFinite(parts[3]) ? clamp01(parts[3]) : 1,
+              ];
+            }
+          }
+
+          return null;
+        };
+        const cssColorLuminance = (value) => {
+          const parsed = parseCssColor(value);
+          if (!parsed) return 0;
+          const [r, g, b, alpha] = parsed;
+          return clamp01(((0.299 * r + 0.587 * g + 0.114 * b) / 255) * alpha);
         };
 
         return blocks.map((block) => {
@@ -419,7 +467,7 @@ const inferTextStyles = async ({
           const currentWeight = block.currentDeclarations['font-weight'] ?? '';
           const currentFamily = block.currentDeclarations['font-family'] ?? '';
           const currentColor = block.currentDeclarations['color'] ?? block.color ?? '';
-          const weightColorFactor = 1 + hexLuminance(currentColor) * 3;
+          const weightColorFactor = 1 + cssColorLuminance(currentColor) * 3;
           const styleMetricWeight =
             typeof block.styleMetricWeight === 'number' && Number.isFinite(block.styleMetricWeight)
               ? Math.max(0, block.styleMetricWeight)
@@ -462,7 +510,7 @@ const inferTextStyles = async ({
           }
 
           const betterCandidate = (candidate, best) =>
-            !best || candidate.fit.score < best.fit.score;
+            !best || finiteScore(candidate.fit.score) < finiteScore(best.fit.score);
           const buildCandidate = ({ family, fontSize, fontWeight }) => {
             const renderFontSize = Math.max(1, fontSize * renderScale);
             const targetPhysicalWidth = target.width * renderScale;
@@ -532,9 +580,11 @@ const inferTextStyles = async ({
             const familyIndex = Math.max(0, families.indexOf(family));
             const familyPrior = familyIndex * 2;
             const visualSignalStrength = Number(targetCrop?.signalStrength ?? 0);
+            const fontWeightNumber = parseFontWeightNumber(fontWeight);
+            const neutralWeightNumber = parseFontWeightNumber(neutralWeight);
             const weightPrior =
-              (Math.abs(Number(fontWeight) - Number(neutralWeight)) / 100 * 1.5 +
-              Math.max(0, Number(fontWeight) - Number(neutralWeight)) / 100 * 2.5) *
+              (Math.abs(fontWeightNumber - neutralWeightNumber) / 100 * 1.5 +
+              Math.max(0, fontWeightNumber - neutralWeightNumber) / 100 * 2.5) *
               weightColorFactor *
               (visualSignalStrength > 0
                 ? Math.max(0.25, 1 - visualSignalStrength * 0.65)
@@ -555,7 +605,7 @@ const inferTextStyles = async ({
                     }),
                   )
                 : null;
-            const score = visual
+            const rawScore = visual
               ? visual.score +
                 widthFitPrior +
                 Math.abs(styleWidthDelta) * styleMetricWeight +
@@ -573,6 +623,7 @@ const inferTextStyles = async ({
                 lineCountDelta * 80 +
                 familyPrior +
                 weightPrior;
+            const score = finiteScore(rawScore);
             return {
               declarations: {
                 ...(currentColor || targetCrop?.fg
@@ -618,7 +669,7 @@ const inferTextStyles = async ({
           }
 
           const bestSizeCandidate = sizePassCandidates.sort(
-            (left, right) => left.candidate.fit.score - right.candidate.fit.score,
+            (left, right) => finiteScore(left.candidate.fit.score) - finiteScore(right.candidate.fit.score),
           )[0];
           const selectedFontSize =
             parsePx(bestSizeCandidate?.candidate.declarations?.['font-size']) ??

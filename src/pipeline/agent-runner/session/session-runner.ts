@@ -104,7 +104,7 @@ const runSession = (sessionId: string, controller: AbortController) =>
   const session = sessionStore.get(sessionId);
   if (!session) return;
 
-  sessionStore.update(sessionId, { status: "running" });
+  sessionStore.markExecutionStarted(sessionId);
   sessionStore.setWorkflowMeta(sessionId, {
     detail: "任务已开始，准备执行统一模块流水线",
     iteration: 1,

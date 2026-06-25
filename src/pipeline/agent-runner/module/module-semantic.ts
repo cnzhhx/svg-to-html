@@ -174,7 +174,7 @@ type CreateModuleSemanticDraftResult = {
 const MODULE_SEMANTIC_SCHEMA_VERSION = 2;
 const MODULE_SEMANTIC_NODE_FACT_VERSION = 2;
 const MODULE_SEMANTIC_SEMANTIC_PASS_VERSION = 3;
-const MODULE_SEMANTIC_TEXT_STYLE_PASS_VERSION = 4;
+const MODULE_SEMANTIC_TEXT_STYLE_PASS_VERSION = 6;
 
 const IMPORTANT_ATTRS = new Set([
   "class",
@@ -220,6 +220,20 @@ const toRelativeModulePath = (moduleDir: string, filePath: string) =>
 
 const readString = (value: unknown) =>
   typeof value === "string" && value.trim().length > 0 ? value : undefined;
+
+const readExplicitPaint = (value: unknown) => {
+  const paint = readString(value)?.trim();
+  if (!paint) return undefined;
+  const normalized = paint.toLowerCase();
+  if (
+    normalized === "none" ||
+    normalized === "transparent" ||
+    normalized.startsWith("url(")
+  ) {
+    return undefined;
+  }
+  return paint;
+};
 
 const readNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -897,7 +911,7 @@ const readModuleSemanticDocument = async (
 // direct CSS decision value (colors, opacity) or semantic grouping hints.
 // All geometry (cx/cy/r/x/y/width/height/transform), text styling
 // (font-*/computed-font-*/letter-spacing/dominant-baseline/text-anchor),
-// SVG internals (pathDataLength/clip-path/mask/filter/href/xlink:href),
+// most SVG internals (pathDataLength/href/xlink:href),
 // and display/visibility (already filtered by isVisibleNode) are excluded
 // because they are either redundant with bbox/textBlocks.styleInference or
 // meaningless without SVG defs context.
@@ -910,16 +924,37 @@ const AGENT_COMPACT_ATTRS = new Set([
   "stroke-opacity",
 ]);
 
+const AGENT_VISUAL_REFERENCE_ATTRS = new Set([
+  "clip-path",
+  "filter",
+  "mask",
+]);
+
 const URL_REFERENCE_RE = /^url\(/i;
 
-const pickAgentAttrs = (attrs: ModuleSemanticNodeAttrs): ModuleSemanticNodeAttrs | null => {
+const hasAgentVisualReferenceAttrs = (node: ModuleSemanticNode) =>
+  [...AGENT_VISUAL_REFERENCE_ATTRS].some((key) => {
+    const value = node.attrs[key];
+    return typeof value === "string" && value.trim().length > 0 && value !== "none";
+  });
+
+const pickAgentAttrs = (
+  attrs: ModuleSemanticNodeAttrs,
+  options: { includeVisualReferenceAttrs?: boolean } = {},
+): ModuleSemanticNodeAttrs | null => {
   const next: ModuleSemanticNodeAttrs = {};
   let hasEntries = false;
   for (const [key, value] of Object.entries(attrs)) {
-    if (!AGENT_COMPACT_ATTRS.has(key)) continue;
+    const isVisualReferenceAttr = AGENT_VISUAL_REFERENCE_ATTRS.has(key);
+    if (
+      !AGENT_COMPACT_ATTRS.has(key) &&
+      !(options.includeVisualReferenceAttrs && isVisualReferenceAttr)
+    ) {
+      continue;
+    }
     if (typeof value !== "string") continue;
     // Skip url() references (e.g. "url(#gradient-1)") — meaningless without SVG defs
-    if (URL_REFERENCE_RE.test(value)) continue;
+    if (URL_REFERENCE_RE.test(value) && !isVisualReferenceAttr) continue;
     // Skip base64 data URIs
     if (value.startsWith("data:") && value.includes("base64,")) continue;
     // Skip "none" values — no informational value
@@ -937,10 +972,10 @@ const pickAgentAttrs = (attrs: ModuleSemanticNodeAttrs): ModuleSemanticNodeAttrs
 //
 // Optimization notes (2026-06):
 // - attrs: reduced from 33-field IMPORTANT_ATTRS to 6-field AGENT_COMPACT_ATTRS;
-//   agent prompt never references attrs for decisions (uses bbox/semantic/textBlocks).
+//   visual refs (mask/filter/clip-path) are kept only on affected nodes because
+//   they change pixels and asset export choices.
 // - skip nodes: kept with minimal fields (id/tag/bbox/inspectIndex/semantic) for
-//   z-order context; attrs/selector/visibleBox/visualEffects stripped since skip
-//   nodes are not exported or styled by the agent.
+//   z-order context unless they carry visual refs.
 // - export nodes: full compact treatment with visibleBox/visualEffects retained.
 const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
   document: T,
@@ -974,14 +1009,16 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
     .filter(isVisibleNode)
     .map((node) => {
       const isSkipNode = node.semantic.exportDecision === "skip";
+      const hasVisualReferenceAttrs = hasAgentVisualReferenceAttrs(node);
 
       // Skip nodes: minimal footprint — only id/tag/bbox/inspectIndex/semantic.
       // They provide z-order context for text layering but don't need attrs,
       // selector, visibleBox, or visualEffects (agent never exports/styles them).
-      if (isSkipNode) {
+      if (isSkipNode && !hasVisualReferenceAttrs) {
         return {
           id: node.id,
           tag: node.tag,
+          ...(node.childIds?.length ? { childIds: node.childIds } : {}),
           ...(node.bbox ? { bbox: node.bbox } : {}),
           inspectIndex: node.inspectIndex,
           semantic: compactSemantic(node),
@@ -989,10 +1026,13 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
       }
 
       // Export nodes: full compact treatment with trimmed attrs.
-      const agentAttrs = pickAgentAttrs(node.attrs);
+      const agentAttrs = pickAgentAttrs(node.attrs, {
+        includeVisualReferenceAttrs: hasVisualReferenceAttrs,
+      });
       return {
         id: node.id,
         tag: node.tag,
+        ...(node.childIds?.length ? { childIds: node.childIds } : {}),
         ...(agentAttrs ? { attrs: agentAttrs } : {}),
         ...(node.bbox ? { bbox: node.bbox } : {}),
         inspectIndex: node.inspectIndex,
@@ -1179,22 +1219,33 @@ const updateModuleSemanticDocument = async ({
 
 const buildModuleSemanticTextHints = (
   document: ModuleSemanticDocument,
-) => ({
-  blocks: document.nodes.flatMap((node) => {
-    const text =
-      readString(node.semantic.text) ?? readString(node.textContent) ?? undefined;
-    if (node.semantic.textHandling !== "dom-text" || !node.bbox || !text) return [];
-    return [
-      {
-        bbox: node.bbox,
-        id: node.id,
-        lineCount: node.semantic.lineCount,
-        role: node.semantic.textKind ?? node.semantic.kind,
-        text,
-      },
-    ];
-  }),
-});
+) => {
+  const textBlockColorById = new Map(
+    document.textBlocks.flatMap((block) => {
+      const color = readExplicitPaint(block.color);
+      return color ? [[block.id, color] as const] : [];
+    }),
+  );
+
+  return {
+    blocks: document.nodes.flatMap((node) => {
+      const text =
+        readString(node.semantic.text) ?? readString(node.textContent) ?? undefined;
+      if (node.semantic.textHandling !== "dom-text" || !node.bbox || !text) return [];
+      return [
+        {
+          bbox: node.bbox,
+          color:
+            readExplicitPaint(node.attrs.fill) ?? textBlockColorById.get(node.id),
+          id: node.id,
+          lineCount: node.semantic.lineCount,
+          role: node.semantic.textKind ?? node.semantic.kind,
+          text,
+        },
+      ];
+    }),
+  };
+};
 
 const readModuleAllowedAssets = async (
   moduleDir: string,

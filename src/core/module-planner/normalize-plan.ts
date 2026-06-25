@@ -317,6 +317,42 @@ const setBoundaryY = ({
   current.region.height = Math.max(1, currentBottom - nextY);
 };
 
+const SEAM_TOLERANCE_PX = 2;
+
+const isNaturalSeam = ({
+  boundary,
+  sourceBoxes,
+  viewport,
+}: {
+  boundary: number;
+  sourceBoxes: ValidationSourceBox[];
+  viewport: Box;
+}) => {
+  const candidateBoxes = sourceBoxes.filter(
+    (sourceBox) =>
+      sourceBox.kind !== "repeat-group" &&
+      !isLargeBackgroundLikeBox(sourceBox.box, viewport) &&
+      sourceBox.box.width > 0 &&
+      sourceBox.box.height > 0,
+  );
+  const sitsOnSourceEdge = candidateBoxes.some((sourceBox) => {
+    const box = sourceBox.box;
+    return (
+      Math.abs(boundary - box.y) <= SEAM_TOLERANCE_PX ||
+      Math.abs(boundary - (box.y + box.height)) <= SEAM_TOLERANCE_PX
+    );
+  });
+  if (!sitsOnSourceEdge) return false;
+
+  return !candidateBoxes.some((sourceBox) => {
+    const box = sourceBox.box;
+    return (
+      boundary > box.y + SEAM_TOLERANCE_PX &&
+      boundary < bottomOf(box) - SEAM_TOLERANCE_PX
+    );
+  });
+};
+
 const avoidCuttingSourceBands = ({
   modules,
   sourceBoxes,
@@ -331,21 +367,29 @@ const avoidCuttingSourceBands = ({
 
   const repaired = modules.map(cloneNormalizedModuleRegion);
   for (let index = 1; index < repaired.length; index += 1) {
-    const previous = repaired[index - 1]!;
     const current = repaired[index]!;
     const boundary = current.region.y;
+
     const crossingBands = bands.filter(
       (band) =>
         boundary > band.y + REGION_STITCH_TOLERANCE_PX &&
         boundary < bottomOf(band) - REGION_STITCH_TOLERANCE_PX,
     );
+    if (
+      isNaturalSeam({ boundary, sourceBoxes, viewport })
+    ) {
+      continue;
+    }
     if (!crossingBands.length) continue;
 
-    const assignToCurrent =
-      previous.kind === "global-shell" && current.kind !== "global-shell";
-    const desiredBoundary = assignToCurrent
-      ? Math.min(...crossingBands.map((band) => band.y))
-      : Math.max(...crossingBands.map((band) => bottomOf(band)));
+    const candidateTops = crossingBands.map((band) => band.y);
+    const candidateBottoms = crossingBands.map((band) => bottomOf(band));
+    const candidates = [...candidateTops, ...candidateBottoms];
+    const desiredBoundary = candidates.reduce((nearest, candidate) =>
+      Math.abs(candidate - boundary) < Math.abs(nearest - boundary)
+        ? candidate
+        : nearest,
+    );
 
     setBoundaryY({
       boundaryIndex: index,
@@ -621,6 +665,55 @@ const repairRegionFromOwnedNodes = ({
   };
 };
 
+const nodeOverlapRatio = (nodeBox: Box, region: Region) =>
+  intersectionArea(nodeBox, region) / Math.max(1, areaOf(nodeBox));
+
+const recoverUnownedRenderableNodes = ({
+  drafts,
+  sharedLayers,
+  svgLayout,
+  viewport,
+}: {
+  drafts: ModuleOwnershipDraft[];
+  sharedLayers: SvgSharedLayer[];
+  svgLayout?: NormalizeModelPlanInput["svgLayout"];
+  viewport: Box;
+}) => {
+  const recoveredDrafts = drafts.map((module) => ({
+    ...module,
+    candidateNodes: [...module.candidateNodes],
+    retainedNodes: [...module.retainedNodes],
+  }));
+  const ownedNodePaths = new Set([
+    ...sharedLayers.flatMap((layer) => layer.nodePaths),
+    ...recoveredDrafts.flatMap((module) => [
+      ...module.candidateNodes.map((match) => match.node.nodePath),
+      ...module.retainedNodes.map((match) => match.node.nodePath),
+    ]),
+  ]);
+  const allMatches = collectRenderableNodeMatches({ svgLayout, viewport });
+
+  allMatches.forEach((match) => {
+    if (ownedNodePaths.has(match.node.nodePath)) return;
+
+    const hits = collectModuleHits({ match, modules: recoveredDrafts });
+    if (!hits.length) return;
+    if (isCrossModuleSharedBackgroundCandidate({ hits, match, viewport })) return;
+
+    const owner = hits[0]!.module;
+    const centerInsideOwner = pointInside(centerOf(match.box), owner.region);
+    if (!centerInsideOwner && nodeOverlapRatio(match.box, owner.region) < 0.82) {
+      return;
+    }
+
+    owner.candidateNodes.push(match);
+    owner.retainedNodes.push(match);
+    ownedNodePaths.add(match.node.nodePath);
+  });
+
+  return recoveredDrafts;
+};
+
 const containsMostOf = (inner: Region, outer: Region) =>
   intersectionArea(inner, outer) / Math.max(1, areaOf(inner)) >= 0.82;
 
@@ -740,6 +833,11 @@ const applyNestedModuleOwnership = ({
     };
   });
 
+const isSemanticallyEmptyModule = (module: ModuleOwnershipDraft) =>
+  module.candidateNodes.length === 0 &&
+  module.retainedNodes.length === 0 &&
+  module.sourceContainerIds.length === 0;
+
 const isTinyEmptyModule = ({
   module,
   viewport,
@@ -747,26 +845,28 @@ const isTinyEmptyModule = ({
   module: ModuleOwnershipDraft;
   viewport: Box;
 }) => {
-  if (
-    module.candidateNodes.length ||
-    module.retainedNodes.length
-  ) {
-    return false;
-  }
+  if (!isSemanticallyEmptyModule(module)) return false;
 
   const tinyHeight = module.region.height <= Math.max(12, viewport.height * 0.012);
   const tinyArea = areaOf(module.region) <= areaOf(viewport) * 0.012;
   return tinyHeight || tinyArea;
 };
 
-const removeTinyEmptyModules = ({
+const removeEmptyModules = ({
   modules,
   viewport,
 }: {
   modules: ModuleOwnershipDraft[];
   viewport: Box;
-}) =>
-  modules.filter((module) => !isTinyEmptyModule({ module, viewport }));
+}) => {
+  const hasNonEmptyModule = modules.some(
+    (module) => !isSemanticallyEmptyModule(module),
+  );
+  if (!hasNonEmptyModule) {
+    return modules.filter((module) => !isTinyEmptyModule({ module, viewport }));
+  }
+  return modules.filter((module) => !isSemanticallyEmptyModule(module));
+};
 
 const toSvgVerticalModule = ({
   module,
@@ -910,7 +1010,13 @@ const normalizeModelPlan = ({
   const repairedDrafts = ownership.drafts.map((module) =>
     repairRegionFromOwnedNodes({ module, viewport }),
   );
-  const refreshedDrafts = repairedDrafts.map((module) => {
+  const recoveredDrafts = recoverUnownedRenderableNodes({
+    drafts: repairedDrafts,
+    sharedLayers: ownership.sharedLayers,
+    svgLayout,
+    viewport,
+  });
+  const refreshedDrafts = recoveredDrafts.map((module) => {
       const region = toSerializableRegion(module.id, module.region);
       const sourceContainerIds = sourceContainerIdsForRegion({
         containerLayout,
@@ -926,7 +1032,7 @@ const normalizeModelPlan = ({
     drafts: refreshedDrafts,
     viewport,
   });
-  const filteredDrafts = removeTinyEmptyModules({
+  const filteredDrafts = removeEmptyModules({
     modules: ownedDrafts,
     viewport,
   }).map((module, index) => ({

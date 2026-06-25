@@ -10,6 +10,7 @@ import type { Box } from "../../../core/geometry.js";
 import { isRecord } from "../../../core/type-guards.js";
 
 type ModuleTextBlock = {
+  color?: string;
   confidence?: number;
   id?: string;
   kind?: string;
@@ -168,6 +169,7 @@ const normalizeModuleTextBlocks = (input: ModuleTextBlocksFile) =>
     return [
       {
         confidence: block.confidence,
+        color: block.color,
         id,
         kind: block.kind,
         lineCount,
@@ -223,6 +225,7 @@ const createModuleTextStyleHints = async ({
             ? Math.round(region.height / lineCount)
             : block.region.height;
       return {
+        color: block.color,
         id: block.id,
         lineCount,
         lineHeight,

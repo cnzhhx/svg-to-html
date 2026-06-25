@@ -844,6 +844,7 @@ const writeModuleSemanticPayload = async ({
     const isSingleLine = !resolvedLineCount || resolvedLineCount <= 1;
     return {
       declarations: {
+        color: declarations.color,
         "font-family": declarations["font-family"],
         "font-size": declarations["font-size"],
         "font-weight": declarations["font-weight"],

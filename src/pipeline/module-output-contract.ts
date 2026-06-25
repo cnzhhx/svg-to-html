@@ -14,7 +14,9 @@ type GeneratedAssetManifestEntry = {
 
 
 const GENERATED_ASSET_NO_ORDINARY_TEXT_TREATMENT =
-  "no-ordinary-text";
+  "no-preprocessed-text";
+const GENERATED_ASSET_NON_PREPROCESSED_TEXT_TREATMENT =
+  "non-preprocessed-text-ok";
 
 const createGeneratedAssetManifestEntry = ({
   assetRole = "visual-asset",
@@ -44,6 +46,7 @@ const createGeneratedAssetManifestEntry = ({
 });
 
 export {
+  GENERATED_ASSET_NON_PREPROCESSED_TEXT_TREATMENT,
   GENERATED_ASSET_NO_ORDINARY_TEXT_TREATMENT,
   createGeneratedAssetManifestEntry,
 };

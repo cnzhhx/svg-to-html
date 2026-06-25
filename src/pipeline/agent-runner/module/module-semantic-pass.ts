@@ -11,7 +11,7 @@ import {
 } from "../../../config/index.js";
 import { capturePage, launchEdge } from "../../../core/cdp.js";
 import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types.js";
-import type { Box } from "../../../core/geometry.js";
+import { type Box, intersectionArea, areaOf } from "../../../core/geometry.js";
 import { runVisionLlm } from "../../llm-client.js";
 import { sessionStore } from "../../../session-store.js";
 import { Semaphore } from "../queue/concurrency.js";
@@ -98,10 +98,7 @@ const PREVIEW_MAX_UPSCALE = 3;
 const PREVIEW_MAX_LONG_SIDE = 240;
 const RECHECK_BATCH_SIZE = 4;
 const MAX_TEXT_RECHECK_CANDIDATES = 12;
-const DUPLICATE_PARENT_EXPORT_NOTE =
-  "Skip this node as an export target because this parent duplicates a single child with the same visual bounds.";
-const PREFERRED_PARENT_BUNDLE_NOTE =
-  "Skip this node as an export target because a compact parent visual bundle is a better grouped target than this child.";
+
 const MISSING_TEXT_RECHECK_NOTE =
   "Vision output looked text-like but omitted readable text; downgraded until recheck resolves it.";
 const CONTAINER_VISUAL_TAGS = new Set(["a", "g", "svg", "switch", "symbol"]);
@@ -152,6 +149,72 @@ const parseNumericAttr = (value: string | undefined) => {
   if (!value) return undefined;
   const parsed = Number(value.trim());
   return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const isExplicitPaint = (value: string | undefined) => {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.length > 0 &&
+    normalized !== "none" &&
+    normalized !== "transparent" &&
+    !normalized.startsWith("url(")
+  );
+};
+
+const formatAlpha = (value: number) =>
+  Number(value.toFixed(3)).toString();
+
+const applyPaintOpacity = (
+  paint: string,
+  opacity: number | undefined,
+) => {
+  if (opacity === undefined || opacity >= 0.999) return paint;
+  if (opacity <= 0.001) return "rgba(0, 0, 0, 0)";
+  const normalized = paint.trim();
+  const alpha = formatAlpha(opacity);
+
+  const hex = normalized.match(
+    /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i,
+  );
+  if (hex) {
+    const raw = hex[1]!;
+    const expand = (value: string) =>
+      value.length === 1 ? `${value}${value}` : value;
+    const r = Number.parseInt(
+      raw.length <= 4 ? expand(raw[0]!) : raw.slice(0, 2),
+      16,
+    );
+    const g = Number.parseInt(
+      raw.length <= 4 ? expand(raw[1]!) : raw.slice(2, 4),
+      16,
+    );
+    const b = Number.parseInt(
+      raw.length <= 4 ? expand(raw[2]!) : raw.slice(4, 6),
+      16,
+    );
+    const embeddedAlpha =
+      raw.length === 4
+        ? Number.parseInt(expand(raw[3]!), 16) / 255
+        : raw.length === 8
+          ? Number.parseInt(raw.slice(6, 8), 16) / 255
+          : 1;
+    return `rgba(${r}, ${g}, ${b}, ${formatAlpha(embeddedAlpha * opacity)})`;
+  }
+
+  const rgb = normalized.match(
+    /^rgb\(\s*([^)]+)\s*\)$/i,
+  );
+  if (rgb) return `rgba(${rgb[1]}, ${alpha})`;
+
+  return paint;
+};
+
+const textColorFromNodePaint = (node: ModuleSemanticNode) => {
+  if (!isExplicitPaint(node.attrs.fill)) return undefined;
+  const fillOpacity = parseNumericAttr(node.attrs["fill-opacity"]) ?? 1;
+  const opacity = parseNumericAttr(node.attrs.opacity) ?? 1;
+  return applyPaintOpacity(node.attrs.fill!.trim(), fillOpacity * opacity);
 };
 
 const isTransparentPaint = (value: string | undefined) => {
@@ -763,6 +826,186 @@ const buildDeterministicSemantic = (
   return null;
 };
 
+// ---------------------------------------------------------------------------
+// Text effect layer detection
+// ---------------------------------------------------------------------------
+// Design tools (Figma, Sketch) often export text with visual effects (outside
+// stroke, inner stroke, gradient overlay, etc.) as multiple stacked path nodes
+// under a shared parent <g>. These effect layer paths share nearly identical
+// bounding boxes with the text fill path but have significantly more complex
+// path data (high pathDataLength) and typically carry a `mask` attribute.
+//
+// Detecting this pattern deterministically allows us to skip these nodes from
+// the expensive vision classification pass and provide structured info to the
+// module agent instead.
+// ---------------------------------------------------------------------------
+
+type TextEffectLayerGroup = {
+  /** The parent <g> node containing the layers. */
+  parentId: string;
+  /** The primary fill layer node id (likely the actual text). */
+  fillNodeId: string;
+  /** The effect layer node id(s) (stroke/mask layers). */
+  effectNodeIds: string[];
+  /** Detected effect type description. */
+  effectType: string;
+};
+
+/**
+ * Detect text effect layer groups among the document nodes.
+ *
+ * Generic detection criteria (not dependent on specific URL naming):
+ * 1. A parent <g> node (typically with a filter attribute for drop shadow).
+ * 2. Contains 2+ leaf path children with no children of their own.
+ * 3. At least one child path has a `mask` attribute (the effect layer).
+ * 4. The masked path's bbox overlaps significantly with a sibling's bbox
+ *    (overlap ratio > 0.6 based on smaller area).
+ * 5. The masked path has substantially higher pathDataLength than the fill
+ *    sibling (ratio >= 3x), indicating it carries outline/stroke geometry.
+ */
+const detectTextEffectLayerGroups = (
+  nodes: ModuleSemanticNode[],
+): TextEffectLayerGroup[] => {
+  const nodesById = new Map(nodes.map((n) => [n.id, n]));
+  const groups: TextEffectLayerGroup[] = [];
+  const processedIds = new Set<string>();
+
+  for (const node of nodes) {
+    // Only inspect <g> nodes that are containers
+    if (node.tag !== "g") continue;
+    if (!node.childIds || node.childIds.length < 2) continue;
+
+    // Gather leaf path children
+    const pathChildren: ModuleSemanticNode[] = [];
+    for (const childId of node.childIds) {
+      const child = nodesById.get(childId);
+      if (
+        child &&
+        child.tag === "path" &&
+        child.childIds.length === 0 &&
+        child.bbox
+      ) {
+        pathChildren.push(child);
+      }
+    }
+    if (pathChildren.length < 2) continue;
+
+    // Identify effect layers: paths with a mask attribute
+    const effectCandidates = pathChildren.filter((c) => Boolean(c.attrs.mask));
+    if (effectCandidates.length === 0) continue;
+
+    // Identify fill candidates: paths WITHOUT a mask
+    const fillCandidates = pathChildren.filter((c) => !c.attrs.mask);
+    if (fillCandidates.length === 0) continue;
+
+    // For each effect candidate, find a matching fill sibling
+    const effectNodeIds: string[] = [];
+    let fillNodeId: string | undefined;
+    let effectType = "masked-layer";
+
+    for (const effect of effectCandidates) {
+      if (!effect.bbox) continue;
+      const effectPdl = Number(effect.attrs.pathDataLength ?? 0);
+
+      // Find a fill sibling with high bbox overlap
+      const matchingFill = fillCandidates.find((fill) => {
+        if (!fill.bbox) return false;
+        const smaller = Math.min(areaOf(fill.bbox), areaOf(effect.bbox!));
+        if (smaller <= 0) return false;
+        const overlap = intersectionArea(fill.bbox, effect.bbox!) / smaller;
+        if (overlap < 0.6) return false;
+
+        // Verify pdl ratio: effect layer should have significantly more path data
+        const fillPdl = Number(fill.attrs.pathDataLength ?? 0);
+        if (fillPdl <= 0 || effectPdl <= 0) return false;
+        const pdlRatio = effectPdl / fillPdl;
+        return pdlRatio >= 3;
+      });
+
+      if (matchingFill) {
+        effectNodeIds.push(effect.id);
+        fillNodeId = matchingFill.id;
+
+        // Infer effect type from mask URL or attributes
+        const mask = effect.attrs.mask ?? "";
+        if (mask.includes("outside")) {
+          effectType = "outside-stroke";
+        } else if (mask.includes("inside")) {
+          effectType = "inside-stroke";
+        }
+      }
+    }
+
+    if (fillNodeId && effectNodeIds.length > 0 && !processedIds.has(fillNodeId)) {
+      groups.push({
+        parentId: node.id,
+        fillNodeId,
+        effectNodeIds,
+        effectType,
+      });
+      processedIds.add(fillNodeId);
+      effectNodeIds.forEach((id) => processedIds.add(id));
+    }
+  }
+
+  return groups;
+};
+
+/**
+ * Apply deterministic semantics for detected text effect layer groups.
+ * The parent group is the export target so the fill and effect layers stay
+ * merged as one visual asset. Child layers are skipped to prevent agents from
+ * exporting only the fill path and dropping masks/strokes.
+ */
+const applyTextEffectLayerSemantics = (
+  groups: TextEffectLayerGroup[],
+  deterministicById: Map<string, ModuleSemanticNodeSemantic>,
+  nodes: ModuleSemanticNode[],
+) => {
+  const nodesById = new Map(nodes.map((n) => [n.id, n]));
+  let count = 0;
+
+  for (const group of groups) {
+    const parentNode = nodesById.get(group.parentId);
+
+    // Mark parent <g>: export the complete text effect bundle.
+    if (parentNode) {
+      deterministicById.set(group.parentId, {
+        containsReadableText: true,
+        exportDecision: "export",
+        kind: "text-effect-group",
+        notes: `text effect group (${group.effectType}); fill: ${group.fillNodeId}; effects: [${group.effectNodeIds.join(", ")}]`,
+        textHandling: "export-asset",
+      });
+      count += 1;
+    }
+
+    // Mark fill layer as skipped because the parent group is the export target.
+    deterministicById.set(group.fillNodeId, {
+      containsReadableText: true,
+      exportDecision: "skip",
+      kind: "visual-text",
+      notes: `text fill layer of ${group.parentId}; export parent text effect group to preserve ${group.effectType}`,
+      textHandling: "ignore",
+    });
+    count += 1;
+
+    // Mark effect layer(s): skip entirely, they are decorative companions
+    for (const effectId of group.effectNodeIds) {
+      deterministicById.set(effectId, {
+        containsReadableText: false,
+        exportDecision: "skip",
+        kind: "text-effect-layer",
+        notes: `${group.effectType} effect layer of ${group.fillNodeId}; parent: ${group.parentId}`,
+        textHandling: "ignore",
+      });
+      count += 1;
+    }
+  }
+
+  return count;
+};
+
 const toProbeNode = (node: ModuleSemanticNode): SemanticProbeNode | null =>
   node.bbox && node.selector && node.childIds.length === 0
     ? {
@@ -831,11 +1074,6 @@ const toElementClassification = (
   return semantic.exportDecision === "export" ? "decoration" : "skip";
 };
 
-const appendSemanticNote = (current: string | undefined, note: string) => {
-  if (!current) return note;
-  if (current.includes(note)) return current;
-  return `${current}; ${note}`;
-};
 
 const summarizeSemanticNodes = (
   document: ModuleSemanticDocument,
@@ -1416,28 +1654,121 @@ const analyzeModuleElements = async ({
     return probeNode ? [probeNode] : [];
   });
 
+  // --- Text effect layer detection ---
+  // Detect stacked text effect patterns (e.g. fill + outside-stroke layers
+  // under the same parent <g>) and classify them deterministically. This
+  // removes them from the vision candidate pool entirely.
+  const textEffectGroups = detectTextEffectLayerGroups(semantic.nodes);
+  const textEffectNodeIds = new Set<string>();
+  if (textEffectGroups.length > 0) {
+    const effectCount = applyTextEffectLayerSemantics(
+      textEffectGroups,
+      deterministicById,
+      semantic.nodes,
+    );
+    for (const group of textEffectGroups) {
+      textEffectNodeIds.add(group.parentId);
+      textEffectNodeIds.add(group.fillNodeId);
+      for (const eid of group.effectNodeIds) {
+        textEffectNodeIds.add(eid);
+      }
+    }
+    deterministicNonTextCount += effectCount;
+    sessionStore.addLog(
+      sessionId,
+      `[module-semantic] ${module.id}: detected ${textEffectGroups.length} text effect group(s), removed ${textEffectNodeIds.size} node(s) from vision candidates`,
+    );
+  }
+
+  // Filter out text effect layer nodes from probe candidates
+  const filteredProbeCandidates = textEffectNodeIds.size > 0
+    ? allProbeCandidates.filter((node) => !textEffectNodeIds.has(node.id))
+    : allProbeCandidates;
+
+  // --- Probe node deduplication ---
+  // Nodes with identical visual fingerprints (same tag, same bbox dimensions,
+  // same visual attributes) will produce identical probe images. We only need
+  // to send one representative to the vision model and copy the result to all
+  // duplicates. This significantly reduces vision calls for designs with
+  // repeated visual elements (e.g. same icon/text in a card grid).
   const deduplicateProbeNodes = (
     nodes: SemanticProbeNode[],
   ): {
-    childToBundleParent: Map<string, string>;
     deduplicated: SemanticProbeNode[];
-    parentToChild: Map<string, string>;
-  } => ({
-    childToBundleParent: new Map<string, string>(),
-    deduplicated: nodes,
-    parentToChild: new Map<string, string>(),
-  });
+    duplicateToRepresentative: Map<string, string>;
+  } => {
+    if (nodes.length <= 1) {
+      return { deduplicated: nodes, duplicateToRepresentative: new Map() };
+    }
+
+    // Compute a visual fingerprint for each node based on properties that
+    // determine its rendered appearance (independent of position).
+    const computeFingerprint = (node: SemanticProbeNode): string => {
+      if (node.tag === "image") return `${node.tag}|${node.id}`;
+      const attrs = node.attrs;
+      const parts = [
+        node.tag,
+        // bbox dimensions (rounded to avoid floating point noise)
+        Math.round(node.bbox.width * 1000).toString(),
+        Math.round(node.bbox.height * 1000).toString(),
+        // visual attributes that affect rendering
+        attrs.pathDataLength ?? "",
+        attrs.fill ?? "",
+        attrs.stroke ?? "",
+        attrs.opacity ?? "",
+        attrs.mask ?? "",
+        attrs["clip-path"] ?? "",
+        attrs["fill-opacity"] ?? "",
+        attrs["stroke-width"] ?? "",
+      ];
+      return parts.join("|");
+    };
+
+    const fingerprintGroups = new Map<string, SemanticProbeNode[]>();
+    for (const node of nodes) {
+      const fp = computeFingerprint(node);
+      const group = fingerprintGroups.get(fp);
+      if (group) {
+        group.push(node);
+      } else {
+        fingerprintGroups.set(fp, [node]);
+      }
+    }
+
+    const deduplicated: SemanticProbeNode[] = [];
+    const duplicateToRepresentative = new Map<string, string>();
+
+    for (const [, group] of fingerprintGroups) {
+      if (group.length === 0) continue;
+      // First node in the group is the representative
+      const representative = group[0]!;
+      deduplicated.push(representative);
+
+      // Map all other nodes in the group to the representative
+      for (let i = 1; i < group.length; i++) {
+        duplicateToRepresentative.set(group[i]!.id, representative.id);
+      }
+    }
+
+    return { deduplicated, duplicateToRepresentative };
+  };
 
   const {
-    childToBundleParent,
     deduplicated: deduplicatedProbes,
-    parentToChild: skippedParents,
+    duplicateToRepresentative,
   } =
-    deduplicateProbeNodes(allProbeCandidates);
+    deduplicateProbeNodes(filteredProbeCandidates);
 
   const probeNodes = deduplicatedProbes.filter((node) =>
     hasIntrinsicVisualPresence(node),
   );
+
+  if (duplicateToRepresentative.size > 0) {
+    sessionStore.addLog(
+      sessionId,
+      `[module-semantic] ${module.id}: deduplicated ${duplicateToRepresentative.size} visually identical probe(s), ${probeNodes.length} unique probes remain`,
+    );
+  }
 
   sessionStore.addLog(
     sessionId,
@@ -1498,54 +1829,19 @@ const analyzeModuleElements = async ({
     visionSemaphore,
   });
 
-  // Backfill skipped parent nodes from their child semantic/sheet
-  for (const [parentId, childId] of skippedParents) {
-    const childSemantic = semanticsById.get(childId);
-    if (childSemantic) {
-      semanticsById.set(parentId, childSemantic);
+  // Backfill deduplicated probe nodes: copy the vision result from each
+  // representative node to all its visual duplicates.
+  for (const [duplicateId, representativeId] of duplicateToRepresentative) {
+    const repSemantic = semanticsById.get(representativeId);
+    if (repSemantic) {
+      semanticsById.set(duplicateId, repSemantic);
     }
   }
-  const skippedParentIds = new Set(skippedParents.keys());
-  const bundledChildIds = new Set(childToBundleParent.keys());
 
   const finalizedNodes = nextNodes.map((node) => {
     const classified = semanticsById.get(node.id);
-    const isDeduplicatedParent = skippedParentIds.has(node.id);
-    const bundledParentId = childToBundleParent.get(node.id);
-    const bundledParentSemantic = bundledParentId
-      ? semanticsById.get(bundledParentId)
-      : undefined;
-    const semanticValue =
-      isDeduplicatedParent && classified
-        ? {
-            ...classified,
-            exportDecision: "skip" as const,
-            notes: appendSemanticNote(
-              classified.notes,
-              DUPLICATE_PARENT_EXPORT_NOTE,
-            ),
-            textHandling:
-              classified.textHandling === "export-asset"
-                ? "ignore"
-                : classified.textHandling,
-          }
-        : bundledParentSemantic && bundledChildIds.has(node.id)
-          ? {
-              ...bundledParentSemantic,
-              exportDecision: "skip" as const,
-              notes: appendSemanticNote(
-                bundledParentSemantic.notes,
-                PREFERRED_PARENT_BUNDLE_NOTE,
-              ),
-              textHandling:
-                bundledParentSemantic.textHandling === "export-asset"
-                  ? "ignore"
-                  : bundledParentSemantic.textHandling,
-            }
-        : (classified ?? node.semantic);
-    const assignment = isDeduplicatedParent
-      ? undefined
-      : sheetAssignments.get(node.id);
+    const semanticValue = classified ?? node.semantic;
+    const assignment = sheetAssignments.get(node.id);
     return {
       ...node,
       semantic: semanticValue,
@@ -1569,14 +1865,18 @@ const analyzeModuleElements = async ({
         Boolean(node.bbox) &&
         Boolean(node.semantic.text),
     )
-    .map((node) => ({
-      id: node.id,
-      kind: node.semantic.textKind ?? node.semantic.kind,
-      lineCount: node.semantic.lineCount,
-      sourceNodeIds: [node.id],
-      text: node.semantic.text,
-      textRegion: roundBox(node.bbox),
-    }));
+    .map((node) => {
+      const color = textColorFromNodePaint(node);
+      return {
+        ...(color ? { color } : {}),
+        id: node.id,
+        kind: node.semantic.textKind ?? node.semantic.kind,
+        lineCount: node.semantic.lineCount,
+        sourceNodeIds: [node.id],
+        text: node.semantic.text,
+        textRegion: roundBox(node.bbox),
+      };
+    });
 
   const nextDocument: ModuleSemanticDocument = {
     ...semantic,

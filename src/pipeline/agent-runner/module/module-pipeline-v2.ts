@@ -350,6 +350,9 @@ const buildTextStyleHintsFileFromSemantic = (
             ),
           ) as Record<string, string>)
         : {});
+    if (typeof block.color === "string" && block.color.trim().length > 0) {
+      declarations.color = block.color.trim();
+    }
     if (Object.keys(declarations).length === 0) return [];
     return [
       {

@@ -14,6 +14,8 @@ import {
   threadOptions,
 } from "../../llm-client.js";
 import { runAgentTurnCore } from "../turn/agent-turn-core.js";
+import { verifyModuleLocal } from "./module-local-verify.js";
+import { verifyModuleFrameworkLocal } from "./module-framework-local-verify.js";
 import type {
   SvgVerticalModule,
   SvgVerticalModuleReport,
@@ -24,6 +26,7 @@ import {
   resolveModuleOutputFormat,
   getSourceFragmentFileName,
 } from "../../../prompts/module-agent.js";
+import { sanitizeModuleOutputFiles } from "./module-output-sanitize.js";
 
 type AgentUnitInput = {
   module: SvgVerticalModule;
@@ -350,6 +353,62 @@ export async function runAgentUnit(
       });
     }
     throw error;
+  }
+
+  const sanitizeResult = await sanitizeModuleOutputFiles({
+    module,
+    moduleDir: workingDir,
+  });
+  const turnRanVerify = turn.turnSummary.verifyUsage.verifyCount > 0;
+  if (sanitizeResult.changed) {
+    sessionStore.addLog(
+      sessionId,
+      `[agent-unit:${module.id}] sanitized module output: ${sanitizeResult.reason ?? "normalized root styles"}`,
+    );
+    if (turnRanVerify) {
+      const localVerify = await verifyModuleLocal({
+        module,
+        moduleDir: workingDir,
+        modulePlan,
+        modulePlanPath: path.join(path.dirname(workingDir), "module-plan.json"),
+        moduleSvgPath,
+        onProgress: (message) =>
+          sessionStore.addLog(
+            sessionId,
+            `[agent-unit:${module.id}] post-sanitize verify: ${message}`,
+          ),
+        round,
+        scale: design.scale,
+        scaffoldHtmlPath: path.join(path.dirname(workingDir), "modules-scaffold.html"),
+      });
+      finalDiffRatio = localVerify.diffRatio;
+      sessionStore.addLog(
+        sessionId,
+        `[agent-unit:${module.id}] post-sanitize local diffRatio=${(localVerify.diffRatio * 100).toFixed(2)}%`,
+      );
+      if (outputFormat !== "html") {
+        const frameworkVerify = await verifyModuleFrameworkLocal({
+          design,
+          module,
+          moduleDir: workingDir,
+          moduleSvgPath,
+          onProgress: (message) =>
+            sessionStore.addLog(
+              sessionId,
+              `[agent-unit:${module.id}] post-sanitize framework verify: ${message}`,
+            ),
+          outputFormat,
+          round,
+        });
+        if (frameworkVerify) {
+          finalDiffRatio = Math.max(finalDiffRatio, frameworkVerify.diffRatio);
+          sessionStore.addLog(
+            sessionId,
+            `[agent-unit:${module.id}] post-sanitize framework diffRatio=${(frameworkVerify.diffRatio * 100).toFixed(2)}%`,
+          );
+        }
+      }
+    }
   }
 
   // 读取输出文件
