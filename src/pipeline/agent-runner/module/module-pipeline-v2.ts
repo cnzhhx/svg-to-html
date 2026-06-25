@@ -486,7 +486,7 @@ const moduleHasDeclaredSourceContent = (module: SvgVerticalModule) =>
 const semanticNodeCarriesUsableVisual = (
   node: ModuleSemanticDocument["nodes"][number],
 ) => {
-  if (!node.visible) return false;
+  if (node.visible === false) return false;
   const tag = node.tag.trim().toLowerCase();
   if (SEMANTIC_CONTAINER_TAGS.has(tag)) return false;
   if (node.bbox && node.bbox.width > 0 && node.bbox.height > 0) return true;
