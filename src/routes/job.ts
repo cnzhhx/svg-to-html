@@ -29,6 +29,9 @@ const API_EVENT_MESSAGE_TEXT_LIMIT = 100;
 const API_REASONING_MESSAGE_TEXT_LIMIT = 4_000;
 const API_LOG_TEXT_LIMIT = 2_000;
 const API_RECENT_LOG_LIMIT = 40;
+const SESSION_DELETE_CLEANUP_ATTEMPTS = 3;
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const truncateApiText = (value: unknown, limit: number) =>
   truncate(String(value ?? ""), limit, "…");
@@ -207,7 +210,33 @@ const canStartSession = (status: string) =>
 const canAcceptUserMessage = (status: string) =>
   status !== "queued" && status !== "running";
 
+const forceDeleteSessionFilesWithRetry = async (session: Session) => {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= SESSION_DELETE_CLEANUP_ATTEMPTS; attempt++) {
+    try {
+      await sessionStore.forceDeleteSessionFiles(session);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < SESSION_DELETE_CLEANUP_ATTEMPTS) {
+        await delay(250 * attempt);
+      }
+    }
+  }
+  throw lastError;
+};
 
+const scheduleForceDeleteSessionFiles = (
+  session: Session,
+  phase: "initial" | "final",
+) => {
+  void forceDeleteSessionFilesWithRetry(session).catch((error) => {
+    console.error(
+      `[session-delete] ${phase} cleanup failed (${session.id}):`,
+      error,
+    );
+  });
+};
 
 router.get("/sessions/:id", (req, res) => {
   const session = sessionStore.get(String(req.params["id"] ?? ""));
@@ -300,19 +329,25 @@ router.delete("/sessions/:id", async (req, res) => {
     return;
   }
 
-  const canceledActiveRun =
-    session.status === "queued" || session.status === "running";
-
+  const canceledRun =
+    session.status === "queued" || session.status === "running"
+      ? cancelSessionRun(session.id)
+      : undefined;
   try {
-    if (canceledActiveRun) {
-      await cancelSessionRun(session.id);
+    const deletedSession = canceledRun?.active
+      ? sessionStore.detachSession(session.id)
+      : await sessionStore.deleteSession(session.id);
+    if (canceledRun?.active && deletedSession) {
+      scheduleForceDeleteSessionFiles(deletedSession, "initial");
+      void canceledRun.finished.then(() => {
+        scheduleForceDeleteSessionFiles(deletedSession, "final");
+      });
     }
-    await sessionStore.deleteSession(session.id);
     res.json({ deleted: true, sessionId: session.id });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (canceledActiveRun && sessionStore.get(session.id)) {
-      sessionStore.failPipeline(session.id, `删除失败：${message}`);
+    if (canceledRun?.queued && sessionStore.get(session.id)) {
+      enqueueSession(session.id);
     }
     res.status(500).json({ error: message });
   }

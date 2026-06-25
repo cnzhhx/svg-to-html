@@ -386,6 +386,7 @@ const buildTextStyleHintsFileFromSemantic = (
 };
 
 const preprocessModuleSemantic = async ({
+  controller,
   design,
   module,
   moduleDir,
@@ -393,6 +394,7 @@ const preprocessModuleSemantic = async ({
   sessionId,
   visionSemaphore,
 }: {
+  controller: AbortController;
   design: ResolvedDesignTarget;
   module: SvgVerticalModule;
   moduleDir: string;
@@ -404,9 +406,11 @@ const preprocessModuleSemantic = async ({
     module,
     moduleDir,
     scale: design.scale,
+    signal: controller.signal,
     sessionId,
     visionSemaphore,
   });
+  throwIfRunAborted(controller);
   const currentSemantic = await readModuleSemanticDocument(moduleDir);
   if (!currentSemantic) {
     throw new Error(`module-semantic.json missing after semantic pass: ${module.id}`);
@@ -643,6 +647,7 @@ export async function runModulePipelineV2(
     sessionStore.startStep(sessionId, "agent");
     // 串行预热 module-reference.png，避免多个模块并发 capturePage 争抢 browser instance
     for (const module of modulesToRun) {
+      throwIfRunAborted(controller);
       const moduleDir = getModuleDir(modulesRootDir, module);
       await mkdir(moduleDir, { recursive: true });
       const moduleSvgPath = await ensureModuleSvg({
@@ -665,6 +670,7 @@ export async function runModulePipelineV2(
       signal: controller.signal,
       worker: async (module) => {
         const moduleDir = getModuleDir(modulesRootDir, module);
+        throwIfRunAborted(controller);
         await mkdir(moduleDir, { recursive: true });
         const moduleSvgPath = await ensureModuleSvg({
           design,
@@ -686,6 +692,7 @@ export async function runModulePipelineV2(
           moduleSemantic,
           textBlocksFile,
         } = await preprocessModuleSemantic({
+          controller,
           design,
           module,
           moduleDir,
@@ -693,6 +700,7 @@ export async function runModulePipelineV2(
           sessionId,
           visionSemaphore,
         });
+        throwIfRunAborted(controller);
         const moduleTextBlockCount = textBlocksFile.blockCount;
         const existingThread = moduleThreads.get(module.id);
         const persistedThreadId = persistedModuleThreadIds[module.id];
@@ -911,6 +919,7 @@ export async function runModulePipelineV2(
       signal: controller.signal,
       worker: async (module) => {
         const moduleDir = getModuleDir(modulesRootDir, module);
+        throwIfRunAborted(controller);
         const moduleSvgPath = await ensureModuleSvg({
           design,
           module,
@@ -942,6 +951,7 @@ export async function runModulePipelineV2(
               round: 1,
               scale: design.scale,
               scaffoldHtmlPath,
+              signal: controller.signal,
             });
           } catch (error) {
             mergeError = error instanceof Error ? error.message : String(error);
@@ -965,6 +975,7 @@ export async function runModulePipelineV2(
                   `[module-pipeline-v2:${module.id}] framework verify: ${message}`,
                 ),
               round: 1,
+              signal: controller.signal,
             });
             if (frameworkResult) {
               if (frameworkResult.buildError) {
@@ -1052,6 +1063,7 @@ export async function runModulePipelineV2(
       modules,
       modulesRootDir,
     });
+    throwIfRunAborted(controller);
     const draftHtmlPath = path.join(
       modulesRootDir,
       "draft-round-1.html",
@@ -1180,6 +1192,7 @@ export async function runModulePipelineV2(
     modules,
     modulesRootDir,
   });
+  throwIfRunAborted(controller);
   sessionStore.addLog(
     sessionId,
     "[module-pipeline-v2] validating restored module snapshots",
@@ -1189,6 +1202,7 @@ export async function runModulePipelineV2(
     limit: maxParallelModuleAgents,
     signal: controller.signal,
     worker: async (module) => {
+      throwIfRunAborted(controller);
       const moduleDir = getModuleDir(modulesRootDir, module);
       const restoredSnapshot = bestSnapshots.has(module.id);
       const preserveExistingInputFailure =
@@ -1216,6 +1230,7 @@ export async function runModulePipelineV2(
       }
     },
   });
+  throwIfRunAborted(controller);
   const finalMergeResult = await mergeModulesIntoHtml({
     design,
     modulePlanPath,
@@ -1234,6 +1249,7 @@ export async function runModulePipelineV2(
     moduleMergeManifestPath,
     sessionId,
   });
+  throwIfRunAborted(controller);
 
   const finalVerifyResult = await runVerify(
     sessionId,
@@ -1241,8 +1257,9 @@ export async function runModulePipelineV2(
     artifactDir,
     2,
     true,
-    { mode: "full" },
+    { mode: "full", signal: controller.signal },
   );
+  throwIfRunAborted(controller);
   moduleValidationRuns.push({
     diffRatio: finalVerifyResult.diffRatio,
     failedModuleIds: [...failedModules.keys()].sort(),
@@ -1272,6 +1289,7 @@ export async function runModulePipelineV2(
       viewportHeight: designHeight,
       viewportWidth: designWidth,
     });
+    throwIfRunAborted(controller);
     if (!health.ok) {
       const message = `framework render health check failed: ${health.reason ?? "mount point empty"}`;
       sessionStore.addLog(
@@ -1359,6 +1377,7 @@ export async function runModuleUserRevision(
   } = input;
 
   let modulePlan = await readModulePlan(modulePlanPath);
+  throwIfRunAborted(controller);
   const currentSession = sessionStore.get(sessionId);
   const outputFormat = normalizeOutputFormat(
     currentSession?.outputFormat ?? modulePlan.outputFormat,
@@ -1402,6 +1421,7 @@ export async function runModuleUserRevision(
   const moduleDir = getModuleDir(modulesRootDir, module);
   const persistedModuleThreadIds = readPersistedModuleAgentThreadIds(sessionId);
   await mkdir(moduleDir, { recursive: true });
+  throwIfRunAborted(controller);
 
   sessionStore.startWorkflowNode(sessionId, "agent", {
     detail: `正在按用户要求修复模块 ${module.id}`,
@@ -1419,6 +1439,7 @@ export async function runModuleUserRevision(
     module,
     modulesRootDir,
   });
+  throwIfRunAborted(controller);
   const moduleSemanticDraft = await createModuleSemanticDraft({
     module,
     moduleDir,
@@ -1432,11 +1453,13 @@ export async function runModuleUserRevision(
     sharedLayers: modulePlan.sharedLayers ?? [],
     scale: design.scale,
   });
+  throwIfRunAborted(controller);
   sessionStore.addLog(
     sessionId,
     `[module-user-revision:${module.id}] semantic draft ready: ${moduleSemanticDraft.jsonPath}`,
   );
   const { moduleSemantic } = await preprocessModuleSemantic({
+    controller,
     design,
     module,
     moduleDir,
@@ -1444,6 +1467,7 @@ export async function runModuleUserRevision(
     sessionId,
     visionSemaphore: new Semaphore(SEMANTIC_VISION_CONCURRENCY),
   });
+  throwIfRunAborted(controller);
 
   const thread = createAgentUnitThread({
     artifactDir,
@@ -1542,6 +1566,7 @@ export async function runModuleUserRevision(
     modules,
     modulesRootDir,
   });
+  throwIfRunAborted(controller);
   let selectedModuleOutputError: string | undefined;
   let selectedModuleOutputFailureKind: ModuleValidationFailureKind | undefined;
   if (!hasCompleteModuleOutput(moduleDir, outputFormat)) {
@@ -1566,6 +1591,7 @@ export async function runModuleUserRevision(
     moduleMergeManifestPath,
     sessionId,
   });
+  throwIfRunAborted(controller);
 
   const previousModuleFailures =
     previousSession?.result.moduleFailures &&
@@ -1627,8 +1653,9 @@ export async function runModuleUserRevision(
     artifactDir,
     round,
     true,
-    { mode: "full" },
+    { mode: "full", signal: controller.signal },
   );
+  throwIfRunAborted(controller);
   const moduleValidationRuns = [
     ...((previousSession?.result.moduleValidationRuns ??
       []) as ModuleValidationRun[]),

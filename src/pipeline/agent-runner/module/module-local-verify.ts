@@ -21,6 +21,7 @@ type ModuleLocalVerifyInput = {
   round: number;
   scale?: number;
   scaffoldHtmlPath: string;
+  signal?: AbortSignal;
   onProgress?: (message: string) => void;
 };
 
@@ -378,6 +379,7 @@ const verifyModuleLocal = async ({
   round,
   scale,
   scaffoldHtmlPath,
+  signal,
 }: ModuleLocalVerifyInput): Promise<ModuleLocalVerifyResult> => {
   const [previewFragmentHtml, moduleCss, scaffoldHtml, allowedAssets] =
     await Promise.all([
@@ -452,6 +454,7 @@ const verifyModuleLocal = async ({
       mode: "fast",
       renderEntryPath: previewHtmlPath,
       scale,
+      signal,
       sourceBasis: target.sourceBasis,
       sourceHtmlPath: target.sourceHtmlPath,
     },

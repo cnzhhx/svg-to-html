@@ -188,6 +188,7 @@ export const verifyModuleFrameworkLocal = async ({
   onProgress,
   outputFormat,
   round,
+  signal,
 }: {
   design: { scale?: number; width: number; height: number };
   module: SvgVerticalModule;
@@ -196,6 +197,7 @@ export const verifyModuleFrameworkLocal = async ({
   onProgress?: (message: string) => void;
   outputFormat?: "vue" | "react";
   round: number;
+  signal?: AbortSignal;
 }): Promise<ModuleFrameworkLocalVerifyResult | null> => {
   const frameworkFormat = outputFormat ?? null;
   if (!frameworkFormat) return null;
@@ -388,6 +390,7 @@ export const verifyModuleFrameworkLocal = async ({
       mode: "fast",
       renderEntryPath: frameworkRenderEntryPath,
       scale: design.scale,
+      signal,
     },
   );
 

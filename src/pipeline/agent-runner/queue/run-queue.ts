@@ -102,18 +102,20 @@ const createAgentRunQueue = ({
 
   const removeFromQueue = (sessionId: string) => {
     const index = queue.indexOf(sessionId)
-    if (index >= 0) queue.splice(index, 1)
+    const removed = index >= 0
+    if (removed) queue.splice(index, 1)
     queued.delete(sessionId)
     broadcastQueuePositions()
+    return removed
   }
 
-  const cancelSessionRun = async (sessionId: string) => {
-    removeFromQueue(sessionId)
+  const cancelSessionRun = (sessionId: string) => {
+    const removedQueued = removeFromQueue(sessionId)
     const active = activeRuns.get(sessionId)
-    if (!active) return
+    if (!active) return { active: false as const, queued: removedQueued }
     sessionStore.addLog(sessionId, '[agent] session delete requested; canceling run')
     active.controller.abort('deleted-by-user')
-    await active.finished
+    return { active: true as const, finished: active.finished, queued: false }
   }
 
   return {

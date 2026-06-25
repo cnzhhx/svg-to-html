@@ -129,6 +129,24 @@ class SessionStore extends EventEmitter {
       .sort((a, b) => b.createdAt - a.createdAt);
   }
 
+  private emitSessionDeleted(id: string) {
+    const event: SessionEvent = {
+      type: "session:deleted",
+      sessionId: id,
+      timestamp: Date.now(),
+    };
+    this.emit(`session:${id}`, event);
+    this.emit("session:*", event);
+  }
+
+  detachSession(id: string): Session | undefined {
+    const session = this.sessions.get(id);
+    if (!session) return undefined;
+    this.sessions.delete(id);
+    this.emitSessionDeleted(id);
+    return session;
+  }
+
   async deleteSession(id: string): Promise<Session | undefined> {
     const session = this.sessions.get(id);
     if (!session) return undefined;
@@ -139,14 +157,12 @@ class SessionStore extends EventEmitter {
       this.sessions.set(id, session);
       throw error;
     }
-    const event: SessionEvent = {
-      type: "session:deleted",
-      sessionId: id,
-      timestamp: Date.now(),
-    };
-    this.emit(`session:${id}`, event);
-    this.emit("session:*", event);
+    this.emitSessionDeleted(id);
     return session;
+  }
+
+  async forceDeleteSessionFiles(session: Session): Promise<void> {
+    await this.persistence.deleteSession(session);
   }
 
   update(id: string, patch: Partial<Session>) {
