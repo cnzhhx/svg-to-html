@@ -261,7 +261,7 @@ ${sharedLayerSections
   .filter(Boolean)
   .map((line) => `      ${line}`)
   .join("\n")}
-      <section class="design-module ${moduleId}" data-module-id="${moduleId}">
+      <section class="design-module ${escapeHtmlAttribute(moduleId)}" data-module-id="${escapeHtmlAttribute(moduleId)}">
 ${previewFragmentHtml
   .split("\n")
   .map((line) => `        ${line}`)

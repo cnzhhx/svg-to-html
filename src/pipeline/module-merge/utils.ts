@@ -18,7 +18,10 @@ const unique = <T>(items: T[]) => [...new Set(items)]
 
 const formatPx = (value: number) => `${Math.round(value)}px`
 
-const formatRegionStyle = (region: Region) =>
+const formatRegionStyle = (
+  region: Region,
+  extraDeclarations: string[] = [],
+) =>
   [
     'position:absolute',
     `left:${formatPx(region.x)}`,
@@ -26,6 +29,7 @@ const formatRegionStyle = (region: Region) =>
     `width:${formatPx(region.width)}`,
     `height:${formatPx(region.height)}`,
     'overflow:hidden',
+    ...extraDeclarations,
   ].join(';')
 
 const indent = (content: string, spaces: number) => {

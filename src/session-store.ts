@@ -82,9 +82,11 @@ class SessionStore extends EventEmitter {
         "best-effort",
         "failed-gate",
       ]);
-      if (status === "running") {
-        mutateSession.resetInFlightExecution(session);
-        mutateSession.markQueued(session);
+      if (status === "queued" || status === "running") {
+        mutateSession.failPipeline(
+          session,
+          "服务已重启，未完成的旧任务已取消，请手动重新启动",
+        );
       } else if (!supportedStatuses.has(status)) {
         mutateSession.failPipeline(
           session,
@@ -355,6 +357,22 @@ class SessionStore extends EventEmitter {
       sessionId,
       step,
       message: error,
+      timestamp: Date.now(),
+    });
+  }
+
+  markExecutionStarted(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    mutateSession.markExecutionStarted(session);
+    this.persistence.persistSnapshot(session);
+    this.emitEvent({
+      type: "session:updated",
+      sessionId,
+      data: {
+        executionStartedAt: session.executionStartedAt,
+        status: "running",
+      },
       timestamp: Date.now(),
     });
   }

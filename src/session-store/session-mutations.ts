@@ -144,13 +144,20 @@ const startStep = (session: Session, step: PipelineStep) => {
     (state) => state.status !== 'pending',
   )
   if (!hasExecutionStarted) {
-    session.executionStartedAt = Date.now()
+    session.executionStartedAt = session.executionStartedAt ?? Date.now()
   }
   session.status = 'running'
   session.activeStep = step
   session.steps[step] = { status: 'running', startedAt: session.steps[step]?.startedAt ?? Date.now() }
   session.updatedAt = Date.now()
   return { hasExecutionStarted }
+}
+
+const markExecutionStarted = (session: Session) => {
+  ensureWorkflowProgress(session)
+  session.executionStartedAt = Date.now()
+  session.status = 'running'
+  session.updatedAt = Date.now()
 }
 
 const completeStep = (
@@ -226,6 +233,7 @@ const markQueued = (session: Session) => {
   }
   session.status = 'queued'
   session.queuedAt = Date.now()
+  session.executionStartedAt = undefined
   session.progress = {
     ...nextProgress,
     detail: '已进入队列，等待执行',
@@ -244,33 +252,6 @@ const updateQueuePosition = (
   if (session.progress?.detail === detail) return undefined
   session.progress = { ...ensureWorkflowProgress(session), detail }
   session.updatedAt = Date.now()
-  return session.progress
-}
-
-const resetInFlightExecution = (session: Session) => {
-  const now = Date.now()
-  const progress = ensureWorkflowProgress(session)
-  const activeStep = session.activeStep
-  if (activeStep && session.steps[activeStep]?.status === 'running') {
-    session.steps[activeStep] = { status: 'pending' }
-  }
-  session.activeStep = null
-  const currentNode = progress.currentNode
-  const nextNodes = { ...progress.nodes }
-  if (currentNode && nextNodes[currentNode]?.status === 'running') {
-    nextNodes[currentNode] = {
-      ...nextNodes[currentNode],
-      status: 'pending',
-      startedAt: undefined,
-      completedAt: undefined,
-      error: undefined,
-    }
-  }
-  session.progress = {
-    ...progress,
-    nodes: nextNodes,
-  }
-  session.updatedAt = now
   return session.progress
 }
 
@@ -353,7 +334,7 @@ export {
   failStep,
   failWorkflowNode,
   markQueued,
-  resetInFlightExecution,
+  markExecutionStarted,
   setWorkflowMeta,
   startStep,
   startWorkflowNode,

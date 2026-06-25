@@ -14,6 +14,7 @@ import {
   type ModuleSemanticNode,
 } from "../pipeline/agent-runner/module/module-semantic.js";
 import {
+  GENERATED_ASSET_NON_PREPROCESSED_TEXT_TREATMENT,
   GENERATED_ASSET_NO_ORDINARY_TEXT_TREATMENT,
   createGeneratedAssetManifestEntry,
 } from "../pipeline/module-output-contract.js";
@@ -215,8 +216,10 @@ const usage = () =>
     "Notes:",
     "  - Exports one or more visible SVG nodes from module.svg with a transparent page background.",
     "  - --node-id reads node ids from module-semantic.json; pass multiple --node-id flags to merge any number of nodes into one export.",
-    "  - Selected semantic nodes must not be text nodes and must not contain text descendants.",
-    "  - --allow-text bypasses that semantic text validation and is intended for internal probe rendering only.",
+    "  - Selected semantic nodes must not be preprocessed DOM textBlocks or contain those textBlock descendants.",
+    "  - Exported visuals may contain non-textBlocks text such as decorative labels, badges, screenshots, or raster content.",
+    "  - Visual text assets (`textHandling=export-asset`, `exportDecision=export`) are exportable.",
+    "  - --allow-text bypasses the preprocessed textBlock validation and is intended for internal probe rendering only.",
     "  - Overlap with text outside the selected nodes is allowed.",
     "  - --node-id exports automatically write/update generatedAssets with readableByAgent=true; --register-semantic makes that requirement explicit.",
     "  - --scale must match the session SVG render scale passed by upload/CLI.",
@@ -298,19 +301,71 @@ const buildNodeIndexMaps = (nodes: ModuleSemanticNode[]) => ({
   ),
 });
 
-const nodeHasTextEvidence = (node: ModuleSemanticNode) =>
-  TEXT_TAGS.has(node.tag) ||
-  node.semantic.textHandling === "dom-text" ||
-  node.semantic.containsReadableText === true ||
-  (typeof node.textContent === "string" && node.textContent.trim().length > 0) ||
-  (typeof node.semantic.text === "string" && node.semantic.text.trim().length > 0);
+const isExportableVisualTextAsset = (node: ModuleSemanticNode) =>
+  node.semantic.textHandling === "export-asset" &&
+  node.semantic.exportDecision === "export";
 
-const subtreeContainsText = ({
+const buildProtectedTextNodeIds = (textBlocks: unknown) => {
+  const protectedIds = new Set<string>();
+  if (!Array.isArray(textBlocks)) return protectedIds;
+  for (const block of textBlocks) {
+    if (!block || typeof block !== "object") continue;
+    const record = block as Record<string, unknown>;
+    if (typeof record["id"] === "string" && record["id"].trim()) {
+      protectedIds.add(record["id"]);
+    }
+    const sourceNodeIds = record["sourceNodeIds"];
+    if (Array.isArray(sourceNodeIds)) {
+      for (const sourceNodeId of sourceNodeIds) {
+        if (typeof sourceNodeId === "string" && sourceNodeId.trim()) {
+          protectedIds.add(sourceNodeId);
+        }
+      }
+    }
+  }
+  return protectedIds;
+};
+
+const nodeHasPreprocessedTextBlockEvidence = (
+  node: ModuleSemanticNode,
+  protectedTextNodeIds: Set<string>,
+) => {
+  if (isExportableVisualTextAsset(node)) return false;
+  return (
+    protectedTextNodeIds.has(node.id) ||
+    (node.semantic.textHandling === "dom-text" &&
+      protectedTextNodeIds.has(node.id))
+  );
+};
+
+const nodeContainsAnyReadableTextEvidence = (node: ModuleSemanticNode) =>
+  !isExportableVisualTextAsset(node) &&
+  (TEXT_TAGS.has(node.tag) ||
+    node.semantic.textHandling === "dom-text" ||
+    node.semantic.containsReadableText === true ||
+    (typeof node.textContent === "string" && node.textContent.trim().length > 0) ||
+    (typeof node.semantic.text === "string" && node.semantic.text.trim().length > 0));
+
+const inferTextTreatment = ({
+  containsText,
+  override,
+}: {
+  containsText: boolean;
+  override?: string;
+}) =>
+  override ??
+  (containsText
+    ? GENERATED_ASSET_NON_PREPROCESSED_TEXT_TREATMENT
+    : GENERATED_ASSET_NO_ORDINARY_TEXT_TREATMENT);
+
+const subtreeContainsPreprocessedTextBlock = ({
   node,
   nodeById,
+  protectedTextNodeIds,
 }: {
   node: ModuleSemanticNode;
   nodeById: Map<string, ModuleSemanticNode>;
+  protectedTextNodeIds: Set<string>;
 }) => {
   const queuedIds = [node.id];
   const seen = new Set<string>();
@@ -320,7 +375,9 @@ const subtreeContainsText = ({
     seen.add(currentId);
     const current = currentId === node.id ? node : nodeById.get(currentId);
     if (!current) continue;
-    if (nodeHasTextEvidence(current)) return true;
+    if (nodeHasPreprocessedTextBlockEvidence(current, protectedTextNodeIds)) {
+      return true;
+    }
     queuedIds.push(...(current.childIds ?? []));
   }
   return false;
@@ -366,18 +423,26 @@ const resolveSelectedSemanticNodes = ({
 
 const validateSelectedSemanticNodes = ({
   nodeById,
+  protectedTextNodeIds,
   selectedNodes,
 }: {
   nodeById: Map<string, ModuleSemanticNode>;
+  protectedTextNodeIds: Set<string>;
   selectedNodes: SelectedSemanticNode[];
 }) => {
   const failures = selectedNodes.flatMap((node) => {
     if (!node.bbox) {
       return [`${node.id} has no visible bounding box in module-semantic.json`];
     }
-    if (subtreeContainsText({ node, nodeById })) {
+    if (
+      subtreeContainsPreprocessedTextBlock({
+        node,
+        nodeById,
+        protectedTextNodeIds,
+      })
+    ) {
       return [
-        `${node.id} is a text node or contains text descendants, which are not allowed for export`,
+        `${node.id} is a preprocessed DOM textBlock node or contains textBlock descendants, which are not allowed for export`,
       ];
     }
     return [];
@@ -898,8 +963,11 @@ const registerGeneratedAsset = async ({
     (selectedNodes.every((node) => node.tag === "image")
       ? "photo-or-bitmap"
       : "visual-asset");
-  const textTreatment =
-    args.textTreatment ?? GENERATED_ASSET_NO_ORDINARY_TEXT_TREATMENT;
+  const containsText = selectedNodes.some(nodeContainsAnyReadableTextEvidence);
+  const textTreatment = inferTextTreatment({
+    containsText,
+    override: args.textTreatment,
+  });
   const assetBaseName = path.basename(outputRef, path.extname(outputRef));
   const sourceNodeIds = selectedNodes.map((node) => node.id);
   // nodePath is stripped by compactDocumentForAgent; fall back to selector
@@ -927,6 +995,7 @@ const registerGeneratedAsset = async ({
         source: "module-agent.export-svg-node-asset",
         sourceNodeIds,
         sourceNodePaths,
+        containsText,
         textTreatment,
       } satisfies ModuleSemanticGeneratedAsset;
       registeredAsset = nextAsset;
@@ -979,6 +1048,9 @@ const main = async () => {
     : path.resolve(moduleDir, args.output);
 
   const semanticDocument = await readModuleSemanticDocument(moduleDir);
+  const protectedTextNodeIds = buildProtectedTextNodeIds(
+    semanticDocument?.textBlocks,
+  );
   const { nodeById, selectedNodes } = semanticDocument
     ? resolveSelectedSemanticNodes({
         args,
@@ -995,7 +1067,11 @@ const main = async () => {
     );
   }
   if (!args.allowText && selectedNodes.length > 0) {
-    validateSelectedSemanticNodes({ nodeById, selectedNodes });
+    validateSelectedSemanticNodes({
+      nodeById,
+      protectedTextNodeIds,
+      selectedNodes,
+    });
   }
   if (args.registerSemantic) {
     if (!semanticDocument) {
@@ -1072,6 +1148,11 @@ const main = async () => {
 
     const outputRef = normalizeSlashes(path.relative(moduleDir, outputPath));
     const assetBox = roundClip(result.clip);
+    const containsText = selectedNodes.some(nodeContainsAnyReadableTextEvidence);
+    const textTreatment = inferTextTreatment({
+      containsText,
+      override: args.textTreatment,
+    });
     const selectedByIndex = new Map(
       selectedNodes.map((node) => [node.inspectIndex, node] as const),
     );
@@ -1083,14 +1164,13 @@ const main = async () => {
           ? "photo-or-bitmap"
           : "visual-asset"),
       box: assetBox,
-      containsText: false,
+      containsText,
       path: outputRef,
       sourceNodeIndex:
         result.selected.length === 1 ? result.selected[0]?.index : undefined,
       sourceNodeTag:
         result.selected.length === 1 ? result.selected[0]?.tag : undefined,
-      textTreatment:
-        args.textTreatment ?? GENERATED_ASSET_NO_ORDINARY_TEXT_TREATMENT,
+      textTreatment,
     });
     const registeredAsset = shouldRegisterSemantic
       ? await registerGeneratedAsset({

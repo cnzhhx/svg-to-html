@@ -245,20 +245,21 @@ module-semantic.json 关键字段（按此优先级取用）：
 | nodes[].bbox | 节点几何框；用于判断位置、尺寸、分组和按需导出范围 |
 | nodes[].inspectIndex | 绘制顺序，越大越靠上，是 z-index 的依据 |
 | nodes[].semantic | 节点语义与导出决策 |
+| nodes[].attrs.mask / filter / clip-path | 视觉引用提示；节点或其子图被裁切、加阴影或滤镜时优先导出带该属性的节点，不要只导内部 leaf 节点 |
 | nodes[].visualEffects | 由 SVG filter 解析出的轻量视觉提示；可能包含 inner-shadow 的边缘方向、偏移、透明度和 CSS 近似写法，适合辅助判断简单边缘阴影/分隔线 |
 
 - 诊断性数据（textContentBlocks / svgTextNodes / visualTextElements / textGeometryDisagreements）不在本文件里，已分流到同目录的 module-semantic.debug.json，仅供人工排查；agent 不需要也不允许读取。
 - **禁止读取 module.svg、analysis-sheets/*.png、module-semantic.debug.json**。
 
 ## 硬约束（凌驾于一切视觉判断；与截图冲突时以结构化数据为准）
-1. **文本来源唯一性**：只有 \`module-semantic.json\` 的 \`textBlocks\` 中列出的文案才需要还原为真实 DOM 文本。\`textBlocks\` 未覆盖的内容，agent 不得自行从截图、参考图或已导出资产中识别为 DOM 文本，应以预处理结果为准。禁止把 \`textBlocks\` 中的可读文本烤进图片；禁止用 transform/scale/matrix/skew 校准文字几何。
-2. **文本归属以预处理为终审，禁止回看参考图二次确认**：某个文字是否进 textBlocks、某个节点是否含可读文本，预处理已经做了最终判定，截图/参考图上"看起来像字"或"看起来像装饰"都不构成推翻理由。节点 \`semantic.textHandling === "ignore"\` 或 \`semantic.exportDecision === "export"\`（即已被导出为资产）的内容，一律按资产/装饰处理，**不得**为了"确认它到底是不是字"去读取或反复对照 module-reference.png / composite.png / shared-underlay.png。textBlocks 未覆盖的内容按约束 1 处理，不要纠结其归属、不要反复推理。
+1. **文本来源唯一性**：只有 \`module-semantic.json\` 的 \`textBlocks\` 中列出的文案才需要还原为真实 DOM 文本。\`textBlocks\` 未覆盖的内容，agent 不得自行从截图、参考图或已导出资产中识别为 DOM 文本，应以预处理结果为准。禁止把 \`textBlocks\` 对应的预处理 DOM 文本节点导出/烤进图片；禁止用 transform/scale/matrix/skew 校准文字几何。
+2. **文本归属以预处理为终审，禁止回看参考图二次确认**：某个文字是否进 textBlocks、某个节点是否含可读文本，预处理已经做了最终判定，截图/参考图上"看起来像字"或"看起来像装饰"都不构成推翻理由。节点 \`semantic.textHandling === "ignore"\`、\`semantic.textHandling === "export-asset"\` 或 \`semantic.exportDecision === "export"\` 的内容，一律按资产/装饰处理，**不得**为了"确认它到底是不是字"去读取或反复对照 module-reference.png / composite.png / shared-underlay.png。允许导出的图片资产里包含 \`textBlocks\` 未覆盖的装饰字、徽章字、截图内文字或图片自身文字；不要为了清掉这些非预处理文本而拆图、找隐藏图片节点或反复重导。textBlocks 未覆盖的内容按约束 1 处理，不要纠结其归属、不要反复推理。
 3. 禁止引用/内联/裁剪原始完整 SVG，禁止 data:image/* 或 base64，禁止写原始 inline <svg>；禁止把整张卡片/整个导航/整块区域拍成一张大图替代应有结构。
 4. textBlocks[].styleInference 的文本样式是预处理像素级算好的硬约束，一经使用永不修改（即便 verify diff 有偏差，也只能靠改位置/父容器解决，不许动 font-size/weight/color/line-height/letter-spacing/font-family）。仅当某样式缺失时才按视觉推断；推断颜色须取文字本身颜色，不得从邻近背景/装饰借色。
 5. **字体渲染差异是不可避免且必须接受的**：原始 SVG 使用文字路径（path data）渲染，而 HTML 使用系统字体（Noto Sans CJK SC 等），两者在抗锯齿、字重、hinting 上必然存在差异。禁止通过修改 font-size/weight/line-height/font-family 来"消除"这种差异。文本位置的微调（left/top 偏移 1-3px）可以容忍；若差异较大，优先检查文本外盒（layoutTargetRegion）是否被父容器正确约束，而不是改字体属性。
 6. 普通 DOM 文本禁止用 \`overflow:hidden\`、固定单行高度、\`text-overflow\` 或裁切容器来掩盖溢出；尤其是说明文、段落、多行文本，必须保证所有文字可见。文本宽高/行数不确定时，宁可调整文本外盒高度、逐行 DOM、\`white-space: nowrap\` 或父模块布局，也不要把文字截掉。仅原设计明确是省略号/裁切标题时，才允许按原样使用 \`overflow:hidden\`。
 7. 图片宽高比锁定：\`<img>\` 渲染宽高比必须等于资产 \`box\` 的自然比例。锁定一边、另一边按比例推导（\`height = round(width * box.height / box.width)\`）。适配异形槽位只能裁切（外层 \`overflow:hidden\` + \`object-fit:cover\` + \`object-position\`）或等比缩放（\`object-fit:contain\`），禁止拉伸压扁。
-8. 不要给模块根容器加背景色或任何偏移；根容器由宿主定位到 (0,0)。模块背景由页面统一处理，只还原有明确边界的局部背景（卡片底色、按钮背景）。
+8. 不要给模块根容器加背景色或任何偏移；根容器由宿主定位到 (0,0)。模块背景由页面统一处理，只还原有明确边界的局部背景（卡片底色、按钮背景）。如果 module-reference.png 中只有白色图标/文字落在透明画布上，不得为了“承载”或“对比”自行补黑/白/粉等底色；shared-underlay.png / composite.png 只用于理解宿主上下文，不要重复实现成模块 root background。
 9. 所有坐标、尺寸、间距统一用 px，禁止 %、vw、vh、em、rem；普通布局的 left/top/width/height/padding/margin/gap/border-radius 以整数 px 为默认，只有 textBlocks[].styleInference 里明确给出的小数样式、透明度、阴影/滤镜和必要的非文本 transform 才保留小数。
 
 ## 方法（按序执行）
@@ -299,6 +300,7 @@ ${sourceDataContractSection}
   页面自动加载最新的 HTML/CSS，不需要手动 reload。
 - 导出 SVG 节点为 PNG: \`pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --node-id <节点id> --output assets/<name>.png --register-semantic --padding 0 --scale ${scaleLabel}\`
   - 合并多个节点：追加多个 \`--node-id n0001 --node-id n0002\`；导出后直接在 HTML 引用 \`./assets/<name>.png\`
+  - 导出工具只会阻止导出 \`textBlocks\` 对应的预处理 DOM 文本节点及其父子树；除此之外，资产里包含非 \`textBlocks\` 的装饰字/徽章字/截图字/图片自身文字是允许的，不需要额外清理或重构。
   - **并行导出多个独立资产**：需要导出多张**互相独立**的 PNG 时（例如多个不相关图标），用 shell \`&\` + \`wait\` 并行执行多个命令，可把总等待时间从 N×单次降到约 1×单次。module-semantic.json 的写入已加跨进程锁，\`--node-id\` 并行导出安全。
     示例（3 个独立图标并行）：
     \`\`\`bash
@@ -376,6 +378,7 @@ outputFormat: ${outputFormat}
 - 只有纯色背景、单层边框、简单圆角、简单横条/竖条、状态圆点、分隔线允许 CSS；禁止手绘渐变、纹理、阴影、clip-path、mask、伪元素组合。
 - 需要使用 gradient/clip-path/mask/::before/::after 才能接近原图时，优先导出 PNG，不要继续堆 CSS。
 - generatedAssets 只代表已经按需导出的资源，可能为空；非文本视觉样式仍默认图片优先，需要时从 module-semantic.json 的 nodes 选择 nodeId，用工具导出新的 SVG 节点为 PNG。但禁止把整张卡片、整个模块等大块区域直接拍成单张图片偷懒。
+- 文本边界仍以 module-semantic.json 的 textBlocks 为准：禁止导出/烤进图片的只有 textBlocks 对应的预处理 DOM 文本；导出资产里包含 textBlocks 未覆盖的装饰字、徽章字、截图内文字或图片自身文字是允许的，不要为清理这些非预处理文本反复拆图。
 
 完成后可运行局部校验，但要有停损：同一模块/同一区域相邻三次 verify 若每次 diffRatio 改善都小于 0.1 个百分点，就不要继续追这个区域；若 diffRatio 已低于 5%，且只剩轻微文本/抗锯齿/1-3px 抖动/小面积颜色差这类小问题，最多修一次并复验一次，复验没有改善就停止；不要运行整页 verify。
 `.trim();

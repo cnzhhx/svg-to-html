@@ -231,8 +231,19 @@ const readBox = (value: unknown): Box | undefined => {
   return { height, width, x, y };
 };
 
-const readColor = (value: unknown) =>
-  typeof value === "string" && value.trim() ? value.trim() : undefined;
+const readColor = (value: unknown) => {
+  const color = typeof value === "string" ? value.trim() : "";
+  if (!color) return undefined;
+  const normalized = color.toLowerCase();
+  if (
+    normalized === "none" ||
+    normalized === "transparent" ||
+    normalized.startsWith("url(")
+  ) {
+    return undefined;
+  }
+  return color;
+};
 
 const roundedBox = (box: Box): Box => ({
   height: Math.max(1, Math.round(box.height)),
@@ -460,6 +471,7 @@ const attachSvgColors = async ({
       ? candidates[0]?.color
       : undefined;
   return blocks.map((block) => {
+    if (readColor(block.color)) return block;
     const region = block.textRegion ?? block.region;
     const matched = candidates
       .flatMap((candidate) => {
@@ -467,10 +479,14 @@ const attachSvgColors = async ({
         const ratio =
           overlap /
           Math.max(1, Math.min(areaOf(region), areaOf(candidate.box)));
-        return [{ color: candidate.color, ratio }];
+        return [{ area: areaOf(candidate.box), color: candidate.color, ratio }];
       })
       .filter((candidate) => candidate.ratio >= 0.2)
-      .sort((left, right) => right.ratio - left.ratio)[0];
+      .sort(
+        (left, right) =>
+          right.ratio - left.ratio ||
+          left.area - right.area,
+      )[0];
     const color = matched?.color ?? globalColor;
     return color ? { ...block, color } : block;
   });

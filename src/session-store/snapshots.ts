@@ -16,6 +16,11 @@ type JsonRecord = Record<string, unknown>
 const optionalString = (value: unknown) =>
   typeof value === 'string' ? value : undefined
 
+const optionalPositiveNumber = (value: unknown) => {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : undefined
+}
+
 const sanitizeOutputTarget = (
   value: unknown,
   outputFormat: OutputFormat,
@@ -112,6 +117,7 @@ const TOP_LEVEL_KEYS = new Set<keyof Session>([
   'id',
   'designName',
   'queuedAt',
+  'executionStartedAt',
   'threadId',
   'svgPath',
   'scale',
@@ -149,6 +155,36 @@ const sanitizeCurrentSessionSnapshot = (value: unknown): Session | null => {
   return session as Session
 }
 
+const inferExecutionStartedAtFromEvents = async (
+  eventsPath: string,
+): Promise<number | undefined> => {
+  let raw: string
+  try {
+    raw = await readFile(eventsPath, 'utf8')
+  } catch {
+    return undefined
+  }
+
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    try {
+      const event = JSON.parse(line) as unknown
+      if (!isRecord(event)) continue
+      const data = event.data
+      if (
+        event.type === 'session:updated' &&
+        isRecord(data) &&
+        data.status === 'running'
+      ) {
+        return optionalPositiveNumber(event.timestamp)
+      }
+    } catch {
+      // Ignore malformed historical event records.
+    }
+  }
+  return undefined
+}
+
 const loadSessionSnapshots = async (): Promise<Session[]> => {
   const root = getSessionsRoot()
   await mkdir(root, { recursive: true })
@@ -157,12 +193,19 @@ const loadSessionSnapshots = async (): Promise<Session[]> => {
 
   for (const entry of dirs) {
     if (!entry.isDirectory()) continue
-    const { snapshotPath } = createSessionPaths(path.join(root, entry.name))
+    const { eventsPath, snapshotPath } = createSessionPaths(
+      path.join(root, entry.name),
+    )
     try {
       const raw = await readFile(snapshotPath, 'utf8')
       const parsed = JSON.parse(raw) as unknown
       const session = sanitizeCurrentSessionSnapshot(parsed)
       if (!session) continue
+      session.executionStartedAt =
+        session.status === 'queued' || session.status === 'draft'
+          ? undefined
+          : optionalPositiveNumber(session.executionStartedAt) ??
+            await inferExecutionStartedAtFromEvents(eventsPath)
       ensureWorkflowProgress(session)
       sessions.push(session)
     } catch {
