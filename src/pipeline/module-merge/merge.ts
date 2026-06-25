@@ -60,7 +60,7 @@ const normalizeSharedLayers = ({
       Boolean(
         layer &&
         typeof layer.id === "string" &&
-        (layer.kind === "shared-underlay" || layer.kind === "shared-overlay") &&
+        layer.kind === "shared-underlay" &&
         layer.region,
       ),
     )
@@ -192,7 +192,6 @@ const mergePreviewDocument = async ({
   const sections = [
     renderSharedLayerSections(sharedLayers, "shared-underlay"),
     renderModuleSections(modules),
-    renderSharedLayerSections(sharedLayers, "shared-overlay"),
   ]
     .filter((section) => section.trim())
     .join("\n      ");
@@ -425,11 +424,6 @@ const mergeSourceEntry = async ({
       sourceFormat,
     ),
     renderModuleSourceSections(sourceModules, sourceFormat),
-    renderSharedLayerSourceSections(
-      sharedLayers,
-      "shared-overlay",
-      sourceFormat,
-    ),
   ]
     .filter((section) => section.trim())
     .join("\n      ");

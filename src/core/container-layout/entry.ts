@@ -1,5 +1,4 @@
 import path from "node:path";
-import { readFile } from "node:fs/promises";
 
 import {
   readSvgLayout,
@@ -9,10 +8,6 @@ import {
 import { resolveArtifactDir } from "../paths.js";
 import { resolveSvgDesign } from "../design-resolve.js";
 import { writeJsonFile, writeTextFile } from "../file-io.js";
-import {
-  pruneInvisibleSvgNodes,
-  shouldPruneInvisibleSvgNodes,
-} from "../svg-visible-pruning.js";
 import {
   buildExplicitContainers,
   createAssignments,
@@ -229,22 +224,11 @@ const createContainerLayoutReport = async ({
 }) => {
   const design = await resolveSvgDesign(inputPath, { scale });
   const artifactDir = await resolveArtifactDir(inputPath, customArtifactDir);
-  const visibilityPruning =
-    !providedSvgLayout && shouldPruneInvisibleSvgNodes()
-      ? await pruneInvisibleSvgNodes({
-          artifactDir,
-          design,
-        })
-      : null;
-
   const svgLayout =
     providedSvgLayout ??
     (
       await readSvgLayout({
         design,
-        svgMarkup: visibilityPruning
-          ? await readFile(visibilityPruning.outputPath, "utf8")
-          : undefined,
         wrapperRoot: artifactDir,
       })
     ).result;
@@ -273,9 +257,6 @@ const createContainerLayoutReport = async ({
     report,
     svgLayout,
     svgNodeCount: svgLayout.nodeCount,
-    visibilityPruning: visibilityPruning?.summary,
-    visibilityPruningPath: visibilityPruning?.reportPath,
-    visibilityPrunedSvgPath: visibilityPruning?.outputPath,
   };
 };
 

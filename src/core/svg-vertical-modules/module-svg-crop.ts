@@ -24,7 +24,7 @@ type CropModuleSvgOutput = {
   viewBox: string
 }
 
-export const MODULE_SVG_CROP_VERSION = '5'
+export const MODULE_SVG_CROP_VERSION = '6'
 
 type SvgViewport = {
   height: number
@@ -36,7 +36,7 @@ type SvgViewport = {
 const readSvgAttribute = (attrs: string, name: string) => {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const match = attrs.match(
-    new RegExp(`\\b${escapedName}\\s*=\\s*(["'])(.*?)\\1`, 'i'),
+    new RegExp(`(?:^|[\\s<])${escapedName}\\s*=\\s*(["'])(.*?)\\1`, 'i'),
   )
   return match?.[2]
 }
@@ -148,6 +148,26 @@ const parseSvgNumber = (value?: string) => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+const readInlineStyleProperty = (openTag: string, name: string) => {
+  const style = readSvgAttribute(openTag, 'style')
+  if (!style) return undefined
+  const normalizedName = name.trim().toLowerCase()
+  for (const declaration of style.split(';')) {
+    const separatorIndex = declaration.indexOf(':')
+    if (separatorIndex === -1) continue
+    const property = declaration.slice(0, separatorIndex).trim().toLowerCase()
+    if (property !== normalizedName) continue
+    return declaration.slice(separatorIndex + 1).trim()
+  }
+  return undefined
+}
+
+const readPresentationValue = (openTag: string, name: string) =>
+  readSvgAttribute(openTag, name) ?? readInlineStyleProperty(openTag, name)
+
+const readPresentationNumber = (openTag: string, name: string) =>
+  parseSvgNumber(readPresentationValue(openTag, name))
+
 const resolveSvgLength = ({
   fallback,
   reference,
@@ -171,13 +191,13 @@ const isHiddenElement = (openTag: string) => {
   const visibility = readSvgAttribute(openTag, 'visibility')
     ?.trim()
     .toLowerCase()
-  const opacity = parseSvgNumber(readSvgAttribute(openTag, 'opacity'))
+  const opacity = readPresentationNumber(openTag, 'opacity')
   return display === 'none' || visibility === 'hidden' || opacity === 0
 }
 
 const hasVisibleFill = (openTag: string) => {
-  const fill = readSvgAttribute(openTag, 'fill')?.trim().toLowerCase()
-  const fillOpacity = parseSvgNumber(readSvgAttribute(openTag, 'fill-opacity'))
+  const fill = readPresentationValue(openTag, 'fill')?.trim().toLowerCase()
+  const fillOpacity = readPresentationNumber(openTag, 'fill-opacity')
   return fill !== 'none' && fillOpacity !== 0
 }
 
@@ -227,6 +247,86 @@ const isTransparentContainer = (child: RootChildElement) =>
 
 const isIgnorableRootTag = (tag: string) =>
   ['desc', 'metadata', 'title'].includes(tag)
+
+const LOW_VISUAL_OPACITY_THRESHOLD = 0.01
+
+const SVG_RESOURCE_TAGS = new Set([
+  'defs',
+  'clippath',
+  'filter',
+  'lineargradient',
+  'marker',
+  'mask',
+  'metadata',
+  'pattern',
+  'radialgradient',
+  'style',
+  'symbol',
+])
+
+const SVG_EMPTY_CONTAINER_TAGS = new Set(['a', 'g', 'svg', 'switch'])
+
+const SVG_SHAPE_TAGS = new Set([
+  'circle',
+  'ellipse',
+  'line',
+  'path',
+  'polygon',
+  'polyline',
+  'rect',
+])
+
+const isNoPaint = (value: string | undefined) => {
+  const normalized = value?.trim().toLowerCase()
+  return normalized === 'none' || normalized === 'transparent'
+}
+
+const hasNonNegligibleShapePaint = (openTag: string) => {
+  const fill = readPresentationValue(openTag, 'fill')
+  const stroke = readPresentationValue(openTag, 'stroke')
+  const fillOpacity =
+    readPresentationNumber(openTag, 'fill-opacity') ?? 1
+  const strokeOpacity =
+    readPresentationNumber(openTag, 'stroke-opacity') ?? 1
+
+  const fillCanPaint = !isNoPaint(fill)
+  const strokeCanPaint = Boolean(stroke) && !isNoPaint(stroke)
+
+  return (
+    (fillCanPaint && fillOpacity > LOW_VISUAL_OPACITY_THRESHOLD) ||
+    (strokeCanPaint && strokeOpacity > LOW_VISUAL_OPACITY_THRESHOLD)
+  )
+}
+
+const hasNegligibleOpacity = (child: RootChildElement) => {
+  if (SVG_RESOURCE_TAGS.has(child.tag)) return false
+  const opacity = readPresentationNumber(child.openTag, 'opacity')
+  if (opacity !== null && opacity <= LOW_VISUAL_OPACITY_THRESHOLD) return true
+  return (
+    SVG_SHAPE_TAGS.has(child.tag) &&
+    !hasNonNegligibleShapePaint(child.openTag)
+  )
+}
+
+const removeNegligibleOpacityContent = (content: string): string => {
+  const children = parseRootChildElements(content)
+  if (!children.length) return content
+
+  return children
+    .flatMap((child): string[] => {
+      if (hasNegligibleOpacity(child)) return []
+      if (child.selfClosing || SVG_RESOURCE_TAGS.has(child.tag)) {
+        return [child.content]
+      }
+
+      const innerContent = removeNegligibleOpacityContent(child.innerContent)
+      if (!innerContent.trim() && SVG_EMPTY_CONTAINER_TAGS.has(child.tag)) {
+        return []
+      }
+      return [`${child.openTag}\n${innerContent}\n${child.closeTag}`]
+    })
+    .join('\n')
+}
 
 const extractLeadingViewportBackgroundContent = ({
   content,
@@ -672,9 +772,10 @@ export async function cropModuleSvg(
           viewport: sourceRegion,
         })
       : ''
-  const ownedContent = filteredContent.content.trim()
+  const ownedContentBeforePrune = filteredContent.content.trim()
     ? filteredContent.content
     : shellBackgroundContent
+  const ownedContent = removeNegligibleOpacityContent(ownedContentBeforePrune)
   const bodyDefinitions = collectReferencedBodyDefinitions({
     content: contentWithoutDefinitions,
     referencedContent: [ownedContent].filter((part) => part.trim()).join('\n'),

@@ -647,7 +647,7 @@ const ensureModuleContextImages = async ({
   module: SvgVerticalModule;
   moduleSvgPath: string;
   sharedLayers: Array<{
-    kind: "shared-underlay" | "shared-overlay";
+    kind: "shared-underlay";
     region?: { x: number; y: number; width: number; height: number };
     svgPath?: string;
   }>;

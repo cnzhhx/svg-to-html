@@ -31,11 +31,6 @@ const main = async () => {
   console.log('[container-layout] Report written:')
   console.log(`- JSON: ${result.outputPath}`)
   console.log(`- Markdown: ${result.markdownPath}`)
-  if (result.visibilityPruning) {
-    console.log(
-      `- Visibility pruning: ${result.visibilityPruning.prunedNodeCount} node(s) (${result.visibilityPruningPath})`,
-    )
-  }
   console.log(`- Containers found: ${result.report.containers.length}`)
   console.log(`- Pattern hints: ${result.report.patterns.length}`)
   console.log(`- SVG nodes: ${result.svgNodeCount}`)
