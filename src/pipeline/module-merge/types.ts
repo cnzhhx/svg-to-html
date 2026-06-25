@@ -12,7 +12,7 @@ type ModulePlanModule = {
 
 type ModulePlanSharedLayer = {
   id: string;
-  kind: "shared-underlay" | "shared-overlay";
+  kind: "shared-underlay";
   region?: Region;
   relativePath?: string;
   svgPath?: string;

@@ -200,10 +200,14 @@ const isMeaningfulBox = (box: Box, viewport: Box) =>
 
 const isLargeBackgroundLikeBox = (box: Box, viewport: Box) => {
   const nearFullWidth = box.width >= viewport.width * 0.85;
-  const tall = box.height >= Math.min(900, viewport.height * 0.16);
+  const sectionScaleWidth = box.width >= viewport.width * 0.45;
+  const tall = box.height >= Math.min(900, viewport.height * 0.14);
   const oversized = box.width > viewport.width * 1.05 || box.x < -viewport.width * 0.1;
   const largeArea = areaOf(box) >= areaOf(viewport) * 0.08;
-  return nearFullWidth && tall && (oversized || largeArea);
+  return (
+    (nearFullWidth && tall && (oversized || largeArea)) ||
+    (sectionScaleWidth && tall && largeArea)
+  );
 };
 
 const collectValidationSourceBoxes = ({

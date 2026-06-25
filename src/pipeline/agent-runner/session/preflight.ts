@@ -39,12 +39,6 @@ const prepareStructuredSessionInputs = async ({
     scale,
   });
   throwIfRunAborted(controller);
-  if (containerLayout.visibilityPruning?.prunedNodeCount) {
-    sessionStore.addLog(
-      sessionId,
-      `[pipeline] invisible SVG nodes pruned: ${containerLayout.visibilityPruning.prunedNodeCount}`,
-    );
-  }
 
   sessionStore.addLog(
     sessionId,
@@ -84,7 +78,7 @@ const prepareStructuredSessionInputs = async ({
     `[pipeline] step 5/6 crop module SVGs (${modulePlan.report.modules.length} module(s))`,
   );
   const moduleSvgCrops = await cropAllModuleSvgs({
-    originalSvgPath: containerLayout.visibilityPrunedSvgPath ?? design.svgPath,
+    originalSvgPath: design.svgPath,
     modules: modulePlan.report.modules,
     modulesRootDir: modulePlan.moduleDir,
     scale,

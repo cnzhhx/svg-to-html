@@ -502,49 +502,57 @@ const collectModuleHits = ({
 const isCrossModuleSharedBackgroundCandidate = ({
   hits,
   match,
+  modules,
   viewport,
 }: {
   hits: ModuleHit[];
   match: NodeMatch;
+  modules: ModuleOwnershipDraft[];
   viewport: Box;
 }) => {
-  if (hits.length <= 1) return false;
   if (!BACKGROUND_CANDIDATE_TAGS.has(match.node.tag)) return false;
   if (isPageScaleBox(match.box, viewport.width, viewport.height)) return true;
 
   const nodeArea = Math.max(1, areaOf(match.box));
   const viewportArea = Math.max(1, areaOf(viewport));
   const broadAcrossPage = match.box.width >= viewport.width * 0.72;
+  const sectionScaleWidth = match.box.width >= viewport.width * 0.45;
   const largeEnough = nodeArea >= viewportArea * 0.08;
   const tallEnough = match.box.height >= Math.min(900, viewport.height * 0.14);
+  const crossesInternalBoundary = modules.some((module) => {
+    const boundaryY = bottomOf(module.region);
+    if (
+      Math.abs(boundaryY - viewport.y) <= REGION_STITCH_TOLERANCE_PX ||
+      Math.abs(boundaryY - bottomOf(viewport)) <= REGION_STITCH_TOLERANCE_PX
+    ) {
+      return false;
+    }
+    if (
+      boundaryY <= match.box.y + REGION_STITCH_TOLERANCE_PX ||
+      boundaryY >= bottomOf(match.box) - REGION_STITCH_TOLERANCE_PX
+    ) {
+      return false;
+    }
+    const horizontalOverlap = overlapLength(
+      match.box.x,
+      rightOf(match.box),
+      module.region.x,
+      rightOf(module.region),
+    );
+    return horizontalOverlap / Math.max(1, match.box.width) >= 0.45;
+  });
   const coversMultipleModuleBands = hits.filter((hit) => {
     const moduleArea = Math.max(1, areaOf(hit.module.region));
     return hit.intersection / moduleArea >= 0.2;
   }).length >= 2;
 
-  return broadAcrossPage && largeEnough && (tallEnough || coversMultipleModuleBands);
-};
-
-const classifySharedLayerKind = ({
-  allMatches,
-  match,
-}: {
-  allMatches: NodeMatch[];
-  match: NodeMatch;
-}): SvgSharedLayer["kind"] => {
-  const peerOrders = allMatches
-    .filter(
-      (peer) =>
-        peer.node.nodePath !== match.node.nodePath &&
-        intersectionArea(peer.box, match.box) > 0,
-    )
-    .map((peer) => peer.order)
-    .sort((left, right) => left - right);
-  if (!peerOrders.length) return "shared-underlay";
-
-  const laterThanPeerRatio =
-    peerOrders.filter((order) => order < match.order).length / peerOrders.length;
-  return laterThanPeerRatio >= 0.9 ? "shared-overlay" : "shared-underlay";
+  return (
+    (broadAcrossPage && largeEnough && (tallEnough || coversMultipleModuleBands)) ||
+    (sectionScaleWidth &&
+      largeEnough &&
+      tallEnough &&
+      (coversMultipleModuleBands || crossesInternalBoundary))
+  );
 };
 
 const clipBoxToViewport = (box: Box, viewport: Box) =>
@@ -578,35 +586,33 @@ const createSharedLayers = ({
   sharedMatches,
   viewport,
 }: {
-  sharedMatches: Map<SvgSharedLayer["kind"], NodeMatch[]>;
+  sharedMatches: NodeMatch[];
   viewport: Box;
-}): SvgSharedLayer[] =>
-  (["shared-underlay", "shared-overlay"] as const).flatMap((kind) => {
-    const matches = sharedMatches.get(kind) ?? [];
-    if (!matches.length) return [];
-    const contentBox = unionBoxes(matches.map((match) => match.box));
-    if (!contentBox) return [];
-    const id = kind;
-    const region = toSerializableRegion(
-      id,
-      expandBox({ box: contentBox, padding: 4, viewport }),
-    );
+}): SvgSharedLayer[] => {
+  if (!sharedMatches.length) return [];
+  const contentBox = unionBoxes(sharedMatches.map((match) => match.box));
+  if (!contentBox) return [];
+  const id = "shared-underlay";
+  const region = toSerializableRegion(
+    id,
+    expandBox({ box: contentBox, padding: 4, viewport }),
+  );
 
-    return [
-      {
-        contentBox,
-        containsIntrinsicText: false,
-        containsText: false,
-        id,
-        kind,
-        nodePaths: uniqueStrings(matches.map((match) => match.node.nodePath)),
-        reason:
-          "Cross-module background/decorative SVG nodes are rendered once as a shared page layer to preserve paint order without assigning background pieces to semantic modules.",
-        region,
-        textTreatment: "non-text-shared-asset",
-      },
-    ];
-  });
+  return [
+    {
+      contentBox,
+      containsIntrinsicText: false,
+      containsText: false,
+      id,
+      kind: "shared-underlay",
+      nodePaths: uniqueStrings(sharedMatches.map((match) => match.node.nodePath)),
+      reason:
+        "Cross-module background/decorative SVG nodes are rendered once as a shared page layer to preserve paint order without assigning background pieces to semantic modules.",
+      region,
+      textTreatment: "non-text-shared-asset",
+    },
+  ];
+};
 
 const assignNodeOwnership = ({
   drafts,
@@ -618,7 +624,7 @@ const assignNodeOwnership = ({
   viewport: Box;
 }) => {
   const allMatches = collectRenderableNodeMatches({ svgLayout, viewport });
-  const sharedMatches = new Map<SvgSharedLayer["kind"], NodeMatch[]>();
+  const sharedMatches: NodeMatch[] = [];
 
   allMatches.forEach((match) => {
     const hits = collectModuleHits({ match, modules: drafts });
@@ -628,11 +634,11 @@ const assignNodeOwnership = ({
       isCrossModuleSharedBackgroundCandidate({
         hits,
         match,
+        modules: drafts,
         viewport,
       })
     ) {
-      const kind = classifySharedLayerKind({ allMatches, match });
-      sharedMatches.set(kind, [...(sharedMatches.get(kind) ?? []), match]);
+      sharedMatches.push(match);
       return;
     }
 
@@ -698,7 +704,16 @@ const recoverUnownedRenderableNodes = ({
 
     const hits = collectModuleHits({ match, modules: recoveredDrafts });
     if (!hits.length) return;
-    if (isCrossModuleSharedBackgroundCandidate({ hits, match, viewport })) return;
+    if (
+      isCrossModuleSharedBackgroundCandidate({
+        hits,
+        match,
+        modules: recoveredDrafts,
+        viewport,
+      })
+    ) {
+      return;
+    }
 
     const owner = hits[0]!.module;
     const centerInsideOwner = pointInside(centerOf(match.box), owner.region);

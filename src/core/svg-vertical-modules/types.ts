@@ -48,7 +48,7 @@ export type SvgSharedLayer = {
   containsIntrinsicText: boolean;
   containsText: boolean;
   id: string;
-  kind: "shared-underlay" | "shared-overlay";
+  kind: "shared-underlay";
   nodePaths: string[];
   reason: string;
   region: SerializableRegion;
