@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 
 import type { AgentReasoningEffort } from "../../../config/agent-reasoning.js";
 import { MODULE_AGENT_TIMEOUT_MS } from "../../../config/index.js";
@@ -135,6 +135,107 @@ class ModuleOutputIncompleteError extends Error {
 
 const readFileSize = async (filePath: string) => (await stat(filePath)).size;
 
+const isMissingOrEmptyFile = async (filePath: string) => {
+  try {
+    return (await stat(filePath)).size === 0;
+  } catch {
+    return true;
+  }
+};
+
+const shouldWriteInitialManifest = async (manifestPath: string) => {
+  if (await isMissingOrEmptyFile(manifestPath)) return true;
+  try {
+    const parsed = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      status?: unknown;
+    };
+    return parsed.status === "failed";
+  } catch {
+    return false;
+  }
+};
+
+const buildInitialManifestTemplate = (module: SvgVerticalModule) =>
+  `${JSON.stringify(
+    {
+      moduleId: module.id,
+      kind: module.kind,
+      fragments: ["preview.fragment.html"],
+      styles: ["module.css"],
+    },
+    null,
+    2,
+  )}\n`;
+
+const buildInitialPreviewTemplate = (module: SvgVerticalModule) =>
+  `<div class="${module.id}" data-module-id="${module.id}"></div>\n`;
+
+const buildInitialSourceFragmentTemplate = (
+  module: SvgVerticalModule,
+  outputFormat: ReturnType<typeof resolveModuleOutputFormat>,
+) =>
+  outputFormat === "react"
+    ? `<div className="${module.id}" data-module-id="${module.id}"></div>\n`
+    : buildInitialPreviewTemplate(module);
+
+const buildInitialCssTemplate = (module: SvgVerticalModule) =>
+  `.${module.id} {\n  position: relative;\n  width: ${Math.round(module.region.width)}px;\n  height: ${Math.round(module.region.height)}px;\n  overflow: hidden;\n}\n`;
+
+const ensureInitialModuleOutputTemplate = async ({
+  manifestPath,
+  module,
+  moduleCssPath,
+  outputFormat,
+  previewFragmentHtmlPath,
+  sourceFragmentPath,
+}: {
+  manifestPath: string;
+  module: SvgVerticalModule;
+  moduleCssPath: string;
+  outputFormat: ReturnType<typeof resolveModuleOutputFormat>;
+  previewFragmentHtmlPath: string;
+  sourceFragmentPath: string;
+}) => {
+  await mkdir(path.dirname(previewFragmentHtmlPath), { recursive: true });
+  const writes: Array<Promise<void>> = [];
+  const writtenFiles: string[] = [];
+
+  if (await isMissingOrEmptyFile(previewFragmentHtmlPath)) {
+    writes.push(
+      writeFile(
+        previewFragmentHtmlPath,
+        buildInitialPreviewTemplate(module),
+        "utf8",
+      ),
+    );
+    writtenFiles.push("preview.fragment.html");
+  }
+  if (await isMissingOrEmptyFile(moduleCssPath)) {
+    writes.push(writeFile(moduleCssPath, buildInitialCssTemplate(module), "utf8"));
+    writtenFiles.push("module.css");
+  }
+  if (await shouldWriteInitialManifest(manifestPath)) {
+    writes.push(writeFile(manifestPath, buildInitialManifestTemplate(module), "utf8"));
+    writtenFiles.push("manifest.json");
+  }
+  if (
+    outputFormat !== "html" &&
+    (await isMissingOrEmptyFile(sourceFragmentPath))
+  ) {
+    writes.push(
+      writeFile(
+        sourceFragmentPath,
+        buildInitialSourceFragmentTemplate(module, outputFormat),
+        "utf8",
+      ),
+    );
+    writtenFiles.push(getSourceFragmentFileName(outputFormat));
+  }
+
+  await Promise.all(writes);
+  return writtenFiles;
+};
+
 const ensureRequiredOutputFiles = async ({
   manifestPath,
   module,
@@ -181,6 +282,10 @@ const createAgentUnitThread = ({
 }: AgentUnitThreadInput) => {
   const options = {
     ...threadOptions,
+    // 设计还原是纯本地任务：禁用网络/网页搜索，收紧工具空间，避免无谓的 webfetch/websearch step。
+    networkAccessEnabled: false,
+    webSearchEnabled: false,
+    webSearchMode: "disabled",
     workingDirectory: workingDir,
     additionalDirectories: [
       path.join(path.dirname(originalSvgPath), "assets"),
@@ -256,6 +361,21 @@ export async function runAgentUnit(
       : path.join(workingDir, getSourceFragmentFileName(outputFormat));
   const sourceDataPath = path.join(workingDir, "source-data.json");
   const manifestPath = path.join(workingDir, "manifest.json");
+
+  const scaffoldedFiles = await ensureInitialModuleOutputTemplate({
+    manifestPath,
+    module,
+    moduleCssPath,
+    outputFormat,
+    previewFragmentHtmlPath,
+    sourceFragmentPath,
+  });
+  if (scaffoldedFiles.length) {
+    sessionStore.addLog(
+      sessionId,
+      `[agent-unit:${module.id}] scaffolded initial output template: ${scaffoldedFiles.join(", ")}`,
+    );
+  }
 
   // 构造 prompt（初始或后续修复）
   const prompt = revisionPrompt

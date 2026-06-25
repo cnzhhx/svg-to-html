@@ -180,6 +180,7 @@ const resolveOpencodeVariant = (
 ) => {
   const variant = normalizeReasoningEffort(value);
   if (!variant) return undefined;
+  if (variant === "none") return undefined;
   if (variant === "xhigh" && modelConfig.wireApi !== "responses") {
     return "max";
   }
@@ -191,6 +192,7 @@ const getResponsesReasoningOptions = (
 ): Record<string, unknown> | undefined => {
   const reasoningEffort = normalizeReasoningEffort(effort);
   if (!reasoningEffort) return undefined;
+  if (reasoningEffort === "none") return undefined;
   return {
     reasoningEffort,
     reasoningSummary: "auto",
@@ -839,7 +841,7 @@ class OpencodeThread implements AgentThread {
       ...(modelVariant ? ["--variant", modelVariant] : []),
       "--dir",
       this.options.workingDirectory ?? process.cwd(),
-      "--thinking",
+      ...(this.modelConfig.thinking ? ["--thinking"] : []),
     ];
 
     if (this._id) {

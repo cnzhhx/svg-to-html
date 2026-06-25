@@ -92,7 +92,12 @@ function buildAgentUnitFollowupBasePrompt(input: {
     round,
   } = input;
   const outputFormat = resolveModuleOutputFormat({ design, modulePlan });
+  const isFrameworkOutput = outputFormat === "vue" || outputFormat === "react";
   const moduleSemanticJsonPath = path.join(workingDir, "module-semantic.json");
+  const moduleAlignmentDiagnosticsCliPath = path.join(
+    process.cwd(),
+    "src/cli/diagnose-module-alignment.ts",
+  );
   const moduleReasonLine =
     typeof module.reason === "string" && module.reason.trim().length > 0
       ? ` | ${module.reason.trim()}`
@@ -125,11 +130,16 @@ function buildAgentUnitFollowupBasePrompt(input: {
 - 模块根容器由宿主自动定位到左上角 (0,0)，**禁止给根容器加任何偏移**
 - render.png / svg.png 只用于定位问题区域和验证结果，不能把“截图看起来大约 x=...”当成坐标来源
 - 若审核诊断与结构化 bbox/text 样式冲突，优先信任结构化数据；先解释冲突来自父盒选择、mask/clip/crop、资源裁切、坐标系或文本渲染差异，再修复
+- alignment diagnostics 是布局调试反馈；diffRatio 是最终验收反馈。verify stdout 会返回 alignmentDiagnostics 摘要；若上一轮 diffRatio >= 0.05，优先读取该摘要和 alignment-diagnostics.json，并批量修复真正的布局/资产 actionableIssues。若可测目标基本对齐但 diffRatio 仍高，不要继续猜字体、阴影、z-index、overflow 等无依据参数。
 
 ## 输入路径（本轮不会附加 JSON 内容或图片二进制）
 ${inputPathList}
 
 必须按路径自行读取需要的文件；不要假设本 prompt 已包含 module-semantic.json 内容或任何参考图像。
+
+## 对齐诊断
+- verify 会自动运行 alignment diagnostics，并在 stdout 返回 \`alignmentDiagnostics\` 摘要。独立命令只在 verify 摘要缺失/报错或需要重测指定入口时使用：${isFrameworkOutput ? `\`pnpm --dir ${process.cwd()} exec tsx ${moduleAlignmentDiagnosticsCliPath} --module-dir ${workingDir} --module-id ${module.id} --render-entry ${path.join(workingDir, "verify", "framework-round-<N>", "entry", "dist", "index.html")} --diff-ratio <verify输出diffRatio>\`` : `\`pnpm --dir ${process.cwd()} exec tsx ${moduleAlignmentDiagnosticsCliPath} --module-dir ${workingDir} --module-id ${module.id} --verify-round <N> --diff-ratio <verify输出diffRatio>\``}
+- 诊断默认写入 ${path.join(workingDir, "alignment-diagnostics.json")}；只根据 actionableIssues 批量修布局，文本问题只能改外盒/父容器，禁止改字体相关属性。若文本 x/y 基本对齐、无换行/裁切/缺字，只剩 width/height 或 glyph 度量偏差，应视为字体渲染差异，不再继续迭代。
 `.trim();
 }
 
@@ -180,6 +190,10 @@ function buildAgentUnitPrompt(input: {
       ? "src/cli/verify-module-framework.ts"
       : "src/cli/verify-module-design.ts",
   );
+  const moduleAlignmentDiagnosticsCliPath = path.join(
+    process.cwd(),
+    "src/cli/diagnose-module-alignment.ts",
+  );
   const exportSvgNodeCliPath = path.join(
     process.cwd(),
     "src/cli/export-svg-node-asset.ts",
@@ -203,7 +217,7 @@ function buildAgentUnitPrompt(input: {
       : "";
 
   const semanticJsonUsageLine = "- module-semantic.json：结构化主输入，磁盘文件，必须读";
-  const methodFirstStep = "1. 按路径快速读取 module-semantic.json；按需读取 module-reference.png / composite.png，只确认语义层级、关键视觉块、关键文本框和区域类型。generatedAssets 初始可能为空；需要图片资源时，从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断并导出。不要把所有节点坐标逐项重算成超长“几何账本”。结构化坐标（已导出图片资产用 generatedAssets[].box，其余按需参考 nodes[].bbox）是坐标主来源，截图只用于理解语义和验证。";
+  const methodFirstStep = "1. 按路径快速读取 module-semantic.json；按需读取 module-reference.png / composite.png，只确认语义层级、关键视觉块、关键文本框和区域类型。generatedAssets 初始可能为空，不代表缺资源；首批视觉还原优先把 textBlocks 之外的复杂视觉节点/组合节点导出 PNG（可并行导出），不要先花大量时间用 CSS 手绘或逐节点推理。需要图片资源时，从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断并导出。不要把所有节点坐标逐项重算成超长“几何账本”。结构化坐标（已导出图片资产用 generatedAssets[].box，其余按需参考 nodes[].bbox）是坐标主来源，截图只用于理解语义和验证。";
   const dualFragmentSection = isFrameworkOutput
     ? `
 ## 双片段对齐（${outputFormat === "vue" ? "Vue" : "React"}）
@@ -231,6 +245,7 @@ ${semanticJsonUsageLine}
 - shared-underlay.png：宿主在模块背后渲染的共享背景层，存在时按需读取，不要重复实现它
 - composite.png：模块内容 + 共享背景叠加后的最终效果，存在时按需读取
 - verify/round-*/render.png 与 svg.png：运行 verify 后产生，修复轮按路径自行读取
+- preview.fragment.html / module.css / manifest.json：启动前可能已存在最小可运行模板；这是方便你直接修改的脚手架，不代表已完成。直接在模板上替换/扩展即可，不要为基础 manifest/root 容器结构反复推理。
 
 module-semantic.json 关键字段（按此优先级取用）：
 | 字段 | 含义与用途 |
@@ -256,22 +271,24 @@ module-semantic.json 关键字段（按此优先级取用）：
 2. **文本归属以预处理为终审，禁止回看参考图二次确认**：某个文字是否进 textBlocks、某个节点是否含可读文本，预处理已经做了最终判定，截图/参考图上"看起来像字"或"看起来像装饰"都不构成推翻理由。节点 \`semantic.textHandling === "ignore"\`、\`semantic.textHandling === "export-asset"\` 或 \`semantic.exportDecision === "export"\` 的内容，一律按资产/装饰处理，**不得**为了"确认它到底是不是字"去读取或反复对照 module-reference.png / composite.png / shared-underlay.png。允许导出的图片资产里包含 \`textBlocks\` 未覆盖的装饰字、徽章字、截图内文字或图片自身文字；不要为了清掉这些非预处理文本而拆图、找隐藏图片节点或反复重导。textBlocks 未覆盖的内容按约束 1 处理，不要纠结其归属、不要反复推理。
 3. 禁止引用/内联/裁剪原始完整 SVG，禁止 data:image/* 或 base64，禁止写原始 inline <svg>；禁止把整张卡片/整个导航/整块区域拍成一张大图替代应有结构。
 4. textBlocks[].styleInference 的文本样式是预处理像素级算好的硬约束，一经使用永不修改（即便 verify diff 有偏差，也只能靠改位置/父容器解决，不许动 font-size/weight/color/line-height/letter-spacing/font-family）。仅当某样式缺失时才按视觉推断；推断颜色须取文字本身颜色，不得从邻近背景/装饰借色。
-5. **字体渲染差异是不可避免且必须接受的**：原始 SVG 使用文字路径（path data）渲染，而 HTML 使用系统字体（Noto Sans CJK SC 等），两者在抗锯齿、字重、hinting 上必然存在差异。禁止通过修改 font-size/weight/line-height/font-family 来"消除"这种差异。文本位置的微调（left/top 偏移 1-3px）可以容忍；若差异较大，优先检查文本外盒（layoutTargetRegion）是否被父容器正确约束，而不是改字体属性。
+5. **字体渲染差异是不可避免且必须接受的**：原始 SVG 使用文字路径（path data）渲染，而 HTML 使用系统字体（Noto Sans CJK SC 等），两者在抗锯齿、字重、hinting、glyph 宽高/度量上必然存在差异。禁止为了降低 diff 修改或追加任何字体渲染相关属性，包括但不限于 font-size/weight/line-height/font-family/letter-spacing、font-smoothing、text-rendering、font-variant、text-shadow、filter、transform/scale。文本位置的微调（left/top 偏移 1-3px）可以容忍；若文本 x/y 已基本对齐、没有换行错误/裁切/缺字，只剩 width/height 偏差，应视为不可行动的字体度量差，不得继续迭代。
 6. 普通 DOM 文本禁止用 \`overflow:hidden\`、固定单行高度、\`text-overflow\` 或裁切容器来掩盖溢出；尤其是说明文、段落、多行文本，必须保证所有文字可见。文本宽高/行数不确定时，宁可调整文本外盒高度、逐行 DOM、\`white-space: nowrap\` 或父模块布局，也不要把文字截掉。仅原设计明确是省略号/裁切标题时，才允许按原样使用 \`overflow:hidden\`。
 7. 图片宽高比锁定：\`<img>\` 渲染宽高比必须等于资产 \`box\` 的自然比例。锁定一边、另一边按比例推导（\`height = round(width * box.height / box.width)\`）。适配异形槽位只能裁切（外层 \`overflow:hidden\` + \`object-fit:cover\` + \`object-position\`）或等比缩放（\`object-fit:contain\`），禁止拉伸压扁。
 8. 不要给模块根容器加背景色或任何偏移；根容器由宿主定位到 (0,0)。模块背景由页面统一处理，只还原有明确边界的局部背景（卡片底色、按钮背景）。如果 module-reference.png 中只有白色图标/文字落在透明画布上，不得为了“承载”或“对比”自行补黑/白/粉等底色；shared-underlay.png / composite.png 只用于理解宿主上下文，不要重复实现成模块 root background。
 9. 所有坐标、尺寸、间距统一用 px，禁止 %、vw、vh、em、rem；普通布局的 left/top/width/height/padding/margin/gap/border-radius 以整数 px 为默认，只有 textBlocks[].styleInference 里明确给出的小数样式、透明度、阴影/滤镜和必要的非文本 transform 才保留小数。
+10. **对齐诊断标记硬要求**：每个 \`textBlocks[]\` 对应的真实 DOM 文本元素必须添加 \`data-node-id="<textBlock.id>"\`；每个 \`generatedAssets[]\` 对应的 \`<img>\` 必须添加 \`data-asset-id="<asset.id>"\`。刚导出资产后如果不确定 id，读取 export 命令 stdout 或 module-semantic.json 的 generatedAssets；不要让同一 data id 出现在多个可见元素上。
+- **资产粒度边界**：按视觉层级切资产，而不是按整块区域偷懒合并。可独立定位的前景层（图标、标记、装饰文字、视觉数值、状态层、覆盖层等）应与背景/容器层分开导出并单独定位；背景/容器资产只承载底板、阴影、边框、纹理、遮罩等底层视觉。只有某个前景层与底图纹理、裁切或图片内容真正不可分割时，才允许合并到同一资产里。\`textBlocks\` 之外的可见文字不得擅自改成 DOM 文本，但也应遵守这个分层原则，必要时作为独立视觉资产处理。
 
 ## 方法（按序执行）
 ${methodFirstStep}
-2. **产物优先，先写初版再细调**：读完主输入后，第一件事必须写齐 preview.fragment.html + module.css + manifest.json（Vue/React 还要写 source fragment），再继续分析、**browser-eval**、按需导出资产，**最后才 verify**。初版可以是粗糙但完整的可运行版本：用 textBlocks/nodes 和少量必要的按需导出资产先摆出主要内容，manifest 只填固定字段；后续脚本会补资产列表；有冲突时先选一个保守方案落盘，之后再修。
+2. **产物优先，先落可运行初版再细调**：读完主输入后，只允许做一次短暂的首批资产决策；需要复杂非文本视觉时先批量/并行导出必要 PNG，然后立刻更新 preview.fragment.html + module.css + manifest.json（Vue/React 还要更新 source fragment）。这些文件若已有最小模板，直接改模板，不要先删除后重建，也不要为 manifest 基础字段停留。不要在写初版前长时间分析、逐节点手绘或反复读图。初版可以粗糙但必须完整可运行：textBlocks 一律 DOM 文本，非文本复杂视觉优先用已导出资产按 generatedAssets[].box 绝对定位，manifest 只填固定字段；后续脚本会补资产列表。有冲突时先选一个保守方案落盘，之后用 **browser-eval** 和 verify 修。
 3. **判断区域类型，选布局范式**：
    - **非重复的自由叠放区**（状态栏、导航栏、主视觉海报、多层装饰叠加、无同构子项）→ **全部用 absolute positioning**。非文本视觉尽量导出为 PNG 后绝对定位；**图层若对应一个已导出资产，用该资产 generatedAssets[].box 的 x/y/width/height 定位 + 定尺寸（box 是 PNG 的 CSS 放置外框，别再用节点几何框或内部可见像素框去摆图片，否则会错位/压扁）**；尚未导出的视觉块先用 nodes[].bbox/inspectIndex 判断是否需要导出。z-index 按 inspectIndex 从小到大叠；不合并/丢弃图层、不挑某节点拉伸当整块背景；压在图形上的独立文字仍按 DOM 文本还原到对应位置。
    - **重复/连续/同构区**（列表、网格、卡片行、导航项、按钮组、标签组、数据行）→ **外层父容器用 flex 或 grid 管理宏观排列，每个同构子项（item/card/tab/row）内部用 absolute positioning 精确摆放内部元素**。禁止把同构子项拆成一堆互不关联的绝对定位叶子节点，也禁止逐个子项凭感觉微调。同构子项内部也要保持一致结构：图片/图标、标题、说明、数值、状态等用稳定 class 命名；只允许通过数据内容、选中态、少量修饰 class 表达差异。
    - **严禁在同构子项内部使用 CSS Grid 的 gap/auto-placement 来推算元素位置**。每个子项内部的图片、文本、badge 等必须有独立的 \`position: absolute; left: X; top: Y\`，不得依赖 flow 布局自动排列。
 4. 文本：用 layoutTargetRegion 定位外盒，再用 styleInference 填样式。单行文本（lineCount=1 或无换行）styleInference 已包含 \`white-space: nowrap\`，直接使用即可，不要设置固定 width 来约束换行（left/top 定位、text-align 居中可保留，但宽度不应成为换行触发条件）。多行文本按 lineCount/换行生成稳定的多行结构，避免浏览器自动多折一行后被父模块裁掉；必要时增加文本外盒高度，但不要隐藏文字。无论单行还是多行，禁止对文本容器使用 \`overflow: hidden\`。
 5. CSS 落地时坐标/盒模型默认四舍五入到整数 px：图片资产 box、结构节点 bbox、文本 layoutTargetRegion 的 left/top/width/height 都按整数写；textBlocks[].styleInference 的 font-size/line-height/letter-spacing/font-family/weight/color 原样使用，不因取整规则修改。
-6. **选实现手段（默认图片优先，能用 PNG 就不手绘）**：非文本视觉样式默认优先导出 PNG；只有纯色背景、单层边框、简单圆角、简单横/竖条、状态圆点、分隔线这类简单到不能再简单的元素才用 CSS。渐变、纹理、阴影组合、clip-path 异形、mask、图标、多 path 组合、徽章、装饰壳、图片内容等都优先导出 PNG。一个视觉由多个节点组成时（icon 多 path、按钮背景+边框+高光）用 exportSvgNode 合并导出为一张。
+6. **选实现手段（默认图片优先，能用 PNG 就不手绘）**：非文本视觉样式默认优先导出 PNG，模块 agent 不需要证明某个复杂视觉“不能用 CSS 实现”才导出。只有纯色背景、单层边框、简单圆角、简单横/竖条、状态圆点、分隔线这类简单到不能再简单的元素才用 CSS。渐变、纹理、阴影组合、clip-path 异形、mask、图标、多 path 组合、徽章、装饰壳、图片内容等都优先导出 PNG。一个视觉由多个节点组成时（icon 多 path、按钮背景+边框+高光）用 exportSvgNode 合并导出为一张；可读 textBlocks 禁止导出。对于 textBlocks 之外的可见前景层，优先按独立视觉层导出，不要并入大块背景/容器资产。
 7. **browser-eval 是首选调试工具，verify 是最终验收工具**。三件套产物可运行后，**立即先用 browser-eval** 做局部自检，优先把内容缺失、错图、明显重叠、明显布局/裁切错误消灭在 verify 之前；在觉得自己"已经做完了"、所有关键元素位置都正确对齐之后，再运行 verify。不要把 verify 当调试工具频繁运行——每轮 verify 成本高，应该只有在 browser-eval 显示布局基本对齐后再进 verify 做最终 diff 检查。
 8. 不确定真实 DOM 位置、尺寸、gap、行列数、裁切或 computed style 时，立即用 browser-eval 查询浏览器实际结果；如果你准备在脑中推算某个具体坐标/尺寸超过 3 行，必须改用 browser-eval。查询后只做局部、批量修 CSS/HTML，不要推倒重来；修改后如果觉得问题已解决，再跑 verify。browser-eval 通过 browser_eval MCP tool 调用，把 JS 直接传入 script 参数，最后 return JSON，禁止再写 browser-eval.js 文件。
 9. 骨架可运行后 → browser-eval 查关键容器/重复结构/文本/图片实际 rect 和 computed style → 批量修明显问题 → 确认"做完了" → verify → 按下方"校验与停损"规则决定是否读图对比与修复 → 再 verify：
@@ -312,16 +329,19 @@ ${sourceDataContractSection}
     每条命令的 stdout 会输出 JSON（含 \`clip\`/\`renderedBox\`/\`registeredAsset\`），需要定位信息时优先从对应命令的输出解析，避免重读整个 module-semantic.json。**禁止并行**：写同一输出文件、verify 命令本身、以及会冲突的文件改写。独立资产数 ≥3 个时优先用并行，不要用 \`&&\` 串行连接；1-2 个资产按需。
   - **禁止写 python/node 脚本去 inspect module-semantic.json**（启动 pnpm/tsx 解释器开销大）。需要查 JSON 内容直接用 read 工具读文件。
 - Semantic JSON: ${moduleSemanticJsonPath}
+- 对齐诊断（诊断位置/尺寸，不替代最终 diff 验收）:
+  - verify stdout 会自动包含 \`alignmentDiagnostics\` 摘要，并默认写入 \`${path.join(workingDir, "alignment-diagnostics.json")}\`。独立诊断命令只作为 fallback/debug 使用：${isFrameworkOutput ? `\`pnpm --dir ${process.cwd()} exec tsx ${moduleAlignmentDiagnosticsCliPath} --module-dir ${workingDir} --module-id ${module.id} --render-entry ${path.join(workingDir, "verify", "framework-round-<N>", "entry", "dist", "index.html")} --diff-ratio <verify输出diffRatio>\`` : `\`pnpm --dir ${process.cwd()} exec tsx ${moduleAlignmentDiagnosticsCliPath} --module-dir ${workingDir} --module-id ${module.id} --verify-round <N> --diff-ratio <verify输出diffRatio>\``}
+  - 先看 \`actionableIssues\`：图片偏差说明最终 img rect 偏了，通常检查父容器 gap/padding/margin 或 item 内部定位；文本偏差只允许改文本外盒/父容器，禁止改 font-size/font-weight/line-height/font-family/color。
 
 ## 校验与停损
 - 空产物比低保真初版更严重：任何时候如果发现自己在同一冲突点上反复权衡，必须停止继续分析，保留/写出当前最佳可运行产物，再用 browser-eval 或 verify 进入修复循环。
 - verify/browser-eval/exportSvgNode 都只能在三件套产物已经非空后执行；结束前必须确认 preview.fragment.html、module.css、manifest.json 已写齐且不是空文件。
-- 修复优先级用可观察现象判断，不要给问题贴等级标签：先批量修内容缺失、结构层级错、错误资产、明显重叠、明显布局/裁切错误；轻微文本位置、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差不要反复追。不要每个小改动都 verify。
+- 修复优先级用可观察现象判断，不要给问题贴等级标签：先批量修内容缺失、结构层级错、错误资产、明显重叠、明显布局/裁切错误；文本 width/height 度量差、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差不要反复追。不要每个小改动都 verify。
 - **宿主自动回滚机制**：每次 verify 后，如果 diffRatio 比当前最佳值反弹超过 0.5 个百分点，宿主会自动回滚到上一次最佳版本的文件状态，并终止本轮 agent。你不需要手动恢复文件。因此：如果一轮修改后 verify 结果变差，不要慌张，宿主已帮你回滚；你只需要在下一轮重新分析原因、换一种修复策略即可。
 - **browser-eval 阶段无自动回滚**：browser-eval 只返回坐标信息，不产生 diffRatio，因此不会触发自动回滚。如果你在 browser-eval 后发现关键元素位置偏差很大（如 >5px），可以自行撤销最近的修改（重新写入文件），或者继续调整后再 verify——verify 阶段的自动回滚会保护你。
-- Verify 后读图对比（按 diffRatio 决定，避免低 diff 时的冗余人工对比）：首轮 verify \`diffRatio < 0.05\` → 渲染与参考图差异已在允许范围内，直接结束本轮（优先于下方"低 diff 小问题停损"，首轮即通过时不再修小问题），**不读 render.png / svg.png / diff.png**。\`diffRatio >= 0.05\` 时，读取同目录下的 \`render.png\`（当前 HTML 渲染）和 \`svg.png\`（原 SVG 参考），列出区域级差异清单（偏移/缺失/错位/颜色差异），再一次性批量修复。**任何情况下都不要读取 diff.png**（像素差异热力图，对定位问题帮助小且极耗 token）。
-- Verify 螺旋停损：每轮 verify 后先列出区域级差异清单，再一次性批量修复；禁止一次只改一个元素的 1-3px left/top。若同一模块/同一区域相邻三次 verify 的 diffRatio 改善都 < 0.1 个百分点（绝对值降幅 < 0.001），或出现明显反弹，保留当前最佳版本停止，转去别处或结束。
-- 低 diff 小问题停损：当 diffRatio < 0.05 且剩余问题只是轻微文本偏移、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差时，只允许围绕同一问题做一次修复和一次复验；若复验 diffRatio 没有下降至少 0.001，禁止继续实验、查源码、查字体、拆字符或反复改 DOM 结构，直接保留当前最佳版本并结束。
+- Verify 后诊断与读图对比（按 diffRatio 决定，避免低 diff 时的冗余人工对比）：首轮 verify \`diffRatio < 0.05\` → 渲染与参考图差异已在允许范围内，直接结束本轮（优先于下方"低收益停损"，首轮即通过时不再修小问题），**不读 render.png / svg.png / diff.png，也不额外运行 alignment diagnostics**。\`diffRatio >= 0.05\` 时，先看 verify stdout 的 \`alignmentDiagnostics\` 摘要和 \`alignment-diagnostics.json\`，只批量修复真正会改变结构结果的布局/资产问题。若 \`majorIssues=0\`、\`missingTargets=0\`、\`missingExpectedBoxes=0\`，且剩余 actionableIssues 只是文本 width/height、glyph 度量、抗锯齿、字重/字体渲染或 1-2px 边缘偏差，即使 diffRatio 仍高也必须停止，保留当前最佳版本。若报告 \`likelyNonActionablePixelDiff=true\`，同样停止猜字体、阴影、z-index、overflow 等无依据参数。只有诊断缺失/报错，或诊断无法解释区域级问题时，再读取同目录下的 \`render.png\`（当前 HTML 渲染）和 \`svg.png\`（原 SVG 参考），列出区域级差异清单后一次性批量修复。**任何情况下都不要读取 diff.png**（像素差异热力图，对定位问题帮助小且极耗 token）。
+- Verify 螺旋停损：每轮 verify 后先看是否还有结构性问题，再一次性批量修复；禁止一次只改一个元素的 1-3px left/top。若同一模块/同一区域相邻两次 verify 的 diffRatio 改善都 < 0.1 个百分点（绝对值降幅 < 0.001），或出现反弹且诊断没有新的结构性问题，保留当前最佳版本停止，转去别处或结束。
+- 低收益小问题停损：当剩余问题只是轻微文本偏移、文本 width/height 度量差、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差时，不论 diffRatio 是否低于 0.05，最多围绕同一问题做一次修复和一次复验；若复验 diffRatio 没有下降至少 0.001，禁止继续实验、查源码、查字体、拆字符、改 font-smoothing/text-rendering 或反复改 DOM 结构，直接保留当前最佳版本并结束。
 
 ## 最小范例（仅示意结构，按实际数据填坐标）
 重复/同构区：
@@ -380,7 +400,7 @@ outputFormat: ${outputFormat}
 - generatedAssets 只代表已经按需导出的资源，可能为空；非文本视觉样式仍默认图片优先，需要时从 module-semantic.json 的 nodes 选择 nodeId，用工具导出新的 SVG 节点为 PNG。但禁止把整张卡片、整个模块等大块区域直接拍成单张图片偷懒。
 - 文本边界仍以 module-semantic.json 的 textBlocks 为准：禁止导出/烤进图片的只有 textBlocks 对应的预处理 DOM 文本；导出资产里包含 textBlocks 未覆盖的装饰字、徽章字、截图内文字或图片自身文字是允许的，不要为清理这些非预处理文本反复拆图。
 
-完成后可运行局部校验，但要有停损：同一模块/同一区域相邻三次 verify 若每次 diffRatio 改善都小于 0.1 个百分点，就不要继续追这个区域；若 diffRatio 已低于 5%，且只剩轻微文本/抗锯齿/1-3px 抖动/小面积颜色差这类小问题，最多修一次并复验一次，复验没有改善就停止；不要运行整页 verify。
+完成后可运行局部校验，但要有停损：同一模块/同一区域相邻两次 verify 若每次 diffRatio 改善都小于 0.1 个百分点，就不要继续追这个区域；若只剩文本 width/height 度量差、轻微文本偏移、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差这类小问题，不论 diffRatio 是否低于 5%，最多修一次并复验一次，复验没有改善就停止；不要运行整页 verify。
 `.trim();
 }
 

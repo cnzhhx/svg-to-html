@@ -33,6 +33,7 @@ const getRuntimeCacheKey = (modelConfig: ModelProviderConfig) =>
     modelConfig.reasoningEffort,
     modelConfig.runtimeTrace,
     modelConfig.runtimeTraceSampleChars,
+    modelConfig.thinking,
   ].join("::");
 
 const getAgentRuntime = (

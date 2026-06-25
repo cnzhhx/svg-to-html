@@ -24,6 +24,7 @@ type ModuleFrameworkLocalVerifyResult = {
   diffPixels?: number;
   diffRatio: number;
   passed: boolean;
+  renderEntryPath?: string;
   renderPngPath?: string;
   svgPngPath?: string;
 };
@@ -186,6 +187,7 @@ export const verifyModuleFrameworkLocal = async ({
   moduleDir,
   moduleSvgPath,
   onProgress,
+  onRenderEntryReady,
   outputFormat,
   round,
   signal,
@@ -195,6 +197,7 @@ export const verifyModuleFrameworkLocal = async ({
   moduleDir: string;
   moduleSvgPath: string;
   onProgress?: (message: string) => void;
+  onRenderEntryReady?: (renderEntryPath: string) => void;
   outputFormat?: "vue" | "react";
   round: number;
   signal?: AbortSignal;
@@ -381,6 +384,7 @@ export const verifyModuleFrameworkLocal = async ({
   const distHtmlPath = path.join(distDir, "index.html");
 
   const frameworkRenderEntryPath = distHtmlPath;
+  onRenderEntryReady?.(frameworkRenderEntryPath);
 
   const result = await verifyDesign(
     moduleSvgPath,
@@ -398,6 +402,7 @@ export const verifyModuleFrameworkLocal = async ({
     artifactDir: result.artifactDir,
     diffRatio: result.diffRatio,
     passed: result.diffRatio <= MODULE_DIFF_RATIO_THRESHOLD,
+    renderEntryPath: frameworkRenderEntryPath,
     renderPngPath: result.renderPngPath,
     svgPngPath: result.svgPngPath,
   };

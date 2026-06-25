@@ -40,7 +40,7 @@ const AGENT_REASONING_EFFORTS = {
   ),
   support: parseReasoningEffort(
     process.env['SUPPORT_AGENT_REASONING_EFFORT'],
-    'low',
+    'none',
   ),
 } as const
 

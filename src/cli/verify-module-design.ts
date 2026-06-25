@@ -3,6 +3,10 @@ import path from 'node:path'
 import { readModulePlan } from '../pipeline/module-merge/index.js'
 import { verifyModuleLocal } from '../pipeline/agent-runner/module/module-local-verify.js'
 import {
+  measureModuleAlignment,
+  writeMeasuredModuleAlignmentDiagnostics,
+} from './diagnose-module-alignment.js'
+import {
   normalizePlanModules,
   parseCliFlags,
   resolveRequiredPath,
@@ -43,6 +47,29 @@ const parseArgs = (args: string[]) => {
   }
 }
 
+type AlignmentMeasurementResult =
+  | {
+      measurement: Awaited<ReturnType<typeof measureModuleAlignment>>
+      ok: true
+    }
+  | {
+      error: unknown
+      ok: false
+    }
+
+const measureModuleAlignmentSafely = (
+  input: Parameters<typeof measureModuleAlignment>[0],
+): Promise<AlignmentMeasurementResult> =>
+  measureModuleAlignment(input)
+    .then((measurement) => ({
+      measurement,
+      ok: true as const,
+    }))
+    .catch((error) => ({
+      error,
+      ok: false as const,
+    }))
+
 const main = async () => {
   const args = parseArgs(process.argv.slice(2))
   if (
@@ -80,6 +107,9 @@ const main = async () => {
     )
   }
 
+  let alignmentMeasurement:
+    | ReturnType<typeof measureModuleAlignmentSafely>
+    | undefined
   const result = await verifyModuleLocal({
     module: {
       id: moduleId,
@@ -96,13 +126,41 @@ const main = async () => {
     modulePlanPath,
     moduleSvgPath,
     onProgress: () => {},
+    onRenderEntryReady: (renderEntryPath) => {
+      alignmentMeasurement = measureModuleAlignmentSafely({
+        moduleDir,
+        moduleId,
+        renderEntry: renderEntryPath,
+        scale: args.scale,
+      })
+    },
     round: Number.isFinite(args.round) ? args.round : 0,
     scale: args.scale,
     scaffoldHtmlPath,
   })
+  const alignmentDiagnostics = await (
+    alignmentMeasurement ??
+    measureModuleAlignmentSafely({
+      moduleDir,
+      moduleId,
+      renderEntry: result.previewHtmlPath,
+      scale: args.scale,
+    })
+  )
+    .then((measurementResult) => {
+      if (!measurementResult.ok) throw measurementResult.error
+      return writeMeasuredModuleAlignmentDiagnostics(measurementResult.measurement, {
+        diffRatio: result.diffRatio,
+      })
+    })
+    .then((diagnostics) => diagnostics.summary)
+    .catch((error) => ({
+      error: error instanceof Error ? error.message : String(error),
+    }))
 
   console.log(
     JSON.stringify({
+      alignmentDiagnostics,
       diffRatio: result.diffRatio,
       passed: result.passed,
     }),

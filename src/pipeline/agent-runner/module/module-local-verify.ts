@@ -18,6 +18,7 @@ type ModuleLocalVerifyInput = {
   modulePlan?: Pick<ModulePlan, "design" | "outputFormat" | "sharedLayers">;
   modulePlanPath?: string;
   moduleSvgPath: string;
+  onRenderEntryReady?: (renderEntryPath: string) => void;
   round: number;
   scale?: number;
   scaffoldHtmlPath: string;
@@ -376,6 +377,7 @@ const verifyModuleLocal = async ({
   modulePlanPath,
   moduleSvgPath,
   onProgress,
+  onRenderEntryReady,
   round,
   scale,
   scaffoldHtmlPath,
@@ -425,6 +427,7 @@ const verifyModuleLocal = async ({
       width: module.region.width,
     }),
   );
+  onRenderEntryReady?.(previewHtmlPath);
   const sourceHtmlPath = sharedLayers.length
     ? getModuleSourceHtmlPath(moduleDir, round)
     : undefined;

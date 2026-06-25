@@ -29,6 +29,7 @@ type ModelDefinition = Partial<{
   providerName: string;
   reasoningEffort: AgentReasoningEffort;
   runtime: ModelRuntime;
+  thinking: boolean;
   wireApi: ModelWireApi;
 }>;
 
@@ -57,6 +58,7 @@ type ModelProviderConfig = {
   runtime: ModelRuntime;
   runtimeTrace: boolean;
   runtimeTraceSampleChars: number;
+  thinking: boolean;
   wireApi: ModelWireApi;
 };
 
@@ -230,6 +232,13 @@ const resolveRequestedModel = ({
 const getConfiguredModelKey = (role: ModelConfigRole) =>
   role === "moduleAgent" ? "moduleAgentModel" : "otherModel";
 
+const getDefaultThinking = (role: ModelConfigRole) => role === "moduleAgent";
+
+const getDefaultReasoningEffort = (role: ModelConfigRole) =>
+  role === "moduleAgent"
+    ? AGENT_REASONING_EFFORTS.default
+    : AGENT_REASONING_EFFORTS.support;
+
 const validateModelConfig = ({
   config,
   role,
@@ -275,7 +284,7 @@ const resolveModelProviderConfig = ({
 
   const configReasoningEffort = parseReasoningEffort(
     modelConfig.reasoningEffort,
-    AGENT_REASONING_EFFORTS.default,
+    getDefaultReasoningEffort(role),
   );
 
   const resolvedMaxOutputTokens = parseNonNegativeNumber(
@@ -345,6 +354,11 @@ const resolveModelProviderConfig = ({
       readRoleAwareEnv(role, "MODEL_RUNTIME_TRACE_SAMPLE_CHARS"),
       100,
     ),
+    thinking:
+      parseBoolean(readRoleAwareEnv(role, "MODEL_THINKING")) ??
+      (typeof modelConfig.thinking === "boolean"
+        ? modelConfig.thinking
+        : getDefaultThinking(role)),
     wireApi: parseModelWireApi(
       readRoleAwareEnv(role, "MODEL_WIRE_API"),
       modelConfig.wireApi ?? "chat-completions",

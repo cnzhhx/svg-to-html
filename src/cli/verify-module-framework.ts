@@ -4,6 +4,10 @@ import { readModulePlan } from "../pipeline/module-merge/index.js";
 import { verifyModuleFrameworkLocal } from "../pipeline/agent-runner/module/module-framework-local-verify.js";
 import type { SvgVerticalModule } from "../core/svg-vertical-modules/types.js";
 import {
+  measureModuleAlignment,
+  writeMeasuredModuleAlignmentDiagnostics,
+} from "./diagnose-module-alignment.js";
+import {
   normalizePlanModules,
   parseCliFlags,
   resolveRequiredPath,
@@ -60,6 +64,29 @@ const parseArgs = (args: string[]) => {
   };
 };
 
+type AlignmentMeasurementResult =
+  | {
+      measurement: Awaited<ReturnType<typeof measureModuleAlignment>>;
+      ok: true;
+    }
+  | {
+      error: unknown;
+      ok: false;
+    };
+
+const measureModuleAlignmentSafely = (
+  input: Parameters<typeof measureModuleAlignment>[0],
+): Promise<AlignmentMeasurementResult> =>
+  measureModuleAlignment(input)
+    .then((measurement) => ({
+      measurement,
+      ok: true as const,
+    }))
+    .catch((error) => ({
+      error,
+      ok: false as const,
+    }));
+
 /**
  * Framework module verify CLI. Builds a real Vite project (Vue/React) from the
  * module's source fragment + source-data + module.css, renders it, and reports
@@ -104,6 +131,9 @@ const main = async () => {
     );
   }
 
+  let alignmentMeasurement:
+    | ReturnType<typeof measureModuleAlignmentSafely>
+    | undefined;
   const result = await verifyModuleFrameworkLocal({
     design: {
       height: module.region.height,
@@ -123,6 +153,14 @@ const main = async () => {
     moduleDir,
     moduleSvgPath,
     onProgress: () => {},
+    onRenderEntryReady: (renderEntryPath) => {
+      alignmentMeasurement = measureModuleAlignmentSafely({
+        moduleDir,
+        moduleId,
+        renderEntry: renderEntryPath,
+        scale: args.scale,
+      });
+    },
     outputFormat: args.outputFormat,
     round: Number.isFinite(args.round) ? args.round : 0,
   });
@@ -140,8 +178,32 @@ const main = async () => {
     return;
   }
 
+  const alignmentDiagnostics =
+    result.renderEntryPath && !result.buildError
+      ? await (
+          alignmentMeasurement ??
+          measureModuleAlignmentSafely({
+            moduleDir,
+            moduleId,
+            renderEntry: result.renderEntryPath,
+            scale: args.scale,
+          })
+        )
+          .then((measurementResult) => {
+            if (!measurementResult.ok) throw measurementResult.error;
+            return writeMeasuredModuleAlignmentDiagnostics(measurementResult.measurement, {
+              diffRatio: result.diffRatio,
+            });
+          })
+          .then((diagnostics) => diagnostics.summary)
+          .catch((error) => ({
+            error: error instanceof Error ? error.message : String(error),
+          }))
+      : undefined;
+
   console.log(
     JSON.stringify({
+      ...(alignmentDiagnostics ? { alignmentDiagnostics } : {}),
       diffRatio: result.diffRatio,
       passed: result.passed,
       ...(result.buildError ? { buildError: result.buildError } : {}),
