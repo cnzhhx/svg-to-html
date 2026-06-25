@@ -13,6 +13,7 @@
     "task:split-svg-modules": "tsx src/cli/split-svg-modules.ts",
     "task:analyze-session-cost": "tsx src/cli/analyze-session-cost.ts",
     "task:browser-query": "tsx src/cli/browser-query.ts",
+    "task:diagnose-module-alignment": "tsx src/cli/diagnose-module-alignment.ts",
     "task:inspect-module-svg": "tsx src/cli/inspect-module-svg.ts",
     "task:export-svg-node-asset": "tsx src/cli/export-svg-node-asset.ts",
     "task:extract-module-text": "tsx src/cli/extract-module-text.ts",

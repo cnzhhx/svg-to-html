@@ -147,15 +147,72 @@ const readSvgLayout = async ({
         }
 
         const readAttributes = (node) => {
+          const parsePaintRef = (value) => {
+            if (typeof value !== 'string') return null
+            const match = value.match(/url\(\s*["']?#([^"')\s]+)["']?\s*\)/i)
+            return match ? match[1] : null
+          }
+
+          const parseOpacity = (value, fallback = 1) => {
+            if (typeof value !== 'string' || !value.trim()) return fallback
+            const token = value.trim()
+            const parsed = token.endsWith('%')
+              ? Number.parseFloat(token) / 100
+              : Number.parseFloat(token)
+            return Number.isFinite(parsed) ? parsed : fallback
+          }
+
+          const isOpaqueColor = (value) => {
+            if (typeof value !== 'string' || !value.trim()) return true
+            const token = value.trim().toLowerCase()
+            if (token === 'none' || token === 'transparent') return false
+            const rgba = token.match(/^rgba\(\s*[^,]+\s*,\s*[^,]+\s*,\s*[^,]+\s*,\s*([^)]+)\s*\)$/)
+            if (rgba) return parseOpacity(rgba[1], 1) > 0.99
+            if (/^#(?:[0-9a-f]{4}|[0-9a-f]{8})$/i.test(token)) {
+              const alphaHex = token.length === 5 ? token.slice(4, 5).repeat(2) : token.slice(7, 9)
+              const alpha = Number.parseInt(alphaHex, 16) / 255
+              return Number.isFinite(alpha) && alpha > 0.99
+            }
+            return true
+          }
+
+          const readCssValue = (element, property) => {
+            try {
+              return (
+                element.style?.getPropertyValue(property) ||
+                element.getAttribute(property) ||
+                window.getComputedStyle(element).getPropertyValue(property) ||
+                ''
+              )
+            } catch {
+              return element.getAttribute(property) || ''
+            }
+          }
+
+          const isOpaqueGradient = (paintElement) => {
+            const tag = paintElement.tagName.toLowerCase()
+            if (tag !== 'lineargradient' && tag !== 'radialgradient') return false
+            const stops = Array.from(paintElement.querySelectorAll('stop'))
+            if (stops.length === 0) return false
+            return stops.every((stop) => {
+              const stopOpacity = parseOpacity(readCssValue(stop, 'stop-opacity'), 1)
+              const opacity = parseOpacity(readCssValue(stop, 'opacity'), 1)
+              const stopColor = readCssValue(stop, 'stop-color')
+              return stopOpacity * opacity > 0.99 && isOpaqueColor(stopColor)
+            })
+          }
+
           const names = [
             'id',
             'class',
             'display',
             'fill',
             'fill-opacity',
+            'fill-rule',
             'visibility',
             'stroke',
             'stroke-opacity',
+            'stroke-width',
             'opacity',
             'transform',
             'x',
@@ -184,8 +241,27 @@ const readSvgLayout = async ({
             if (value) output[name] = value
           })
 
+          const fillRef = parsePaintRef(output.fill)
+          if (fillRef) {
+            const paintElement = root.ownerDocument?.getElementById(fillRef)
+            if (paintElement) {
+              output.fillOpaque = isOpaqueGradient(paintElement) ? 'true' : 'false'
+            }
+          } else if (output.fill) {
+            output.fillOpaque = isOpaqueColor(output.fill) ? 'true' : 'false'
+          }
+
           if (node.tagName.toLowerCase() === 'path') {
-            output.pathDataLength = String(node.getAttribute('d')?.length ?? 0)
+            const pathData = node.getAttribute('d') || ''
+            output.pathDataLength = String(pathData.length)
+            if (pathData) {
+              let hash = 2166136261
+              for (let i = 0; i < pathData.length; i += 1) {
+                hash ^= pathData.charCodeAt(i)
+                hash = Math.imul(hash, 16777619)
+              }
+              output.pathDataHash = (hash >>> 0).toString(16)
+            }
           }
 
           // Also read computed font styles for text/tspan elements

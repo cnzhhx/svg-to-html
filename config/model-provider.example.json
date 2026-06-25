@@ -8,6 +8,7 @@
       "baseURL": "https://api.example.com/v1",
       "apiKeyEnv": "YOUR_PROVIDER_API_KEY",
       "model": "your-model-id",
+      "thinking": false,
       "modalities": {
         "input": ["text", "image"],
         "output": ["text"]

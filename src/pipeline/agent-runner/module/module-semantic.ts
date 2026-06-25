@@ -172,8 +172,8 @@ type CreateModuleSemanticDraftResult = {
 };
 
 const MODULE_SEMANTIC_SCHEMA_VERSION = 2;
-const MODULE_SEMANTIC_NODE_FACT_VERSION = 2;
-const MODULE_SEMANTIC_SEMANTIC_PASS_VERSION = 3;
+const MODULE_SEMANTIC_NODE_FACT_VERSION = 4;
+const MODULE_SEMANTIC_SEMANTIC_PASS_VERSION = 4;
 const MODULE_SEMANTIC_TEXT_STYLE_PASS_VERSION = 6;
 
 const IMPORTANT_ATTRS = new Set([
@@ -188,7 +188,9 @@ const IMPORTANT_ATTRS = new Set([
   "display",
   "dominant-baseline",
   "fill",
+  "fillOpaque",
   "fill-opacity",
+  "fill-rule",
   "filter",
   "font-family",
   "font-size",
@@ -199,12 +201,14 @@ const IMPORTANT_ATTRS = new Set([
   "letter-spacing",
   "mask",
   "opacity",
+  "pathDataHash",
   "pathDataLength",
   "r",
   "rx",
   "ry",
   "stroke",
   "stroke-opacity",
+  "stroke-width",
   "text-anchor",
   "transform",
   "visibility",
@@ -262,6 +266,150 @@ const hasMeaningfulBox = (box: Box | null | undefined): box is Box => {
   );
 };
 
+const BOX_EPSILON = 0.01;
+
+const boxesMatch = (left: Box | undefined, right: Box | undefined) => {
+  if (!left || !right) return false;
+  return (
+    Math.abs(left.x - right.x) <= BOX_EPSILON &&
+    Math.abs(left.y - right.y) <= BOX_EPSILON &&
+    Math.abs(left.width - right.width) <= BOX_EPSILON &&
+    Math.abs(left.height - right.height) <= BOX_EPSILON
+  );
+};
+
+const readNumericAttr = (value: string | undefined) => {
+  if (!value) return undefined;
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const readOpacityProduct = (node: ModuleSemanticNode) => {
+  const opacity = readNumericAttr(node.attrs.opacity) ?? 1;
+  const fillOpacity = readNumericAttr(node.attrs["fill-opacity"]) ?? 1;
+  const strokeOpacity = readNumericAttr(node.attrs["stroke-opacity"]) ?? 1;
+  return {
+    fill: opacity * fillOpacity,
+    opacity,
+    stroke: opacity * strokeOpacity,
+  };
+};
+
+const hasLayerSideEffects = (node: ModuleSemanticNode) =>
+  Boolean(
+    node.attrs.filter ||
+      node.attrs.mask ||
+      node.attrs["clip-path"] ||
+      node.attrs.transform,
+  );
+
+const isOpaqueFillToken = (fillPaint: string) => {
+  if (fillPaint === "none" || fillPaint === "transparent") return false;
+  return !fillPaint.startsWith("url(");
+};
+
+const hasOpaqueFillPaint = (node: ModuleSemanticNode) => {
+  const { fill } = readOpacityProduct(node);
+  const fillPaint = node.attrs.fill?.trim().toLowerCase();
+  return Boolean(
+    fillPaint &&
+      (node.attrs.fillOpaque === "true" || isOpaqueFillToken(fillPaint)) &&
+      fill > 0.99,
+  );
+};
+
+const hasVisibleStrokePaint = (node: ModuleSemanticNode) => {
+  const { stroke } = readOpacityProduct(node);
+  const strokePaint = node.attrs.stroke?.trim().toLowerCase();
+  return Boolean(
+    strokePaint &&
+      strokePaint !== "none" &&
+      strokePaint !== "transparent" &&
+      stroke > 0.01,
+  );
+};
+
+const isOpaqueCoveringLayer = (node: ModuleSemanticNode) => {
+  const { opacity } = readOpacityProduct(node);
+  return opacity > 0.99 && !hasLayerSideEffects(node) && hasOpaqueFillPaint(node);
+};
+
+const geometryFingerprint = (node: ModuleSemanticNode) => {
+  const attrs = node.attrs;
+  return [
+    node.tag,
+    attrs.pathDataHash ?? "",
+    attrs.pathDataLength ?? "",
+    attrs["fill-rule"] ?? "",
+    attrs.width ?? "",
+    attrs.height ?? "",
+    attrs.x ?? "",
+    attrs.y ?? "",
+    attrs.rx ?? "",
+    attrs.ry ?? "",
+    attrs.r ?? "",
+    attrs.cx ?? "",
+    attrs.cy ?? "",
+    attrs["stroke-width"] ?? "",
+  ].join("|");
+};
+
+const canTreatAsSameGeometryLayer = (
+  lower: ModuleSemanticNode,
+  upper: ModuleSemanticNode,
+) => {
+  if (lower.id === upper.id) return false;
+  if (lower.parentId !== upper.parentId) return false;
+  if (lower.tag !== upper.tag) return false;
+  if (lower.childIds.length > 0 || upper.childIds.length > 0) return false;
+  if (!boxesMatch(lower.bbox, upper.bbox)) return false;
+  if (hasLayerSideEffects(lower) || hasLayerSideEffects(upper)) return false;
+  if (hasVisibleStrokePaint(lower)) return false;
+  return geometryFingerprint(lower) === geometryFingerprint(upper);
+};
+
+const detectCoveredRedundantNodeIds = (nodes: ModuleSemanticNode[]) => {
+  const byParent = new Map<string, ModuleSemanticNode[]>();
+  const coveredShapeTags = new Set([
+    "circle",
+    "ellipse",
+    "path",
+    "polygon",
+    "polyline",
+    "rect",
+  ]);
+  for (const node of nodes) {
+    if (!node.visible || !node.bbox) continue;
+    if (!coveredShapeTags.has(node.tag)) continue;
+    const parentKey = node.parentId ?? "__root__";
+    const siblings = byParent.get(parentKey);
+    if (siblings) {
+      siblings.push(node);
+    } else {
+      byParent.set(parentKey, [node]);
+    }
+  }
+
+  const redundantNodeIds = new Set<string>();
+  for (const siblings of byParent.values()) {
+    const ordered = siblings
+      .slice()
+      .sort((left, right) => left.siblingIndex - right.siblingIndex);
+    for (let upperIndex = 1; upperIndex < ordered.length; upperIndex += 1) {
+      const upper = ordered[upperIndex]!;
+      if (!isOpaqueCoveringLayer(upper)) continue;
+      for (let lowerIndex = upperIndex - 1; lowerIndex >= 0; lowerIndex -= 1) {
+        const lower = ordered[lowerIndex]!;
+        if (redundantNodeIds.has(lower.id)) continue;
+        if (canTreatAsSameGeometryLayer(lower, upper)) {
+          redundantNodeIds.add(lower.id);
+        }
+      }
+    }
+  }
+  return redundantNodeIds;
+};
+
 const normalizeSemanticNodes = (nodes: ModuleSemanticNode[]) => {
   let didChange = false;
   const zeroAreaNodeIds = new Set<string>();
@@ -283,11 +431,8 @@ const normalizeSemanticNodes = (nodes: ModuleSemanticNode[]) => {
     };
   });
 
-  if (zeroAreaNodeIds.size === 0) {
-    return didChange ? normalizedNodes : nodes;
-  }
+  const removableNodeIds = detectCoveredRedundantNodeIds(normalizedNodes);
 
-  const removableNodeIds = new Set<string>();
   let removedInPass = true;
   while (removedInPass) {
     removedInPass = false;
@@ -419,6 +564,7 @@ const hasCurrentSemanticDocument = (
   isRecord(value) &&
   isRecord(value.runtime) &&
   value.runtime.schemaVersion === MODULE_SEMANTIC_SCHEMA_VERSION &&
+  value.runtime.nodeFactVersion === MODULE_SEMANTIC_NODE_FACT_VERSION &&
   value.runtime.semanticPassVersion === MODULE_SEMANTIC_SEMANTIC_PASS_VERSION &&
   value.runtime.textStylePassVersion === MODULE_SEMANTIC_TEXT_STYLE_PASS_VERSION &&
   Array.isArray(value.nodes) &&
