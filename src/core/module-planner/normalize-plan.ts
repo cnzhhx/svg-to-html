@@ -877,10 +877,98 @@ const removeEmptyModules = ({
   const hasNonEmptyModule = modules.some(
     (module) => !isSemanticallyEmptyModule(module),
   );
-  if (!hasNonEmptyModule) {
-    return modules.filter((module) => !isTinyEmptyModule({ module, viewport }));
+  const removed: ModuleOwnershipDraft[] = [];
+  const kept = modules.filter((module) => {
+    const shouldRemove = !hasNonEmptyModule
+      ? isTinyEmptyModule({ module, viewport })
+      : isSemanticallyEmptyModule(module);
+    if (shouldRemove) removed.push(module);
+    return !shouldRemove;
+  });
+
+  return {
+    modules: kept,
+    warnings: removed.length
+      ? [
+          `[planner-cleanup] Removed semantically empty module(s): ${removed
+            .map((module) => module.id)
+            .join(", ")}.`,
+        ]
+      : [],
+  };
+};
+
+const moduleCoversViewport = ({
+  module,
+  viewport,
+}: {
+  module: ModuleOwnershipDraft;
+  viewport: Box;
+}) =>
+  intersectionArea(module.region, viewport) / Math.max(1, areaOf(viewport)) >=
+  0.9;
+
+const sharedUnderlayCoversViewport = ({
+  sharedLayers,
+  viewport,
+}: {
+  sharedLayers: SvgSharedLayer[];
+  viewport: Box;
+}) =>
+  sharedLayers.some(
+    (layer) =>
+      layer.kind === "shared-underlay" &&
+      intersectionArea(layer.region, viewport) /
+        Math.max(1, areaOf(viewport)) >=
+        0.75,
+  );
+
+const isForeignObjectOnlyShell = (module: ModuleOwnershipDraft) => {
+  const ownedMatches = module.retainedNodes.length
+    ? module.retainedNodes
+    : module.candidateNodes;
+  return (
+    ownedMatches.length > 0 &&
+    ownedMatches.every((match) => match.node.tag === "foreignobject")
+  );
+};
+
+const removeSharedUnderlayCoveredShellModules = ({
+  modules,
+  sharedLayers,
+  viewport,
+}: {
+  modules: ModuleOwnershipDraft[];
+  sharedLayers: SvgSharedLayer[];
+  viewport: Box;
+}) => {
+  if (!sharedUnderlayCoversViewport({ sharedLayers, viewport })) {
+    return { modules, warnings: [] };
   }
-  return modules.filter((module) => !isSemanticallyEmptyModule(module));
+
+  const removed: ModuleOwnershipDraft[] = [];
+  const kept = modules.filter((module) => {
+    const shouldRemove =
+      module.kind === "global-shell" &&
+      module.sourceContainerIds.length === 0 &&
+      moduleCoversViewport({ module, viewport }) &&
+      isForeignObjectOnlyShell(module);
+    if (shouldRemove) removed.push(module);
+    return !shouldRemove;
+  });
+
+  if (!removed.length || !kept.length) {
+    return { modules, warnings: [] };
+  }
+
+  return {
+    modules: kept,
+    warnings: [
+      `[planner-cleanup] Removed shared-underlay-covered global-shell module(s): ${removed
+        .map((module) => module.id)
+        .join(", ")}. Removed module(s) only owned foreignObject backdrop layers and had no source containers.`,
+    ],
+  };
 };
 
 const toSvgVerticalModule = ({
@@ -1047,10 +1135,16 @@ const normalizeModelPlan = ({
     drafts: refreshedDrafts,
     viewport,
   });
-  const filteredDrafts = removeEmptyModules({
+  const emptyCleanup = removeEmptyModules({
     modules: ownedDrafts,
     viewport,
-  }).map((module, index) => ({
+  });
+  const shellCleanup = removeSharedUnderlayCoveredShellModules({
+    modules: emptyCleanup.modules,
+    sharedLayers: ownership.sharedLayers,
+    viewport,
+  });
+  const filteredDrafts = shellCleanup.modules.map((module, index) => ({
     ...module,
     id: `module-${String(index + 1).padStart(2, "0")}`,
   }));
@@ -1081,6 +1175,8 @@ const normalizeModelPlan = ({
           `${repair.id} ${repair.side} boundary auto-snapped from ${repair.from} to ${repair.to} to avoid cutting source boxes.`,
       ),
       ...coverage.warnings,
+      ...emptyCleanup.warnings,
+      ...shellCleanup.warnings,
     ],
   };
 };

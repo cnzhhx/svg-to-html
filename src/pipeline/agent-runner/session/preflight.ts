@@ -128,6 +128,9 @@ const prepareStructuredSessionInputs = async ({
     sessionId,
     `[pipeline] module plan quality: ${path.basename(modulePlan.qualityJsonPath)}`,
   );
+  modulePlan.report.warnings.forEach((warning) => {
+    sessionStore.addLog(sessionId, `[pipeline] module plan warning: ${warning}`);
+  });
   if (
     !modulePlan.qualityReport.passed ||
     modulePlan.qualityReport.warningIssueCount > 0
