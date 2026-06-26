@@ -96,7 +96,7 @@ type PngAlphaStats = {
 };
 
 const MODULE_ELEMENT_ANALYSIS_VERSION = 3;
-const ANALYSIS_BATCH_SIZES = [9, 4, 1] as const;
+const ANALYSIS_BATCH_SIZES = [6, 4, 2] as const;
 const PROBE_PADDING = 0;
 const PROBE_ALPHA_VISIBLE_THRESHOLD = 10;
 const SHEET_OUTER_PADDING = 16;
@@ -105,9 +105,8 @@ const CELL_INNER_PADDING = 8;
 const SHEET_META_HEIGHT = 18;
 const SHEET_META_GAP = 8;
 const PREVIEW_PANEL_GAP = 6;
-const PREVIEW_MIN_SHORT_SIDE = 48;
-const PREVIEW_MAX_UPSCALE = 3;
-const PREVIEW_MAX_LONG_SIDE = 240;
+const PREVIEW_SCALE = 2;
+const SEMANTIC_PROBE_SCALE_MULTIPLIER = 2;
 const RECHECK_BATCH_SIZE = 4;
 const MAX_TEXT_RECHECK_CANDIDATES = 12;
 
@@ -336,19 +335,6 @@ const hasDualPreviewNeed = (probe: ProbeArtifact, frameWidth: number, frameHeigh
   );
 };
 
-const getPreviewScaleFactor = (frameWidth: number, frameHeight: number) => {
-  const shortSide = Math.max(1, Math.min(frameWidth, frameHeight));
-  const longSide = Math.max(frameWidth, frameHeight);
-  const shortSideScale = PREVIEW_MIN_SHORT_SIDE / shortSide;
-  const longSideScale = PREVIEW_MAX_LONG_SIDE / Math.max(1, longSide);
-  if (shortSideScale <= 1) return 1;
-  const cappedLongSideScale = longSideScale > 1 ? longSideScale : 1;
-  return Math.max(
-    1,
-    Math.min(shortSideScale, PREVIEW_MAX_UPSCALE, cappedLongSideScale),
-  );
-};
-
 const getProbeFrameSize = (probe: ProbeArtifact) => {
   const bbox = probe.node.bbox;
   return {
@@ -366,9 +352,8 @@ const buildSheetHtml = ({
 }) => {
   const cells = probes.map((probe, originalIndex) => {
     const { frameHeight, frameWidth } = getProbeFrameSize(probe);
-    const previewScale = getPreviewScaleFactor(frameWidth, frameHeight);
-    const previewWidth = Math.max(1, Math.round(frameWidth * previewScale));
-    const previewHeight = Math.max(1, Math.round(frameHeight * previewScale));
+    const previewWidth = Math.max(1, Math.round(frameWidth * PREVIEW_SCALE));
+    const previewHeight = Math.max(1, Math.round(frameHeight * PREVIEW_SCALE));
     const previewCount = hasDualPreviewNeed(probe, frameWidth, frameHeight) ? 2 : 1;
     const displayFrameWidth =
       previewWidth * previewCount + PREVIEW_PANEL_GAP * Math.max(0, previewCount - 1);
@@ -1318,7 +1303,7 @@ const createProbeImages = async ({
         "--padding",
         String(PROBE_PADDING),
         "--scale",
-        String(scale),
+        String(scale * SEMANTIC_PROBE_SCALE_MULTIPLIER),
       ],
       { timeout: 60_000 },
     ).catch((error) => {
