@@ -40,7 +40,7 @@ const createSvgRenderWrapper = ({
       window.addEventListener('load', () => {
         setTimeout(() => {
           window.__RENDER_READY__ = true
-        }, 200)
+        }, 300)
       })
     </script>
   </body>

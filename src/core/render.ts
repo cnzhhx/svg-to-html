@@ -119,9 +119,7 @@ const createSvgWrapper = ({
           })
         }
         const waitForPaint = () =>
-          new Promise((resolve) => {
-            requestAnimationFrame(() => requestAnimationFrame(resolve))
-          })
+          new Promise((resolve) => setTimeout(resolve, 300))
 
         ;(async () => {
           await waitForSourceImage()
@@ -133,7 +131,6 @@ const createSvgWrapper = ({
             } catch {}
           }
           await waitForPaint()
-          await new Promise((resolve) => setTimeout(resolve, 500))
           window.__RENDER_READY__ = true
         })()
       })

@@ -564,10 +564,10 @@ const buildWrapperHtml = ({
         return ids;
       };
 
-      const collectReferencedResources = (root, seedNodes) => {
+      const collectReferencedResources = (root, seedEntries) => {
         const resources = new Set();
         const queuedIds = new Set();
-        const inspectQueue = [...seedNodes];
+        const inspectQueue = [...seedEntries];
 
         const enqueueId = (id) => {
           if (!id || queuedIds.has(id)) return;
@@ -575,7 +575,7 @@ const buildWrapperHtml = ({
           const resource = findElementById(root, id);
           if (!(resource instanceof Element) || resources.has(resource)) return;
           resources.add(resource);
-          inspectQueue.push(resource);
+          inspectQueue.push({ includeDescendants: true, node: resource });
         };
 
         const inspectNode = (node) => {
@@ -586,15 +586,43 @@ const buildWrapperHtml = ({
         };
 
         while (inspectQueue.length > 0) {
-          const node = inspectQueue.pop();
+          const entry = inspectQueue.pop();
+          const node = entry?.node;
           if (!(node instanceof Element)) continue;
           inspectNode(node);
-          Array.from(node.querySelectorAll("*")).forEach((child) => {
-            inspectNode(child);
-          });
+          if (entry.includeDescendants) {
+            Array.from(node.querySelectorAll("*")).forEach((child) => {
+              inspectNode(child);
+            });
+          }
         }
 
         return resources;
+      };
+
+      const collectReferenceSeeds = (root, targets) => {
+        const seeds = [];
+        const seenSelfNodes = new WeakSet();
+        const seenSubtreeNodes = new WeakSet();
+        const pushSeed = (node, includeDescendants) => {
+          if (!(node instanceof Element)) return;
+          const seenNodes = includeDescendants ? seenSubtreeNodes : seenSelfNodes;
+          if (seenNodes.has(node)) return;
+          seenNodes.add(node);
+          seeds.push({ includeDescendants, node });
+        };
+
+        targets.forEach((target) => {
+          pushSeed(target, true);
+          let current = target.parentElement;
+          while (current) {
+            pushSeed(current, false);
+            if (current === root) break;
+            current = current.parentElement;
+          }
+        });
+
+        return seeds;
       };
 
       const addNodeAndAncestors = (keepNodes, node, root) => {
@@ -652,7 +680,10 @@ const buildWrapperHtml = ({
           addNodeAndAncestors(keepNodes, target, workingSvg);
           addSubtree(keepNodes, target);
         });
-        collectReferencedResources(workingSvg, isolatedTargets).forEach((resource) => {
+        collectReferencedResources(
+          workingSvg,
+          collectReferenceSeeds(workingSvg, isolatedTargets),
+        ).forEach((resource) => {
           addNodeAndAncestors(keepNodes, resource, workingSvg);
           addSubtree(keepNodes, resource);
         });
@@ -804,8 +835,7 @@ const buildWrapperHtml = ({
       };
 
       window.addEventListener("load", () => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(async () => {
+        setTimeout(async () => {
             try {
               const svg = document.querySelector("svg");
               if (!svg) {
@@ -930,8 +960,7 @@ const buildWrapperHtml = ({
                 error: error instanceof Error ? error.message : String(error),
               });
             }
-          });
-        });
+        }, 300);
       });
     </script>
   </body>
