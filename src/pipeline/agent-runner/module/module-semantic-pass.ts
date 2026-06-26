@@ -117,6 +117,11 @@ const MAX_TEXT_RECHECK_CANDIDATES = 12;
 const MISSING_TEXT_RECHECK_NOTE =
   "Vision output looked text-like but omitted readable text; downgraded until recheck resolves it.";
 const CONTAINER_VISUAL_TAGS = new Set(["a", "g", "svg", "switch", "symbol"]);
+const VISUAL_CONTEXT_REFERENCE_ATTRS = [
+  "clip-path",
+  "filter",
+  "mask",
+] as const;
 
 const IGNORED_TAGS = new Set([
   "clipPath",
@@ -546,9 +551,9 @@ const buildSheetHtml = ({
     <script>
       const images = Array.from(document.images);
       const settle = () => {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
+        setTimeout(() => {
           window.__RENDER_READY__ = true;
-        }));
+        }, 300);
       };
       if (images.length === 0) {
         settle();
@@ -742,6 +747,12 @@ const TINY_NODE_MAX_AREA = 36;
  */
 const SIMPLE_SHAPE_PDL_PER_PERIMETER_MAX = 0.5;
 
+const hasVisualContextReference = (node: ModuleSemanticNode) =>
+  VISUAL_CONTEXT_REFERENCE_ATTRS.some((attr) => {
+    const value = node.attrs[attr];
+    return typeof value === "string" && /^url\(/i.test(value.trim());
+  });
+
 const buildDeterministicSemantic = (
   node: ModuleSemanticNode,
 ): ModuleSemanticNodeSemantic | null => {
@@ -787,6 +798,16 @@ const buildDeterministicSemantic = (
     };
   }
   if (CONTAINER_VISUAL_TAGS.has(node.tag) && node.childIds.length > 0) {
+    if (hasVisualContextReference(node)) {
+      return {
+        confidence: 1,
+        containsReadableText: false,
+        exportDecision: "export",
+        kind: "visual-context-wrapper",
+        notes: "container has mask/clip/filter context that affects descendant rendering; export wrapper to preserve visual context",
+        textHandling: "ignore",
+      };
+    }
     return {
       confidence: 1,
       containsReadableText: false,

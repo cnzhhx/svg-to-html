@@ -167,9 +167,9 @@ const createSvgImageWrapper = ({
     <img src="${pathToFileURL(svgPath).href}" alt="" />
     <script>
       window.addEventListener('load', () => {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
+        setTimeout(() => {
           window.__RENDER_READY__ = true
-        }))
+        }, 300)
       })
     </script>
   </body>

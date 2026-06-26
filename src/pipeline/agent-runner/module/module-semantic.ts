@@ -175,7 +175,7 @@ type CreateModuleSemanticDraftResult = {
 
 const MODULE_SEMANTIC_SCHEMA_VERSION = 2;
 const MODULE_SEMANTIC_NODE_FACT_VERSION = 4;
-const MODULE_SEMANTIC_SEMANTIC_PASS_VERSION = 5;
+const MODULE_SEMANTIC_SEMANTIC_PASS_VERSION = 6;
 const MODULE_SEMANTIC_TEXT_STYLE_PASS_VERSION = 6;
 
 const IMPORTANT_ATTRS = new Set([
@@ -590,9 +590,9 @@ const RENDER_READY_SCRIPT = `<script>
             ),
           );
         } catch {}
-        requestAnimationFrame(() => requestAnimationFrame(() => {
+        setTimeout(() => {
           window.__RENDER_READY__ = true;
-        }));
+        }, 300);
       })();
     </script>`;
 

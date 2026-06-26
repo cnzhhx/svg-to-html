@@ -573,7 +573,7 @@ const buildMeasurementExpression = ({
 
     const waitForPaint = () =>
       new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        setTimeout(resolve, 300);
       });
 
     const imageLoadErrors = await waitForImages();
