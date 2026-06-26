@@ -8,6 +8,7 @@ import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types
 
 type SanitizeModuleOutputResult = {
   changed: boolean;
+  normalizedTextNodes?: number;
   removedRootBackground: boolean;
   reason?: string;
 };
@@ -23,6 +24,9 @@ const readBox = (value: unknown): Box | undefined =>
 
 const readString = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
+
+const readRawString = (value: unknown) =>
+  typeof value === "string" ? value : undefined;
 
 const readModuleRegion = (document: unknown): Box | undefined => {
   if (!isRecord(document)) return undefined;
@@ -119,6 +123,86 @@ const moduleHasOwnLargeBackground = (document: unknown) => {
   });
 };
 
+const escapeHtmlText = (value: string) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+
+const readSemanticTextByNodeId = (document: unknown) => {
+  const result = new Map<string, string>();
+  if (!isRecord(document) || !Array.isArray(document.textBlocks)) return result;
+
+  for (const rawBlock of document.textBlocks) {
+    if (!isRecord(rawBlock)) continue;
+    const id = readString(rawBlock.id);
+    const text = readRawString(rawBlock.text);
+    if (!id || text === undefined) continue;
+    result.set(id, text);
+  }
+
+  return result;
+};
+
+const TEXT_NODE_ELEMENT_RE =
+  /(<([a-z][\w:-]*)(?=[^>]*\bdata-node-id\s*=\s*(["'])([^"']+)\3)[^>]*>)([\s\S]*?)(<\/\2>)/gi;
+
+const normalizeTextNodesFromSemantic = ({
+  html,
+  textByNodeId,
+}: {
+  html: string;
+  textByNodeId: Map<string, string>;
+}) => {
+  let changed = false;
+  let normalizedTextNodes = 0;
+  const nextHtml = html.replace(
+    TEXT_NODE_ELEMENT_RE,
+    (match, openTag: string, _tag: string, _quote: string, nodeId: string, inner: string, closeTag: string) => {
+      const semanticText = textByNodeId.get(nodeId);
+      if (semanticText === undefined) return match;
+      if (/<[a-z][\s\S]*>/i.test(inner)) return match;
+      const nextInner = escapeHtmlText(semanticText);
+      if (nextInner === inner) return match;
+      changed = true;
+      normalizedTextNodes += 1;
+      return `${openTag}${nextInner}${closeTag}`;
+    },
+  );
+
+  return { changed, html: nextHtml, normalizedTextNodes };
+};
+
+const normalizeTextOutputFiles = async ({
+  moduleDir,
+  textByNodeId,
+}: {
+  moduleDir: string;
+  textByNodeId: Map<string, string>;
+}) => {
+  if (!textByNodeId.size) return { changed: false, normalizedTextNodes: 0 };
+
+  const fileNames = ["preview.fragment.html"];
+  let changed = false;
+  let normalizedTextNodes = 0;
+
+  for (const fileName of fileNames) {
+    const filePath = path.join(moduleDir, fileName);
+    const raw = await readFile(filePath, "utf8").catch(() => undefined);
+    if (raw === undefined) continue;
+    const result = normalizeTextNodesFromSemantic({
+      html: raw,
+      textByNodeId,
+    });
+    if (!result.changed) continue;
+    await writeTextFile(filePath, result.html);
+    changed = true;
+    normalizedTextNodes += result.normalizedTextNodes;
+  }
+
+  return { changed, normalizedTextNodes };
+};
+
 const sanitizeModuleOutputFiles = async ({
   module,
   moduleDir,
@@ -149,16 +233,28 @@ const sanitizeModuleOutputFiles = async ({
     moduleId: module.id,
     shouldStripRootBackground: !hasOwnLargeBackground,
   });
+  const textNormalizeResult = await normalizeTextOutputFiles({
+    moduleDir,
+    textByNodeId: readSemanticTextByNodeId(semanticDocument),
+  });
+  const cssChanged = nextCss !== css;
 
-  if (nextCss === css) {
+  if (!cssChanged && !textNormalizeResult.changed) {
     return { changed: false, removedRootBackground: false };
   }
 
-  await writeTextFile(cssPath, nextCss);
+  if (cssChanged) await writeTextFile(cssPath, nextCss);
+  const reasons = [
+    cssChanged ? "module semantic has no large exported background node" : "",
+    textNormalizeResult.changed
+      ? `normalized ${textNormalizeResult.normalizedTextNodes} semantic text node(s)`
+      : "",
+  ].filter(Boolean);
   return {
     changed: true,
-    reason: "module semantic has no large exported background node",
-    removedRootBackground: true,
+    normalizedTextNodes: textNormalizeResult.normalizedTextNodes,
+    reason: reasons.join("; "),
+    removedRootBackground: cssChanged,
   };
 };
 

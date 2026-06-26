@@ -45,6 +45,11 @@ type RunAgentTurnCoreResult = {
   usage: AgentTokenUsage | null
 }
 
+const isVerifyCommandKind = (commandKind: AgentCommandKind) =>
+  commandKind === 'verify-design' ||
+  commandKind === 'verify-module-design' ||
+  commandKind === 'verify-module-framework'
+
 const buildInternalRounds = ({
   allCommands,
   completedInternalRounds,
@@ -231,9 +236,7 @@ export async function runAgentTurnCore(
               ? event.item.exit_code
               : null
           const diffRatio =
-            commandKind === 'verify-design' ||
-            commandKind === 'verify-module-design' ||
-            commandKind === 'verify-module-framework'
+            isVerifyCommandKind(commandKind)
               ? parseVerifyDiffRatio(output)
               : undefined
           const status = getAgentCommandStatus({
@@ -251,11 +254,7 @@ export async function runAgentTurnCore(
             status,
           })
 
-          if (
-            commandKind === 'verify-design' ||
-            commandKind === 'verify-module-design' ||
-            commandKind === 'verify-module-framework'
-          ) {
+          if (isVerifyCommandKind(commandKind)) {
             verifyRunCount++
             if (diffRatio !== undefined) {
               const degraded =
@@ -314,11 +313,7 @@ export async function runAgentTurnCore(
             sessionId,
           })
 
-          if (
-            commandKind === 'verify-design' ||
-            commandKind === 'verify-module-design' ||
-            commandKind === 'verify-module-framework'
-          ) {
+          if (isVerifyCommandKind(commandKind)) {
             const diffSummary =
               diffRatio === undefined
                 ? 'diffRatio=n/a'

@@ -21,6 +21,7 @@ import { verifyDesign } from "../../verify.js";
 type ModuleFrameworkLocalVerifyResult = {
   artifactDir: string;
   buildError?: string;
+  diffPngPath?: string;
   diffPixels?: number;
   diffRatio: number;
   passed: boolean;
@@ -106,10 +107,7 @@ const buildVueModuleEntry = async ({
 <template>
   <main class="design-page">
     <section class="design-module ${moduleId}" data-module-id="${moduleId}" style="position:absolute;left:0;top:0;width:${formatPx(region.width)};height:${formatPx(region.height)};overflow:hidden;">
-${sourceFragment
-  .split("\n")
-  .map((line) => `      ${line}`)
-  .join("\n")}
+${sourceFragment.trim()}
     </section>
   </main>
 </template>
@@ -166,10 +164,7 @@ ${sourceDataStatement ? `  ${sourceDataStatement}\n` : ""}\
   return (
     <main className="design-page">
       <section className="design-module ${moduleId}" data-module-id="${moduleId}" style={{ position: "absolute", left: 0, top: 0, width: "${formatPx(region.width)}", height: "${formatPx(region.height)}", overflow: "hidden" }}>
-${sourceFragment
-  .split("\n")
-  .map((line) => `        ${line}`)
-  .join("\n")}
+${sourceFragment.trim()}
       </section>
     </main>
   );
@@ -400,6 +395,7 @@ export const verifyModuleFrameworkLocal = async ({
 
   return {
     artifactDir: result.artifactDir,
+    diffPngPath: result.diffPngPath,
     diffRatio: result.diffRatio,
     passed: result.diffRatio <= MODULE_DIFF_RATIO_THRESHOLD,
     renderEntryPath: frameworkRenderEntryPath,

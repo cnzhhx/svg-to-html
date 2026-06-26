@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { createPixelDiff } from "../core/diff/index.js";
 import { renderDesignTargets } from "../core/render.js";
 import { resolveArtifactDir } from "../core/paths.js";
@@ -7,6 +9,7 @@ type VerifyMode = "full" | "fast";
 
 type VerifyResult = {
   artifactDir: string;
+  diffPngPath: string;
   diffRatio: number;
   renderPngPath: string;
   svgPngPath: string;
@@ -102,6 +105,7 @@ const verifyDesign = async (
 
   const result: VerifyResult = {
     artifactDir,
+    diffPngPath: path.join(artifactDir, "diff.png"),
     diffRatio: diffResult.report.diffRatio,
     renderPngPath: renderResult.renderPngPath,
     svgPngPath: renderResult.svgPngPath,

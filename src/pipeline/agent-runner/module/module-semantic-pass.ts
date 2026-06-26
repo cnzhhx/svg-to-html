@@ -78,11 +78,13 @@ type VisionNodeSemantic = {
   text?: string;
   lineCount?: number;
   contentType?: string;
+  visualLines?: string[];
 };
 
 type ProbeArtifact = {
   node: SemanticProbeNode;
   outputPath: string;
+  previewBackground: ProbePreviewBackground;
 };
 
 type ProbeImageResult = {
@@ -91,9 +93,12 @@ type ProbeImageResult = {
 };
 
 type PngAlphaStats = {
+  averageLuminance?: number;
   hasAlpha: boolean;
   visiblePixelCount: number;
 };
+
+type ProbePreviewBackground = "dark" | "light";
 
 const MODULE_ELEMENT_ANALYSIS_VERSION = 3;
 const ANALYSIS_BATCH_SIZES = [6, 4, 2] as const;
@@ -104,7 +109,6 @@ const SHEET_GAP = 12;
 const CELL_INNER_PADDING = 8;
 const SHEET_META_HEIGHT = 18;
 const SHEET_META_GAP = 8;
-const PREVIEW_PANEL_GAP = 6;
 const PREVIEW_SCALE = 2;
 const SEMANTIC_PROBE_SCALE_MULTIPLIER = 2;
 const RECHECK_BATCH_SIZE = 4;
@@ -276,7 +280,7 @@ type SheetCellLayout = SemanticProbeSheetCell & {
   frameWidth: number;
   height: number;
   outputPath: string;
-  previewCount: number;
+  previewBackground: ProbePreviewBackground;
   previewHeight: number;
   previewWidth: number;
   width: number;
@@ -325,16 +329,6 @@ const readPaintLuminance = (value: string | undefined) => {
   return undefined;
 };
 
-const hasDualPreviewNeed = (probe: ProbeArtifact, frameWidth: number, frameHeight: number) => {
-  const shortSide = Math.min(frameWidth, frameHeight);
-  if (shortSide <= 24) return true;
-  const fillLuminance = readPaintLuminance(probe.node.attrs.fill);
-  const strokeLuminance = readPaintLuminance(probe.node.attrs.stroke);
-  return [fillLuminance, strokeLuminance].some(
-    (luminance) => typeof luminance === "number" && luminance >= 0.72,
-  );
-};
-
 const getProbeFrameSize = (probe: ProbeArtifact) => {
   const bbox = probe.node.bbox;
   return {
@@ -354,9 +348,6 @@ const buildSheetHtml = ({
     const { frameHeight, frameWidth } = getProbeFrameSize(probe);
     const previewWidth = Math.max(1, Math.round(frameWidth * PREVIEW_SCALE));
     const previewHeight = Math.max(1, Math.round(frameHeight * PREVIEW_SCALE));
-    const previewCount = hasDualPreviewNeed(probe, frameWidth, frameHeight) ? 2 : 1;
-    const displayFrameWidth =
-      previewWidth * previewCount + PREVIEW_PANEL_GAP * Math.max(0, previewCount - 1);
     return {
       frameHeight,
       frameWidth,
@@ -366,12 +357,12 @@ const buildSheetHtml = ({
         SHEET_META_HEIGHT +
         SHEET_META_GAP,
       id: probe.node.id,
-      previewCount,
+      previewBackground: probe.previewBackground,
       previewHeight,
       previewWidth,
       originalIndex,
       outputPath: probe.outputPath,
-      width: displayFrameWidth + CELL_INNER_PADDING * 2,
+      width: previewWidth + CELL_INNER_PADDING * 2,
     };
   });
   const targetColumns =
@@ -403,7 +394,7 @@ const buildSheetHtml = ({
         id: cell.id,
         ordinal: cell.originalIndex + 1,
         outputPath: cell.outputPath,
-        previewCount: cell.previewCount,
+        previewBackground: cell.previewBackground,
         previewHeight: cell.previewHeight,
         previewWidth: cell.previewWidth,
         row: rowIndex,
@@ -494,7 +485,6 @@ const buildSheetHtml = ({
       .frame {
         position: relative;
         display: flex;
-        gap: ${PREVIEW_PANEL_GAP}px;
         width: var(--frame-width);
         height: var(--frame-height);
       }
@@ -544,15 +534,10 @@ const buildSheetHtml = ({
     <main class="sheet">
       ${positionedCells
         .map(
-          (cell) => `<section class="cell" style="left:${cell.x}px;top:${cell.y}px;width:${cell.width}px;height:${cell.height}px;--frame-width:${cell.previewWidth * cell.previewCount + PREVIEW_PANEL_GAP * Math.max(0, cell.previewCount - 1)}px;--frame-height:${cell.previewHeight}px;--preview-width:${cell.previewWidth}px;--preview-height:${cell.previewHeight}px;">
+          (cell) => `<section class="cell" style="left:${cell.x}px;top:${cell.y}px;width:${cell.width}px;height:${cell.height}px;--frame-width:${cell.previewWidth}px;--frame-height:${cell.previewHeight}px;--preview-width:${cell.previewWidth}px;--preview-height:${cell.previewHeight}px;">
         <div class="meta"><span class="meta-index">#${cell.ordinal}</span><span class="meta-id">${cell.id}</span></div>
         <div class="frame">
-          <div class="preview preview--light"><img src="${pathToFileURL(cell.outputPath).href}" alt="${cell.id}" /></div>
-          ${
-            cell.previewCount > 1
-              ? `<div class="preview preview--dark"><img src="${pathToFileURL(cell.outputPath).href}" alt="${cell.id}" /></div>`
-              : ""
-          }
+          <div class="preview preview--${cell.previewBackground}"><img src="${pathToFileURL(cell.outputPath).href}" alt="${cell.id}" /></div>
         </div>
       </section>`,
         )
@@ -657,11 +642,53 @@ const VALID_CONTENT_TYPES = new Set([
   "unknown",
 ]);
 
+const normalizeInlineText = (value: string) =>
+  value.replace(/\s+/g, " ").trim();
+
+const normalizeDomText = (value: string) =>
+  value
+    .split(/\r?\n/)
+    .map((line) => normalizeInlineText(line))
+    .filter((line) => line.length > 0)
+    .join("\n");
+
+const normalizeVisualLineText = (value: unknown) =>
+  typeof value === "string" ? normalizeInlineText(value) : undefined;
+
+const readVisionVisualLines = (
+  input: VisionNodeSemantic,
+): string[] => {
+  if (!Array.isArray(input.visualLines)) return [];
+  return input.visualLines.flatMap((line) => {
+    const text = normalizeVisualLineText(line);
+    return text ? [text] : [];
+  });
+};
+
+const mergeVisualLinesForDomText = ({
+  fallbackText,
+  visualLines,
+}: {
+  fallbackText: string;
+  visualLines: string[];
+}) => {
+  const lines = visualLines
+    .map((line) => normalizeInlineText(line))
+    .filter((text) => text.length > 0);
+  if (lines.length === 0) return normalizeDomText(fallbackText);
+  return lines.join("\n");
+};
+
 const normalizeVisionNodeSemantic = (
   input: VisionNodeSemantic,
 ): ModuleSemanticNodeSemantic => {
   const visionMarkedPureText = input.isPureText === true;
-  const rawText = readString(input.text);
+  const visualLines = readVisionVisualLines(input);
+  const rawText =
+    mergeVisualLinesForDomText({
+      fallbackText: readString(input.text) ?? "",
+      visualLines,
+    }) || readString(input.text);
   const rawContentType = readString(input.contentType);
   const contentType =
     rawContentType && VALID_CONTENT_TYPES.has(rawContentType)
@@ -683,6 +710,8 @@ const normalizeVisionNodeSemantic = (
   const lineCount =
     typeof input.lineCount === "number" && Number.isFinite(input.lineCount) && input.lineCount >= 1
       ? Math.round(input.lineCount)
+      : visualLines.length > 0
+        ? visualLines.length
       : undefined;
 
   return {
@@ -697,6 +726,7 @@ const normalizeVisionNodeSemantic = (
       : rawText
         ? "export-asset"
         : "ignore",
+    ...(visualLines.length > 0 ? { visualLines } : {}),
   };
 };
 
@@ -1194,6 +1224,7 @@ const readPngAlphaStats = async (
   const previous = new Uint8Array(rowLength);
   const current = new Uint8Array(rowLength);
   let sourceOffset = 0;
+  let luminanceSum = 0;
   let visiblePixelCount = 0;
   const alphaChannelOffset = colorType === 6 ? 3 : 1;
 
@@ -1234,12 +1265,19 @@ const readPngAlphaStats = async (
 
     sourceOffset += rowLength;
 
-    for (
-      let alphaIndex = alphaChannelOffset;
-      alphaIndex < rowLength;
-      alphaIndex += channelCount
-    ) {
-      if ((current[alphaIndex] ?? 0) > PROBE_ALPHA_VISIBLE_THRESHOLD) {
+    for (let pixelOffset = 0; pixelOffset < rowLength; pixelOffset += channelCount) {
+      const alpha = current[pixelOffset + alphaChannelOffset] ?? 0;
+      if (alpha > PROBE_ALPHA_VISIBLE_THRESHOLD) {
+        const red = current[pixelOffset] ?? 0;
+        const green =
+          colorType === 6
+            ? current[pixelOffset + 1] ?? red
+            : red;
+        const blue =
+          colorType === 6
+            ? current[pixelOffset + 2] ?? red
+            : red;
+        luminanceSum += (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255;
         visiblePixelCount += 1;
       }
     }
@@ -1248,14 +1286,24 @@ const readPngAlphaStats = async (
     current.fill(0);
   }
 
-  return { hasAlpha, visiblePixelCount };
+  return {
+    averageLuminance:
+      visiblePixelCount > 0 ? luminanceSum / visiblePixelCount : undefined,
+    hasAlpha,
+    visiblePixelCount,
+  };
 };
 
-const isTransparentProbeImage = async (filePath: string) => {
-  const alphaStats = await readPngAlphaStats(filePath);
-  return Boolean(
-    alphaStats?.hasAlpha === true && alphaStats.visiblePixelCount === 0,
-  );
+const chooseProbePreviewBackground = (
+  alphaStats: PngAlphaStats | null,
+  node: SemanticProbeNode,
+): ProbePreviewBackground => {
+  const luminance =
+    alphaStats?.averageLuminance ??
+    readPaintLuminance(node.attrs.fill) ??
+    readPaintLuminance(node.attrs.stroke);
+  if (typeof luminance !== "number") return "light";
+  return luminance >= 0.5 ? "dark" : "light";
 };
 
 const makeTransparentProbeSemantic = (): ModuleSemanticNodeSemantic => ({
@@ -1316,11 +1364,16 @@ const createProbeImages = async ({
     if (!existsSync(outputPath)) {
       throw new Error(`semantic probe render completed without file: ${node.id}`);
     }
-    if (await isTransparentProbeImage(outputPath)) {
+    const alphaStats = await readPngAlphaStats(outputPath);
+    if (alphaStats?.hasAlpha === true && alphaStats.visiblePixelCount === 0) {
       transparentNodeIds.push(node.id);
       continue;
     }
-    artifacts.push({ node, outputPath });
+    artifacts.push({
+      node,
+      outputPath,
+      previewBackground: chooseProbePreviewBackground(alphaStats, node),
+    });
   }
   return { artifacts, transparentNodeIds };
 };

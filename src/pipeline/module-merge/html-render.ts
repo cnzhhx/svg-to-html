@@ -456,7 +456,7 @@ const renderModuleSections = (modules: ModuleMergeResolvedModule[]) =>
     .map((module) =>
       [
         `<section class="design-module ${escapeHtmlAttribute(module.id)}" data-module-id="${module.id}" style="${formatRegionStyle(module.region)}">`,
-        indent(module.previewFragmentHtml, 8),
+        module.previewFragmentHtml.trim(),
         "      </section>",
       ].join("\n"),
     )
@@ -566,13 +566,13 @@ const renderModuleSourceSections = (
       if (format === "react") {
         return [
           `<section className="design-module ${module.id}" data-module-id="${module.id}" style=${formatRegionJsxStyle(module.region)}>`,
-          indent(sourceFragment, 8),
+          sourceFragment.trim(),
           "      </section>",
         ].join("\n");
       }
       return [
         `<section class="design-module ${escapeHtmlAttribute(module.id)}" data-module-id="${module.id}" style="${formatRegionStyle(module.region)}">`,
-        indent(sourceFragment, 8),
+        sourceFragment.trim(),
         "      </section>",
       ].join("\n");
     })

@@ -28,6 +28,7 @@ type ModuleLocalVerifyInput = {
 
 type ModuleLocalVerifyResult = {
   artifactDir: string;
+  diffPngPath: string;
   diffPixels?: number;
   diffRatio: number;
   moduleId: string;
@@ -264,10 +265,7 @@ ${sharedLayerSections
   .map((line) => `      ${line}`)
   .join("\n")}
       <section class="design-module ${escapeHtmlAttribute(moduleId)}" data-module-id="${escapeHtmlAttribute(moduleId)}">
-${previewFragmentHtml
-  .split("\n")
-  .map((line) => `        ${line}`)
-  .join("\n")}
+${previewFragmentHtml.trim()}
       </section>
     </main>
   </body>
@@ -465,6 +463,7 @@ const verifyModuleLocal = async ({
 
   return {
     artifactDir: result.artifactDir,
+    diffPngPath: result.diffPngPath,
     diffRatio: result.diffRatio,
     moduleId: module.id,
     passed: result.diffRatio <= MODULE_DIFF_RATIO_THRESHOLD,

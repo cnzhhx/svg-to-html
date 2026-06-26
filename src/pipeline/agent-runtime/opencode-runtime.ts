@@ -462,6 +462,13 @@ const parseTodoItems = (value: unknown) =>
     }))
     .filter((entry) => entry.text.length > 0);
 
+const normalizeToolStatus = (status: string) =>
+  status === "failed" || status === "error"
+    ? "failed"
+    : status === "in_progress"
+      ? "in_progress"
+      : "completed";
+
 const buildToolEvents = (toolPart: OpencodeToolPart): AgentThreadEvent[] => {
   const toolName = trimToUndefined(toolPart.tool) ?? "tool";
   const state = readRecord(toolPart.state) ?? {};
@@ -479,11 +486,10 @@ const buildToolEvents = (toolPart: OpencodeToolPart): AgentThreadEvent[] => {
       readString(state.output) ?? readString(metadata?.output) ?? "";
     const exitCode = readNumber(metadata?.exit);
     const finalStatus =
-      status === "failed" || (typeof exitCode === "number" && exitCode !== 0)
+      normalizeToolStatus(status) === "failed" ||
+      (typeof exitCode === "number" && exitCode !== 0)
         ? "failed"
-        : status === "in_progress"
-          ? "in_progress"
-          : "completed";
+        : normalizeToolStatus(status);
     const baseItem: AgentThreadItem = {
       aggregated_output: "",
       command,
@@ -528,7 +534,8 @@ const buildToolEvents = (toolPart: OpencodeToolPart): AgentThreadEvent[] => {
                 ? [{ kind: "update", path: fallbackPath }]
                 : [],
           id: itemId,
-          status: status === "failed" ? "failed" : "completed",
+          status:
+            normalizeToolStatus(status) === "failed" ? "failed" : "completed",
           type: "file_change",
         },
         type: "item.completed",
@@ -582,12 +589,7 @@ const buildToolEvents = (toolPart: OpencodeToolPart): AgentThreadEvent[] => {
     id: itemId,
     result: state.output ?? metadata ?? state,
     server,
-    status:
-      status === "failed"
-        ? "failed"
-        : status === "in_progress"
-          ? "in_progress"
-          : "completed",
+    status: normalizeToolStatus(status),
     tool,
     type: "mcp_tool_call",
   };

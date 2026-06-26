@@ -18,7 +18,7 @@ type ModuleTextBlock = {
   kind?: string;
   lineCount?: number;
   lineRegions?: Box[];
-  lines?: Array<{ region: Box; text?: string }>;
+  lines?: Array<{ region?: Box; text?: string }>;
   notes?: string;
   renderedTextRegion?: Box;
   region: Box;
@@ -46,6 +46,7 @@ type SemanticTextHint = {
   confidence?: number;
   id?: string;
   lineCount?: number;
+  lines?: string[];
   role?: string;
   text?: string;
 };
@@ -244,6 +245,23 @@ const readColor = (value: unknown) => {
   }
   return color;
 };
+
+const normalizeInlineText = (value: string) =>
+  value.replace(/\s+/g, " ").trim();
+
+const readSemanticTextLines = (
+  value: unknown,
+): string[] =>
+  Array.isArray(value)
+    ? value.flatMap((item) => {
+        if (typeof item !== "string") return [];
+        const text = normalizeInlineText(item);
+        return text ? [text] : [];
+      })
+    : [];
+
+const joinSemanticTextLines = (lines: string[]) =>
+  lines.join("\n");
 
 const roundedBox = (box: Box): Box => ({
   height: Math.max(1, Math.round(box.height)),
@@ -494,7 +512,12 @@ const attachSvgColors = async ({
 
 const buildSemanticBlocks = (hints: SemanticTextHint[]) =>
   hints.flatMap((hint, index): ModuleTextBlock[] => {
-    const text = typeof hint.text === "string" ? hint.text.trim() : "";
+    const lines = Array.isArray(hint.lines) ? hint.lines : [];
+    const text = lines.length
+      ? joinSemanticTextLines(lines)
+      : typeof hint.text === "string"
+        ? hint.text.trim()
+        : "";
     if (!text || !hint.bbox) return [];
     return [
       {
@@ -504,7 +527,10 @@ const buildSemanticBlocks = (hints: SemanticTextHint[]) =>
         geometrySource: "semantic",
         id: hint.id ?? `semantic-text-${index + 1}`,
         kind: hint.role,
-        lineCount: hint.lineCount,
+        lineCount: lines.length || hint.lineCount,
+        ...(lines.length
+          ? { lines: lines.map((text) => ({ text })) }
+          : {}),
         region: hint.bbox,
         source: "semantic",
         sourceBlockId: hint.id,
@@ -545,6 +571,7 @@ const createModuleTextBlocks = async ({
         confidence: getNumber(block["confidence"]),
         id: typeof block["id"] === "string" ? block["id"] : undefined,
         lineCount: getNumber(block["lineCount"]),
+        lines: readSemanticTextLines(block["lines"]),
         role: typeof block["role"] === "string" ? block["role"] : undefined,
         text: typeof block["text"] === "string" ? block["text"] : undefined,
       },

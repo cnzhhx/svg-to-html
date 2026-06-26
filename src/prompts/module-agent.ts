@@ -1,4 +1,5 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 
 import type { ResolvedDesignTarget } from "../core/design-resolve.js";
 import type {
@@ -32,33 +33,43 @@ const resolveModuleOutputFormat = ({
 const buildModuleInputPathList = ({
   round,
   workingDir,
+  semanticPreloaded = false,
 }: {
   round?: number;
+  semanticPreloaded?: boolean;
   workingDir: string;
 }) => {
-  const paths = [
+  const paths: Array<[string, string]> = [
     ["模块工作目录", workingDir],
     [
-      "结构化主输入 JSON（必须自行读取）",
+      semanticPreloaded
+        ? "结构化主输入 JSON（已在本 prompt 末尾预加载精简版；导出资产后再按需读取刷新）"
+        : "结构化主输入 JSON（必须自行读取）",
       path.join(workingDir, "module-semantic.json"),
     ],
     [
       "模块参考图（按需自行打开/读取）",
       path.join(workingDir, "module-reference.png"),
     ],
-    [
-      "共享背景层参考图（存在时按需读取，不要重复实现）",
-      path.join(workingDir, "shared-underlay.png"),
-    ],
-    [
-      "最终叠加效果参考图（存在时按需读取）",
-      path.join(workingDir, "composite.png"),
-    ],
-    [
-      "已导出资产目录（资产清单以 module-semantic.json 为准）",
-      path.join(workingDir, "assets"),
-    ],
   ];
+  const sharedUnderlayPath = path.join(workingDir, "shared-underlay.png");
+  if (existsSync(sharedUnderlayPath)) {
+    paths.push([
+      "共享背景层参考图（按需读取，不要重复实现）",
+      sharedUnderlayPath,
+    ]);
+  }
+  const compositePath = path.join(workingDir, "composite.png");
+  if (existsSync(compositePath)) {
+    paths.push(["最终叠加效果参考图（按需读取）", compositePath]);
+  }
+  const assetsPath = path.join(workingDir, "assets");
+  if (existsSync(assetsPath)) {
+    paths.push([
+      "已导出资产目录（资产清单以 module-semantic.json 为准，目录用 ls 查看）",
+      assetsPath,
+    ]);
+  }
 
   if (round && round > 1) {
     const verifyDir = path.join(workingDir, "verify", `round-${round - 1}`);
@@ -75,6 +86,23 @@ const buildModuleInputPathList = ({
   }
 
   return paths.map(([label, filePath]) => `- ${label}: ${filePath}`).join("\n");
+};
+
+const buildOptionalReferenceUsageLines = (workingDir: string) => {
+  const lines = [
+    "- module-reference.png：模块独立渲染参考图，背景透明，按需自行读取",
+  ];
+  if (existsSync(path.join(workingDir, "shared-underlay.png"))) {
+    lines.push(
+      "- shared-underlay.png：宿主在模块背后渲染的共享背景层，按需读取，不要重复实现它",
+    );
+  }
+  if (existsSync(path.join(workingDir, "composite.png"))) {
+    lines.push(
+      "- composite.png：模块内容 + 共享背景叠加后的最终效果，按需读取",
+    );
+  }
+  return lines.join("\n");
 };
 
 function buildAgentUnitFollowupBasePrompt(input: {
@@ -130,7 +158,7 @@ function buildAgentUnitFollowupBasePrompt(input: {
 - 模块根容器由宿主自动定位到左上角 (0,0)，**禁止给根容器加任何偏移**
 - render.png / svg.png 只用于定位问题区域和验证结果，不能把“截图看起来大约 x=...”当成坐标来源
 - 若审核诊断与结构化 bbox/text 样式冲突，优先信任结构化数据；先解释冲突来自父盒选择、mask/clip/crop、资源裁切、坐标系或文本渲染差异，再修复
-- alignment diagnostics 是布局调试反馈；diffRatio 是最终验收反馈。verify stdout 会返回 alignmentDiagnostics 摘要；若上一轮 diffRatio >= 0.05，优先读取该摘要和 alignment-diagnostics.json，并批量修复真正的布局/资产 actionableIssues。若可测目标基本对齐但 diffRatio 仍高，不要继续猜字体、阴影、z-index、overflow 等无依据参数。
+- alignment diagnostics 只做图片/文本 DOM 目标匹配和 rect 偏差提示；diffRatio 是最终验收反馈。verify stdout 会返回 alignmentDiagnostics 摘要；若上一轮 diffRatio >= 0.05，优先读取该摘要和 alignment-diagnostics.json，只批量修复 positionIssues 里的缺失/重复匹配/明显位置尺寸偏差。
 
 ## 输入路径（本轮不会附加 JSON 内容或图片二进制）
 ${inputPathList}
@@ -139,7 +167,7 @@ ${inputPathList}
 
 ## 对齐诊断
 - verify 会自动运行 alignment diagnostics，并在 stdout 返回 \`alignmentDiagnostics\` 摘要。独立命令只在 verify 摘要缺失/报错或需要重测指定入口时使用：${isFrameworkOutput ? `\`pnpm --dir ${process.cwd()} exec tsx ${moduleAlignmentDiagnosticsCliPath} --module-dir ${workingDir} --module-id ${module.id} --render-entry ${path.join(workingDir, "verify", "framework-round-<N>", "entry", "dist", "index.html")} --diff-ratio <verify输出diffRatio>\`` : `\`pnpm --dir ${process.cwd()} exec tsx ${moduleAlignmentDiagnosticsCliPath} --module-dir ${workingDir} --module-id ${module.id} --verify-round <N> --diff-ratio <verify输出diffRatio>\``}
-- 诊断默认写入 ${path.join(workingDir, "alignment-diagnostics.json")}；只根据 actionableIssues 批量修布局，文本问题只能改外盒/父容器，禁止改字体相关属性。若文本 x/y 基本对齐、无换行/裁切/缺字，只剩 width/height 或 glyph 度量偏差，应视为字体渲染差异，不再继续迭代。
+- 诊断默认写入 ${path.join(workingDir, "alignment-diagnostics.json")}；只根据 positionIssues 批量修布局。文本问题只能改外盒/父容器，禁止改字体相关属性。若文本 x/y 基本对齐、无换行/裁切/缺字，只剩 width/height 或 glyph 度量偏差，应视为字体渲染差异，不再继续迭代。
 `.trim();
 }
 
@@ -203,7 +231,11 @@ function buildAgentUnitPrompt(input: {
     workingDir,
     "module-semantic.json",
   );
-  const inputPathList = buildModuleInputPathList({ workingDir });
+  const inputPathList = buildModuleInputPathList({
+    semanticPreloaded: true,
+    workingDir,
+  });
+  const referenceUsageLines = buildOptionalReferenceUsageLines(workingDir);
   const scale =
     typeof design.scale === "number" &&
     Number.isFinite(design.scale) &&
@@ -215,9 +247,10 @@ function buildAgentUnitPrompt(input: {
     typeof module.reason === "string" && module.reason.trim().length > 0
       ? `- planner reason: ${module.reason.trim()}`
       : "";
+  const exportCmdPrefix = `pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --scale ${scaleLabel}`;
 
-  const semanticJsonUsageLine = "- module-semantic.json：结构化主输入，磁盘文件，必须读";
-  const methodFirstStep = "1. 按路径快速读取 module-semantic.json；按需读取 module-reference.png / composite.png，只确认语义层级、关键视觉块、关键文本框和区域类型。generatedAssets 初始可能为空，不代表缺资源；首批视觉还原优先把 textBlocks 之外的复杂视觉节点/组合节点导出 PNG（可并行导出），不要先花大量时间用 CSS 手绘或逐节点推理。需要图片资源时，从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断并导出。不要把所有节点坐标逐项重算成超长“几何账本”。结构化坐标（已导出图片资产用 generatedAssets[].box，其余按需参考 nodes[].bbox）是坐标主来源，截图只用于理解语义和验证。";
+  const semanticJsonUsageLine = "- module-semantic.json：结构化主输入，已在末尾预加载（精简版）。导出资产后如需刷新 generatedAssets，再次 read 磁盘文件";
+  const methodFirstStep = "1. 直接使用末尾预加载的 module-semantic.json 精简版（无需再 read）；只按需读取输入路径列表里实际提供的参考图，确认语义层级、关键视觉块、关键文本框和区域类型。generatedAssets 初始可能为空，不代表缺资源；首批视觉还原优先把 textBlocks 之外的复杂视觉节点/组合节点导出 PNG（可并行导出），不要先花大量时间用 CSS 手绘或逐节点推理。需要图片资源时，从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断并导出。不要把所有节点坐标逐项重算成超长“几何账本”。结构化坐标（已导出图片资产用 generatedAssets[].box，其余按需参考 nodes[].bbox）是坐标主来源，截图只用于理解语义和验证。";
   const dualFragmentSection = isFrameworkOutput
     ? `
 ## 双片段对齐（${outputFormat === "vue" ? "Vue" : "React"}）
@@ -236,15 +269,13 @@ ${moduleReasonLine}
 - size: ${region.width}x${region.height} | scale: ${scaleLabel}
 ${dualFragmentSection}
 ## 输入与数据契约
-本轮不会直接附加 module-semantic.json 内容、参考图片或资产图片。你只会拿到路径，必须按需自行读取：
+module-semantic.json（精简版）和当前输出文件内容已在 prompt 末尾预加载，**首次无需再 read 这些文件**。参考图片仍需按路径自行读取：
 ${inputPathList}
 
 路径用途：
 ${semanticJsonUsageLine}
-- module-reference.png：模块独立渲染参考图，背景透明，按需自行读取
-- shared-underlay.png：宿主在模块背后渲染的共享背景层，存在时按需读取，不要重复实现它
-- composite.png：模块内容 + 共享背景叠加后的最终效果，存在时按需读取
-- verify/round-*/render.png 与 svg.png：运行 verify 后产生，修复轮按路径自行读取
+${referenceUsageLines}
+- verify stdout 的 artifacts.renderPngPath / artifacts.svgPngPath：运行 verify 后产生；需要读图时只读 stdout 返回的明确路径，不要猜 round 目录
 - preview.fragment.html / module.css / manifest.json：启动前可能已存在最小可运行模板；这是方便你直接修改的脚手架，不代表已完成。直接在模板上替换/扩展即可，不要为基础 manifest/root 容器结构反复推理。
 
 module-semantic.json 关键字段（按此优先级取用）：
@@ -272,7 +303,7 @@ module-semantic.json 关键字段（按此优先级取用）：
 3. 禁止引用/内联/裁剪原始完整 SVG，禁止 data:image/* 或 base64，禁止写原始 inline <svg>；禁止把整张卡片/整个导航/整块区域拍成一张大图替代应有结构。
 4. textBlocks[].styleInference 的文本样式是预处理像素级算好的硬约束，一经使用永不修改（即便 verify diff 有偏差，也只能靠改位置/父容器解决，不许动 font-size/weight/color/line-height/letter-spacing/font-family）。仅当某样式缺失时才按视觉推断；推断颜色须取文字本身颜色，不得从邻近背景/装饰借色。
 5. **字体渲染差异是不可避免且必须接受的**：原始 SVG 使用文字路径（path data）渲染，而 HTML 使用系统字体（Noto Sans CJK SC 等），两者在抗锯齿、字重、hinting、glyph 宽高/度量上必然存在差异。禁止为了降低 diff 修改或追加任何字体渲染相关属性，包括但不限于 font-size/weight/line-height/font-family/letter-spacing、font-smoothing、text-rendering、font-variant、text-shadow、filter、transform/scale。文本位置的微调（left/top 偏移 1-3px）可以容忍；若文本 x/y 已基本对齐、没有换行错误/裁切/缺字，只剩 width/height 偏差，应视为不可行动的字体度量差，不得继续迭代。
-6. 普通 DOM 文本禁止用 \`overflow:hidden\`、固定单行高度、\`text-overflow\` 或裁切容器来掩盖溢出；尤其是说明文、段落、多行文本，必须保证所有文字可见。文本宽高/行数不确定时，宁可调整文本外盒高度、逐行 DOM、\`white-space: nowrap\` 或父模块布局，也不要把文字截掉。仅原设计明确是省略号/裁切标题时，才允许按原样使用 \`overflow:hidden\`。
+6. 普通 DOM 文本禁止用 \`overflow:hidden\`、固定单行高度、\`text-overflow\` 或裁切容器来掩盖溢出；尤其是说明文、段落、多行文本，必须保证所有文字可见。文本显示不完整时，优先调整文本外盒高度或父模块布局，不要把文字截掉。仅原设计明确是省略号/裁切标题时，才允许按原样使用 \`overflow:hidden\`。
 7. 图片宽高比锁定：\`<img>\` 渲染宽高比必须等于资产 \`box\` 的自然比例。锁定一边、另一边按比例推导（\`height = round(width * box.height / box.width)\`）。适配异形槽位只能裁切（外层 \`overflow:hidden\` + \`object-fit:cover\` + \`object-position\`）或等比缩放（\`object-fit:contain\`），禁止拉伸压扁。
 8. 不要给模块根容器加背景色或任何偏移；根容器由宿主定位到 (0,0)。模块背景由页面统一处理，只还原有明确边界的局部背景（卡片底色、按钮背景）。如果 module-reference.png 中只有白色图标/文字落在透明画布上，不得为了“承载”或“对比”自行补黑/白/粉等底色；shared-underlay.png / composite.png 只用于理解宿主上下文，不要重复实现成模块 root background。
 9. 所有坐标、尺寸、间距统一用 px，禁止 %、vw、vh、em、rem；普通布局的 left/top/width/height/padding/margin/gap/border-radius 以整数 px 为默认，只有 textBlocks[].styleInference 里明确给出的小数样式、透明度、阴影/滤镜和必要的非文本 transform 才保留小数。
@@ -286,7 +317,7 @@ ${methodFirstStep}
    - **非重复的自由叠放区**（状态栏、导航栏、主视觉海报、多层装饰叠加、无同构子项）→ **全部用 absolute positioning**。非文本视觉尽量导出为 PNG 后绝对定位；**图层若对应一个已导出资产，用该资产 generatedAssets[].box 的 x/y/width/height 定位 + 定尺寸（box 是 PNG 的 CSS 放置外框，别再用节点几何框或内部可见像素框去摆图片，否则会错位/压扁）**；尚未导出的视觉块先用 nodes[].bbox/inspectIndex 判断是否需要导出。z-index 按 inspectIndex 从小到大叠；不合并/丢弃图层、不挑某节点拉伸当整块背景；压在图形上的独立文字仍按 DOM 文本还原到对应位置。
    - **重复/连续/同构区**（列表、网格、卡片行、导航项、按钮组、标签组、数据行）→ **外层父容器用 flex 或 grid 管理宏观排列，每个同构子项（item/card/tab/row）内部用 absolute positioning 精确摆放内部元素**。禁止把同构子项拆成一堆互不关联的绝对定位叶子节点，也禁止逐个子项凭感觉微调。同构子项内部也要保持一致结构：图片/图标、标题、说明、数值、状态等用稳定 class 命名；只允许通过数据内容、选中态、少量修饰 class 表达差异。
    - **严禁在同构子项内部使用 CSS Grid 的 gap/auto-placement 来推算元素位置**。每个子项内部的图片、文本、badge 等必须有独立的 \`position: absolute; left: X; top: Y\`，不得依赖 flow 布局自动排列。
-4. 文本：用 layoutTargetRegion 定位外盒，再用 styleInference 填样式。单行文本（lineCount=1 或无换行）styleInference 已包含 \`white-space: nowrap\`，直接使用即可，不要设置固定 width 来约束换行（left/top 定位、text-align 居中可保留，但宽度不应成为换行触发条件）。多行文本（lineCount>1）：预处理输出的 text 是所有字符直接拼接的纯文本，没有任何换行标记，视觉上的多行来自原设计的容器宽度溢出换行，所以重建时也只把整段 text 放进一个 DOM 文本元素，用 layoutTargetRegion 的 width 作为容器宽度约束，让浏览器自然换行即可；禁止主动添加 \`<br/>\`、拆 span、或按自己猜测的断点构造多行结构。必要时调整文本外盒高度/line-height 让所有行可见，但不要隐藏文字。无论单行还是多行，禁止对文本容器使用 \`overflow: hidden\`。
+4. 文本：用 layoutTargetRegion 定位外盒，再用 styleInference 填样式。textBlocks[].text 是预处理已经合并好的最终 DOM 文案；直接放进一个 DOM 文本元素，保留原文内容，不要改写、拆分或重新识别文本。
 5. CSS 落地时坐标/盒模型默认四舍五入到整数 px：图片资产 box、结构节点 bbox、文本 layoutTargetRegion 的 left/top/width/height 都按整数写；textBlocks[].styleInference 的 font-size/line-height/letter-spacing/font-family/weight/color 原样使用，不因取整规则修改。
 6. **选实现手段（默认图片优先，能用 PNG 就不手绘）**：非文本视觉样式默认优先导出 PNG，模块 agent 不需要证明某个复杂视觉“不能用 CSS 实现”才导出。只有纯色背景、单层边框、简单圆角、简单横/竖条、状态圆点、分隔线这类简单到不能再简单的元素才用 CSS。渐变、纹理、阴影组合、clip-path 异形、mask、图标、多 path 组合、徽章、装饰壳、图片内容等都优先导出 PNG。一个视觉由多个节点组成时（icon 多 path、按钮背景+边框+高光）用 exportSvgNode 合并导出为一张；可读 textBlocks 禁止导出。对于 textBlocks 之外的可见前景层，优先按独立视觉层导出，不要并入大块背景/容器资产。
 7. **browser-eval 是首选调试工具，verify 是最终验收工具**。三件套产物可运行后，**立即先用 browser-eval** 做局部自检，优先把内容缺失、错图、明显重叠、明显布局/裁切错误消灭在 verify 之前；在觉得自己"已经做完了"、所有关键元素位置都正确对齐之后，再运行 verify。不要把 verify 当调试工具频繁运行——每轮 verify 成本高，应该只有在 browser-eval 显示布局基本对齐后再进 verify 做最终 diff 检查。
@@ -309,29 +340,31 @@ ${sourceDataContractSection}
       ? `\n  - 这是**框架级 verify**：会用真实 Vite 构建你的 source fragment + source-data + module.css，渲染并和 module SVG 做像素 diff。所以你必须保证 source fragment 能编译、source-data 引用名正确（sourceData["${module.id}"].xxx），否则页面会白屏、diff 极高。`
       : ""
   }
-  - verify 输出固定落在 \`${workingDir}/verify/round-<N>/\`（N 从 0 开始）：\`render.png\`（当前 HTML 渲染）、\`svg.png\`（原 SVG 参考）、\`diff.png\`（不要读）。直接按此路径读取，**禁止用 find/ls -R 搜索 verify 输出**。
+  - verify stdout 会返回 \`artifacts.renderPngPath\`（当前 HTML 渲染）、\`artifacts.svgPngPath\`（原 SVG 参考）和 \`artifacts.diffPngPath\`（不要读）。需要读图时只使用 stdout 返回的具体路径，**禁止自己猜 \`verify/round-*\`，禁止用 find/ls -R 搜索 verify 输出**。
 - 浏览器自测（查真实 DOM rect/style/数量；用于布局定位，不替代最终 verify）:
   直接调用 browser_eval tool，传入 moduleDir 和 script 参数。
   script 是在页面上下文执行的 JS，最后 return JSON。
   示例: browser_eval({ moduleDir: "${workingDir}", script: "const el=document.querySelector('.selector'); const r=el.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height};" })
   页面自动加载最新的 HTML/CSS，不需要手动 reload。
-- 导出 SVG 节点为 PNG: \`pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --node-id <节点id> --output assets/<name>.png --register-semantic --padding 0 --scale ${scaleLabel}\`
+- **导出命令前缀**（固定不变，直接复制）: \`${exportCmdPrefix}\`
+- 导出 SVG 节点为 PNG: \`${exportCmdPrefix} --node-id <节点id> --output assets/<name>.png --register-semantic --padding 0\`
+  - ⚠️ **常见错误**：\`pnpm --dir <脚本路径>\` 会报 ENOTDIR。\`--dir\` 后面必须是**项目根目录**，不是 .ts 文件路径。请直接使用上方 \`${exportCmdPrefix}\` 前缀，不要自己拼。
   - 合并多个节点：追加多个 \`--node-id n0001 --node-id n0002\`；导出后直接在 HTML 引用 \`./assets/<name>.png\`
   - 导出工具只会阻止导出 \`textBlocks\` 对应的预处理 DOM 文本节点及其父子树；除此之外，资产里包含非 \`textBlocks\` 的装饰字/徽章字/截图字/图片自身文字是允许的，不需要额外清理或重构。
   - **并行导出多个独立资产**：需要导出多张**互相独立**的 PNG 时（例如多个不相关图标），用 shell \`&\` + \`wait\` 并行执行多个命令，可把总等待时间从 N×单次降到约 1×单次。module-semantic.json 的写入已加跨进程锁，\`--node-id\` 并行导出安全。
     示例（3 个独立图标并行）：
     \`\`\`bash
-    pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --node-id n0001 --output assets/icon-a.png --register-semantic --padding 0 --scale ${scaleLabel} &
-    pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --node-id n0002 --output assets/icon-b.png --register-semantic --padding 0 --scale ${scaleLabel} &
-    pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --node-id n0003 --output assets/icon-c.png --register-semantic --padding 0 --scale ${scaleLabel} &
+    ${exportCmdPrefix} --node-id n0001 --output assets/icon-a.png --register-semantic --padding 0 &
+    ${exportCmdPrefix} --node-id n0002 --output assets/icon-b.png --register-semantic --padding 0 &
+    ${exportCmdPrefix} --node-id n0003 --output assets/icon-c.png --register-semantic --padding 0 &
     wait
     \`\`\`
-    每条命令的 stdout 会输出 JSON（含 \`clip\`/\`renderedBox\`/\`registeredAsset\`），需要定位信息时优先从对应命令的输出解析，避免重读整个 module-semantic.json。**禁止并行**：写同一输出文件、verify 命令本身、以及会冲突的文件改写。独立资产数 ≥3 个时优先用并行，不要用 \`&&\` 串行连接；1-2 个资产按需。
+    每条命令的 stdout 会输出 JSON（含 \`clip\`/\`renderedBox\`/\`registeredAsset\`），需要定位信息时优先从对应命令的输出解析，避免重读整个 module-semantic.json。**禁止并行**：写同一输出文件、verify 命令本身、以及会冲突的文件改写。独立资产数 ≥3 个时优先用并行，不要用 \`&&\` 串行连接；1-2 个资产按需。**单次并行上限 4 条**（避免同时启动过多浏览器进程），超过 4 个资产分批 \`wait\`。
   - **禁止写 python/node 脚本去 inspect module-semantic.json**（启动 pnpm/tsx 解释器开销大）。需要查 JSON 内容直接用 read 工具读文件。
 - Semantic JSON: ${moduleSemanticJsonPath}
 - 对齐诊断（诊断位置/尺寸，不替代最终 diff 验收）:
-  - verify stdout 会自动包含 \`alignmentDiagnostics\` 摘要，并默认写入 \`${path.join(workingDir, "alignment-diagnostics.json")}\`。独立诊断命令只作为 fallback/debug 使用：${isFrameworkOutput ? `\`pnpm --dir ${process.cwd()} exec tsx ${moduleAlignmentDiagnosticsCliPath} --module-dir ${workingDir} --module-id ${module.id} --render-entry ${path.join(workingDir, "verify", "framework-round-<N>", "entry", "dist", "index.html")} --diff-ratio <verify输出diffRatio>\`` : `\`pnpm --dir ${process.cwd()} exec tsx ${moduleAlignmentDiagnosticsCliPath} --module-dir ${workingDir} --module-id ${module.id} --verify-round <N> --diff-ratio <verify输出diffRatio>\``}
-  - 先看 \`actionableIssues\`：图片偏差说明最终 img rect 偏了，通常检查父容器 gap/padding/margin 或 item 内部定位；文本偏差只允许改文本外盒/父容器，禁止改 font-size/font-weight/line-height/font-family/color。
+  - verify stdout 会自动包含 \`alignmentDiagnostics\` 摘要，并默认写入 \`${path.join(workingDir, "alignment-diagnostics.json")}\`。诊断只匹配图片/文本节点并报告 positionIssues；独立诊断命令只作为 fallback/debug 使用：${isFrameworkOutput ? `\`pnpm --dir ${process.cwd()} exec tsx ${moduleAlignmentDiagnosticsCliPath} --module-dir ${workingDir} --module-id ${module.id} --render-entry ${path.join(workingDir, "verify", "framework-round-<N>", "entry", "dist", "index.html")} --diff-ratio <verify输出diffRatio>\`` : `\`pnpm --dir ${process.cwd()} exec tsx ${moduleAlignmentDiagnosticsCliPath} --module-dir ${workingDir} --module-id ${module.id} --verify-round <N> --diff-ratio <verify输出diffRatio>\``}
+  - 先看 \`positionIssues\`：图片偏差说明最终 img rect 偏了，通常检查父容器 gap/padding/margin 或 item 内部定位；文本偏差只允许改文本外盒/父容器，禁止改 font-size/font-weight/line-height/font-family/color。
 
 ## 校验与停损
 - 空产物比低保真初版更严重：任何时候如果发现自己在同一冲突点上反复权衡，必须停止继续分析，保留/写出当前最佳可运行产物，再用 browser-eval 或 verify 进入修复循环。
@@ -339,7 +372,7 @@ ${sourceDataContractSection}
 - 修复优先级用可观察现象判断，不要给问题贴等级标签：先批量修内容缺失、结构层级错、错误资产、明显重叠、明显布局/裁切错误；文本 width/height 度量差、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差不要反复追。不要每个小改动都 verify。
 - **宿主自动回滚机制**：每次 verify 后，如果 diffRatio 比当前最佳值反弹超过 0.5 个百分点，宿主会自动回滚到上一次最佳版本的文件状态，并终止本轮 agent。你不需要手动恢复文件。因此：如果一轮修改后 verify 结果变差，不要慌张，宿主已帮你回滚；你只需要在下一轮重新分析原因、换一种修复策略即可。
 - **browser-eval 阶段无自动回滚**：browser-eval 只返回坐标信息，不产生 diffRatio，因此不会触发自动回滚。如果你在 browser-eval 后发现关键元素位置偏差很大（如 >5px），可以自行撤销最近的修改（重新写入文件），或者继续调整后再 verify——verify 阶段的自动回滚会保护你。
-- Verify 后诊断与读图对比（按 diffRatio 决定，避免低 diff 时的冗余人工对比）：首轮 verify \`diffRatio < 0.05\` → 渲染与参考图差异已在允许范围内，直接结束本轮（优先于下方"低收益停损"，首轮即通过时不再修小问题），**不读 render.png / svg.png / diff.png，也不额外运行 alignment diagnostics**。\`diffRatio >= 0.05\` 时，先看 verify stdout 的 \`alignmentDiagnostics\` 摘要和 \`alignment-diagnostics.json\`，只批量修复真正会改变结构结果的布局/资产问题。若 \`majorIssues=0\`、\`missingTargets=0\`、\`missingExpectedBoxes=0\`，且剩余 actionableIssues 只是文本 width/height、glyph 度量、抗锯齿、字重/字体渲染或 1-2px 边缘偏差，即使 diffRatio 仍高也必须停止，保留当前最佳版本。若报告 \`likelyNonActionablePixelDiff=true\`，同样停止猜字体、阴影、z-index、overflow 等无依据参数。只有诊断缺失/报错，或诊断无法解释区域级问题时，再读取同目录下的 \`render.png\`（当前 HTML 渲染）和 \`svg.png\`（原 SVG 参考），列出区域级差异清单后一次性批量修复。**任何情况下都不要读取 diff.png**（像素差异热力图，对定位问题帮助小且极耗 token）。
+- Verify 后诊断与读图对比：先看 verify stdout 的 \`alignmentDiagnostics\` 摘要和 \`alignment-diagnostics.json\` 的 \`positionIssues\`，只批量修复真正会改变结构结果的布局/资产问题。若 positionIssues 为空或只剩文本 width/height、glyph 度量、抗锯齿、字重/字体渲染或 1-2px 边缘偏差，即使 diffRatio 仍高也必须停止猜字体、阴影、z-index、overflow 等无依据参数。只有诊断缺失/报错，或诊断无法解释区域级问题时，再读取 verify stdout 的 \`artifacts.renderPngPath\`（当前 HTML 渲染）和 \`artifacts.svgPngPath\`（原 SVG 参考），列出区域级差异清单后一次性批量修复。**任何情况下都不要读取 artifacts.diffPngPath / diff.png**（像素差异热力图，对定位问题帮助小且极耗 token）。
 - Verify 螺旋停损：每轮 verify 后先看是否还有结构性问题，再一次性批量修复；禁止一次只改一个元素的 1-3px left/top。若同一模块/同一区域相邻两次 verify 的 diffRatio 改善都 < 0.1 个百分点（绝对值降幅 < 0.001），或出现反弹且诊断没有新的结构性问题，保留当前最佳版本停止，转去别处或结束。
 - 低收益小问题停损：当剩余问题只是轻微文本偏移、文本 width/height 度量差、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差时，不论 diffRatio 是否低于 0.05，最多围绕同一问题做一次修复和一次复验；若复验 diffRatio 没有下降至少 0.001，禁止继续实验、查源码、查字体、拆字符、改 font-smoothing/text-rendering 或反复改 DOM 结构，直接保留当前最佳版本并结束。
 

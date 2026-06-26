@@ -850,9 +850,12 @@ const writeModuleSemanticPayload = async ({
         "font-weight": declarations["font-weight"],
         "letter-spacing": declarations["letter-spacing"],
         "line-height": declarations["line-height"],
+        "white-space": declarations["white-space"],
         // Single-line text: force nowrap to prevent unexpected wrapping due to
         // font metric differences between SVG path rendering and browser text.
-        ...(isSingleLine ? { "white-space": "nowrap" } : {}),
+        ...(isSingleLine && !declarations["white-space"]
+          ? { "white-space": "nowrap" }
+          : {}),
       },
       fitScore: fit.score,
       id: hint.id,
