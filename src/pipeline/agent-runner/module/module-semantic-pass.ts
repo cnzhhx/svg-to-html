@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { inflateSync } from "node:zlib";
 
 import {
   PNG_RASTER_SCALE_MULTIPLIER,
@@ -84,9 +85,20 @@ type ProbeArtifact = {
   outputPath: string;
 };
 
+type ProbeImageResult = {
+  artifacts: ProbeArtifact[];
+  transparentNodeIds: string[];
+};
+
+type PngAlphaStats = {
+  hasAlpha: boolean;
+  visiblePixelCount: number;
+};
+
 const MODULE_ELEMENT_ANALYSIS_VERSION = 3;
 const ANALYSIS_BATCH_SIZES = [9, 4, 1] as const;
 const PROBE_PADDING = 0;
+const PROBE_ALPHA_VISIBLE_THRESHOLD = 10;
 const SHEET_OUTER_PADDING = 16;
 const SHEET_GAP = 12;
 const CELL_INNER_PADDING = 8;
@@ -1041,7 +1053,9 @@ const DEFINITE_NON_TEXT_TAGS = new Set([
 ]);
 
 const hasIntrinsicVisualPresence = (node: SemanticProbeNode): boolean => {
-  // No children -> it's its own visual element.
+  // Leaf nodes may render themselves. Fully transparent leaf output is pruned
+  // after probe rasterization, which catches empty foreignObject/backdrop-filter
+  // scaffolding without dropping legitimate <use> or custom SVG elements.
   if (node.childIds.length === 0) return true;
   // Text and image nodes always carry their own content.
   if (
@@ -1102,6 +1116,172 @@ const preserveExistingGeneratedAssets = (
   document: ModuleSemanticDocument,
 ) => (document.generatedAssets ?? []).slice();
 
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
+
+const getPngChannelCount = (colorType: number) => {
+  switch (colorType) {
+    case 0:
+    case 3:
+      return 1;
+    case 2:
+      return 3;
+    case 4:
+      return 2;
+    case 6:
+      return 4;
+    default:
+      return undefined;
+  }
+};
+
+const paethPredictor = (left: number, up: number, upLeft: number) => {
+  const estimate = left + up - upLeft;
+  const distanceLeft = Math.abs(estimate - left);
+  const distanceUp = Math.abs(estimate - up);
+  const distanceUpLeft = Math.abs(estimate - upLeft);
+  if (distanceLeft <= distanceUp && distanceLeft <= distanceUpLeft) return left;
+  if (distanceUp <= distanceUpLeft) return up;
+  return upLeft;
+};
+
+const readPngAlphaStats = async (
+  filePath: string,
+): Promise<PngAlphaStats | null> => {
+  const buffer = await readFile(filePath);
+  if (
+    buffer.length < PNG_SIGNATURE.length ||
+    !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+  ) {
+    return null;
+  }
+
+  let bitDepth = 0;
+  let colorType = -1;
+  let height = 0;
+  let interlace = 0;
+  let offset = PNG_SIGNATURE.length;
+  let width = 0;
+  const idatChunks: Buffer[] = [];
+
+  while (offset + 12 <= buffer.length) {
+    const chunkLength = buffer.readUInt32BE(offset);
+    const chunkType = buffer.toString("ascii", offset + 4, offset + 8);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + chunkLength;
+    if (dataEnd + 4 > buffer.length) return null;
+
+    if (chunkType === "IHDR") {
+      width = buffer.readUInt32BE(dataStart);
+      height = buffer.readUInt32BE(dataStart + 4);
+      bitDepth = buffer[dataStart + 8] ?? 0;
+      colorType = buffer[dataStart + 9] ?? -1;
+      interlace = buffer[dataStart + 12] ?? 0;
+    } else if (chunkType === "IDAT") {
+      idatChunks.push(buffer.subarray(dataStart, dataEnd));
+    } else if (chunkType === "IEND") {
+      break;
+    }
+
+    offset = dataEnd + 4;
+  }
+
+  const channelCount = getPngChannelCount(colorType);
+  if (
+    !channelCount ||
+    bitDepth !== 8 ||
+    height <= 0 ||
+    idatChunks.length === 0 ||
+    interlace !== 0 ||
+    width <= 0
+  ) {
+    return null;
+  }
+
+  const hasAlpha = colorType === 4 || colorType === 6;
+  if (!hasAlpha) {
+    return { hasAlpha: false, visiblePixelCount: width * height };
+  }
+
+  const inflated = inflateSync(Buffer.concat(idatChunks));
+  const rowLength = width * channelCount;
+  const previous = new Uint8Array(rowLength);
+  const current = new Uint8Array(rowLength);
+  let sourceOffset = 0;
+  let visiblePixelCount = 0;
+  const alphaChannelOffset = colorType === 6 ? 3 : 1;
+
+  for (let y = 0; y < height; y += 1) {
+    if (sourceOffset >= inflated.length) return null;
+    const filterType = inflated[sourceOffset] ?? -1;
+    sourceOffset += 1;
+    if (sourceOffset + rowLength > inflated.length) return null;
+
+    for (let x = 0; x < rowLength; x += 1) {
+      const raw = inflated[sourceOffset + x] ?? 0;
+      const left = x >= channelCount ? (current[x - channelCount] ?? 0) : 0;
+      const up = previous[x] ?? 0;
+      const upLeft =
+        x >= channelCount ? (previous[x - channelCount] ?? 0) : 0;
+      let value: number;
+      switch (filterType) {
+        case 0:
+          value = raw;
+          break;
+        case 1:
+          value = raw + left;
+          break;
+        case 2:
+          value = raw + up;
+          break;
+        case 3:
+          value = raw + Math.floor((left + up) / 2);
+          break;
+        case 4:
+          value = raw + paethPredictor(left, up, upLeft);
+          break;
+        default:
+          return null;
+      }
+      current[x] = value & 0xff;
+    }
+
+    sourceOffset += rowLength;
+
+    for (
+      let alphaIndex = alphaChannelOffset;
+      alphaIndex < rowLength;
+      alphaIndex += channelCount
+    ) {
+      if ((current[alphaIndex] ?? 0) > PROBE_ALPHA_VISIBLE_THRESHOLD) {
+        visiblePixelCount += 1;
+      }
+    }
+
+    previous.set(current);
+    current.fill(0);
+  }
+
+  return { hasAlpha, visiblePixelCount };
+};
+
+const isTransparentProbeImage = async (filePath: string) => {
+  const alphaStats = await readPngAlphaStats(filePath);
+  return Boolean(
+    alphaStats?.hasAlpha === true && alphaStats.visiblePixelCount === 0,
+  );
+};
+
+const makeTransparentProbeSemantic = (): ModuleSemanticNodeSemantic => ({
+  confidence: 1,
+  containsReadableText: false,
+  exportDecision: "skip",
+  kind: "unknown",
+  notes: "rendered semantic probe image is fully transparent; skipped before vision classification",
+  textHandling: "ignore",
+});
+
 const createProbeImages = async ({
   moduleDir,
   probeDir,
@@ -1112,9 +1292,12 @@ const createProbeImages = async ({
   probeDir: string;
   scale: number;
   visibleNodes: SemanticProbeNode[];
-}) => {
-  if (!visibleNodes.length) return [];
+}): Promise<ProbeImageResult> => {
+  if (!visibleNodes.length) {
+    return { artifacts: [], transparentNodeIds: [] };
+  }
   const artifacts: ProbeArtifact[] = [];
+  const transparentNodeIds: string[] = [];
   for (const node of visibleNodes) {
     const outputPath = path.join(probeDir, `${node.id}.png`);
     await execFileAsync(
@@ -1148,9 +1331,13 @@ const createProbeImages = async ({
     if (!existsSync(outputPath)) {
       throw new Error(`semantic probe render completed without file: ${node.id}`);
     }
+    if (await isTransparentProbeImage(outputPath)) {
+      transparentNodeIds.push(node.id);
+      continue;
+    }
     artifacts.push({ node, outputPath });
   }
-  return artifacts;
+  return { artifacts, transparentNodeIds };
 };
 
 const renderAnalysisSheet = async ({
@@ -1833,12 +2020,52 @@ const analyzeModuleElements = async ({
   await rm(probeDir, { force: true, recursive: true });
   await mkdir(probeDir, { recursive: true });
 
-  const probeArtifacts = await createProbeImages({
+  const {
+    artifacts: probeArtifacts,
+    transparentNodeIds,
+  } = await createProbeImages({
     moduleDir,
     probeDir,
     scale,
     visibleNodes: probeNodes,
   });
+
+  if (transparentNodeIds.length > 0) {
+    transparentNodeIds.forEach((id) => {
+      deterministicById.set(id, makeTransparentProbeSemantic());
+    });
+    sessionStore.addLog(
+      sessionId,
+      `[module-semantic] ${module.id}: skipped ${transparentNodeIds.length} fully transparent rendered probe(s): ${transparentNodeIds.join(", ")}`,
+    );
+  }
+
+  if (probeArtifacts.length === 0) {
+    const completedNodes = nextNodes.map((node) => ({
+      ...node,
+      semantic: deterministicById.get(node.id) ?? node.semantic,
+    }));
+    const nextDocument: ModuleSemanticDocument = {
+      ...semantic,
+      analysisSheets: [],
+      generatedAssets: preserveExistingGeneratedAssets(semantic),
+      nodes: completedNodes,
+      svgSummary: summarizeSemanticNodes(semantic, completedNodes),
+      runtime: {
+        ...semantic.runtime,
+        completedStages: [
+          ...new Set([
+            ...semantic.runtime.completedStages,
+            "analysis-sheets",
+            "semantic-pass",
+          ]),
+        ].sort((left, right) => left.localeCompare(right)),
+      },
+    };
+    await writeModuleSemanticDocument({ document: nextDocument, moduleDir });
+    await rm(probeDir, { force: true, recursive: true });
+    return buildAnalysisResultFromDocument(nextDocument);
+  }
 
   const { semanticsById, sheetAssignments, sheets } = await runSemanticVisionPass({
     module,
@@ -1860,7 +2087,7 @@ const analyzeModuleElements = async ({
 
   const finalizedNodes = nextNodes.map((node) => {
     const classified = semanticsById.get(node.id);
-    const semanticValue = classified ?? node.semantic;
+    const semanticValue = classified ?? deterministicById.get(node.id) ?? node.semantic;
     const assignment = sheetAssignments.get(node.id);
     return {
       ...node,
