@@ -95,9 +95,9 @@ const measureModuleAlignmentSafely = (
  * compiles and renders — unlike `verify-module-design.ts` which only renders
  * the HTML preview fragment.
  *
- * Emits compact JSON on stdout: `{"diffRatio":0.123,"passed":false}` (plus
- * `buildError` when the Vite build fails) so the agent-turn command classifier
- * can parse the result for rollback decisions.
+ * Emits compact JSON on stdout, including diffRatio/passed and buildError
+ * when the Vite build fails, so the agent-turn command classifier can parse
+ * the result for rollback decisions.
  */
 const main = async () => {
   const args = parseArgs(process.argv.slice(2));
@@ -204,8 +204,21 @@ const main = async () => {
   console.log(
     JSON.stringify({
       ...(alignmentDiagnostics ? { alignmentDiagnostics } : {}),
+      artifacts: {
+        artifactDir: result.artifactDir,
+        ...(result.diffPngPath ? { diffPngPath: result.diffPngPath } : {}),
+        ...(result.renderEntryPath
+          ? { renderEntryPath: result.renderEntryPath }
+          : {}),
+        ...(result.renderPngPath ? { renderPngPath: result.renderPngPath } : {}),
+        ...(result.svgPngPath ? { svgPngPath: result.svgPngPath } : {}),
+      },
       diffRatio: result.diffRatio,
+      ...(result.diffPngPath ? { diffPngPath: result.diffPngPath } : {}),
       passed: result.passed,
+      ...(result.renderEntryPath ? { renderEntryPath: result.renderEntryPath } : {}),
+      ...(result.renderPngPath ? { renderPngPath: result.renderPngPath } : {}),
+      ...(result.svgPngPath ? { svgPngPath: result.svgPngPath } : {}),
       ...(result.buildError ? { buildError: result.buildError } : {}),
     }),
   );

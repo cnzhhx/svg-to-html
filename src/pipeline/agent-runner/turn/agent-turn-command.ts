@@ -4,9 +4,7 @@ import { sessionStore } from '../../../session-store.js'
 import type { WorkflowArchiveMaterial } from '../../workflow-archive.js'
 import { archiveSessionCheckpoint } from '../archive/checkpoint.js'
 
-import type {
-  AgentCommandKind,
-} from './agent-turn-types.js'
+import type { AgentCommandKind } from './agent-turn-types.js'
 
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -76,8 +74,10 @@ const parseVerifyDiffRatio = (output: string) => {
   }
 
   const match = output.match(/Diff ratio:\s*([0-9.]+)/i)
-  if (!match) return undefined
-  const parsed = Number(match[1])
+  const jsonLikeMatch =
+    match ?? output.match(/"diffRatio"\s*:\s*([0-9.]+(?:e[+-]?\d+)?)/i)
+  if (!jsonLikeMatch) return undefined
+  const parsed = Number(jsonLikeMatch[1])
   return Number.isFinite(parsed) ? parsed : undefined
 }
 

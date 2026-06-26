@@ -114,6 +114,7 @@ type ModuleAgentRunRecord = {
   durationMs: number;
   endedAt: number;
   error?: string;
+  finalDiffRatio?: number;
   id: string;
   inputTokens: number;
   outputByteSizes?: {
@@ -765,6 +766,7 @@ export async function runModulePipelineV2(
             cachedInputTokens: getCachedInputTokens(result.usage),
             durationMs: result.durationMs,
             endedAt: result.endedAt,
+            finalDiffRatio: result.finalDiffRatio,
             id: module.id,
             inputTokens: result.usage?.input_tokens ?? 0,
             outputByteSizes: result.outputByteSizes,
@@ -1534,6 +1536,7 @@ export async function runModuleUserRevision(
       cachedInputTokens: getCachedInputTokens(result.usage),
       durationMs: result.durationMs,
       endedAt: result.endedAt,
+      finalDiffRatio: result.finalDiffRatio,
       id: module.id,
       inputTokens: result.usage?.input_tokens ?? 0,
       outputByteSizes: result.outputByteSizes,

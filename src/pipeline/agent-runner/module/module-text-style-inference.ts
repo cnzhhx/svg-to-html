@@ -90,6 +90,18 @@ const readLineList = (
     })
     : [];
 
+const extractLineTexts = (
+  lines: Array<{ region: Box; text?: string }>,
+  explicitTextLines: string[],
+) => {
+  const lineTexts = lines.flatMap((line) => {
+    const text = line.text?.trim();
+    return text ? [text] : [];
+  });
+  if (lineTexts.length > 1) return lineTexts;
+  return explicitTextLines.length > 1 ? explicitTextLines : [];
+};
+
 const estimateMultilineLineHeight = (regions: Box[], fallback: number) => {
   if (regions.length < 2) return fallback;
   const sorted = [...regions].sort((left, right) => left.y - right.y);
@@ -148,24 +160,36 @@ const normalizeModuleTextBlocks = (input: ModuleTextBlocksFile) =>
           ? explicitTextLines.length
           : undefined;
     const rawLines = readLineList(block.lines);
+    const hasTextOnlyLines =
+      Array.isArray(block.lines) &&
+      block.lines.some(
+        (line) =>
+          isRecord(line) &&
+          typeof line.text === "string" &&
+          line.text.trim().length > 0 &&
+          !readBox(line.region),
+      );
     const rawLineRegions = rawLines.length
       ? rawLines.map((line) => line.region)
       : readBoxList(block.lineRegions);
     const lineRegions = rawLineRegions.length
       ? rawLineRegions
-      : typeof lineCount === "number" && lineCount > 1
+      : !hasTextOnlyLines && typeof lineCount === "number" && lineCount > 1
         ? createVirtualLineRegions(visualRegion ?? region, lineCount)
         : [];
     const lines = rawLines.length
       ? rawLines
-      : lineRegions.map((lineRegion, index) => ({
+      : lineRegions.length
+        ? lineRegions.map((lineRegion, index) => ({
           region: lineRegion,
           text:
             explicitTextLines.length === lineRegions.length
               ? explicitTextLines[index]
               : undefined,
-        }));
+        }))
+        : explicitTextLines.map((line) => ({ region, text: line }));
     const styleLine = pickStyleLine(lines);
+    const lineTexts = extractLineTexts(lines, explicitTextLines);
     return [
       {
         confidence: block.confidence,
@@ -173,6 +197,7 @@ const normalizeModuleTextBlocks = (input: ModuleTextBlocksFile) =>
         id,
         kind: block.kind,
         lineCount,
+        lines: lineTexts,
         lineRegions,
         region,
         styleRegion: styleLine?.region,
@@ -215,7 +240,8 @@ const createModuleTextStyleHints = async ({
 
   const inferenceBlocks: TextStyleInferenceInputBlock[] = textBlocks.map(
     (block) => {
-      const usesSingleStyleLine = Boolean(block.styleRegion && block.styleText);
+      const hasExplicitLines = block.lines.length > 1;
+      const usesSingleStyleLine = !hasExplicitLines && Boolean(block.styleRegion && block.styleText);
       const region = usesSingleStyleLine ? block.styleRegion! : block.region;
       const lineCount = usesSingleStyleLine ? 1 : block.lineCount;
       const lineHeight =
@@ -229,10 +255,13 @@ const createModuleTextStyleHints = async ({
         id: block.id,
         lineCount,
         lineHeight,
+        lines: hasExplicitLines ? block.lines : undefined,
         region,
         renderScale: scale ?? 1,
         text: block.styleText ?? block.text,
-        visualRegion: usesSingleStyleLine
+        visualRegion: hasExplicitLines
+          ? region
+          : usesSingleStyleLine
           ? block.styleRegion
           : block.visualRegion ?? block.region,
       };

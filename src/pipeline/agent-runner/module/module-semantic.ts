@@ -27,6 +27,7 @@ type ModuleSemanticNodeSemantic = {
   text?: string;
   textHandling: "dom-text" | "export-asset" | "ignore" | "pending";
   textKind?: string;
+  visualLines?: string[];
 };
 
 type ModuleSemanticVisualEffect = {
@@ -76,6 +77,7 @@ type ModuleSemanticTextBlockStyleInference = {
   "font-weight"?: string;
   "letter-spacing"?: string;
   "line-height"?: string;
+  "white-space"?: string;
 };
 
 type ModuleSemanticTextBlock = {
@@ -83,7 +85,7 @@ type ModuleSemanticTextBlock = {
   id: string;
   kind?: string;
   lineRegions?: Box[];
-  lines?: Array<{ region: Box; text?: string }>;
+  lines?: Array<{ region?: Box; text?: string }>;
   [key: string]: unknown;
   region?: Box;
   renderedTextRegion?: Box;
@@ -173,7 +175,7 @@ type CreateModuleSemanticDraftResult = {
 
 const MODULE_SEMANTIC_SCHEMA_VERSION = 2;
 const MODULE_SEMANTIC_NODE_FACT_VERSION = 4;
-const MODULE_SEMANTIC_SEMANTIC_PASS_VERSION = 4;
+const MODULE_SEMANTIC_SEMANTIC_PASS_VERSION = 5;
 const MODULE_SEMANTIC_TEXT_STYLE_PASS_VERSION = 6;
 
 const IMPORTANT_ATTRS = new Set([
@@ -1079,6 +1081,7 @@ const AGENT_VISUAL_REFERENCE_ATTRS = new Set([
 const URL_REFERENCE_RE = /^url\(/i;
 
 const hasAgentVisualReferenceAttrs = (node: ModuleSemanticNode) =>
+  node.attrs != null &&
   [...AGENT_VISUAL_REFERENCE_ATTRS].some((key) => {
     const value = node.attrs[key];
     return typeof value === "string" && value.trim().length > 0 && value !== "none";
@@ -1138,11 +1141,6 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
       ? { containsReadableText: node.semantic.containsReadableText }
       : {}),
     ...(node.semantic.text ? { text: node.semantic.text } : {}),
-    ...(typeof node.semantic.lineCount === "number" &&
-    Number.isFinite(node.semantic.lineCount) &&
-    node.semantic.lineCount >= 1
-      ? { lineCount: Math.round(node.semantic.lineCount) }
-      : {}),
     ...(node.semantic.textKind
       ? { textKind: node.semantic.textKind }
       : {}),
@@ -1172,9 +1170,11 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
       }
 
       // Export nodes: full compact treatment with trimmed attrs.
-      const agentAttrs = pickAgentAttrs(node.attrs, {
-        includeVisualReferenceAttrs: hasVisualReferenceAttrs,
-      });
+      const agentAttrs = node.attrs
+        ? pickAgentAttrs(node.attrs, {
+            includeVisualReferenceAttrs: hasVisualReferenceAttrs,
+          })
+        : null;
       return {
         id: node.id,
         tag: node.tag,
@@ -1216,7 +1216,7 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
   delete result.graphicAssets;
   delete result.summaryVersion;
 
-  // Compact textBlocks: keep only {id, text, color?, lineCount?,
+  // Compact textBlocks: keep only {id, text, color?,
   // layoutTargetRegion, styleInference}. Verified across 8 modules / 48 blocks:
   // region==textRegion, renderedTextRegion==layoutTargetRegion,
   // sourceBlockText==text, sourceBlockId==id (all 100% identical, 0 refs).
@@ -1235,9 +1235,6 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
         // only if layoutTargetRegion is missing.
         const layoutBox = block.layoutTargetRegion ?? block.region;
         if (layoutBox) compacted.layoutTargetRegion = layoutBox;
-        if (typeof block.lineCount === "number" && block.lineCount >= 1) {
-          compacted.lineCount = Math.round(block.lineCount);
-        }
         if (block.color) compacted.color = block.color;
         return compacted;
       },
@@ -1382,9 +1379,10 @@ const buildModuleSemanticTextHints = (
         {
           bbox: node.bbox,
           color:
-            readExplicitPaint(node.attrs.fill) ?? textBlockColorById.get(node.id),
+            readExplicitPaint(node.attrs?.fill) ?? textBlockColorById.get(node.id),
           id: node.id,
           lineCount: node.semantic.lineCount,
+          lines: node.semantic.visualLines,
           role: node.semantic.textKind ?? node.semantic.kind,
           text,
         },

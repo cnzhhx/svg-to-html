@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 
 import type { AgentReasoningEffort } from "../../../config/agent-reasoning.js";
 import { MODULE_AGENT_TIMEOUT_MS } from "../../../config/index.js";
@@ -17,6 +17,10 @@ import { runAgentTurnCore } from "../turn/agent-turn-core.js";
 import { throwIfRunAborted } from "../session/run-control.js";
 import { verifyModuleLocal } from "./module-local-verify.js";
 import { verifyModuleFrameworkLocal } from "./module-framework-local-verify.js";
+import {
+  compactDocumentForAgent,
+  readModuleSemanticDocument,
+} from "./module-semantic.js";
 import type {
   SvgVerticalModule,
   SvgVerticalModuleReport,
@@ -113,6 +117,16 @@ type ModuleOutputIncompleteDiagnostics = {
   threadId: string;
   turnSummary: AgentUnitResult["turnSummary"];
   usage: AgentTokenUsage | null;
+};
+
+type AgentTurnForDiffResolution = Awaited<ReturnType<typeof runAgentTurnCore>>;
+
+type PostSanitizeVerifySummary = {
+  diffRatio: number;
+  localDiffRatio: number;
+  frameworkDiffRatio?: number;
+  round: number;
+  verifyCount: number;
 };
 
 class ModuleOutputIncompleteError extends Error {
@@ -313,6 +327,181 @@ const createAgentUnitThread = ({
 };
 
 /**
+ * 构建注入到首次 prompt 末尾的模块上下文。
+ * 将 compacted semantic JSON + 当前输出文件内容 + 资产列表一次性附加，
+ * 省去 agent 开头 4-8 次 read 调用。
+ */
+const buildInjectedModuleContext = async (
+  workingDir: string,
+): Promise<string> => {
+  const safeRead = async (filePath: string): Promise<string | null> => {
+    try {
+      return await readFile(filePath, "utf8");
+    } catch {
+      return null;
+    }
+  };
+  const safeReaddir = async (dirPath: string): Promise<string[]> => {
+    try {
+      return (await readdir(dirPath)).filter((e) => !e.startsWith("."));
+    } catch {
+      return [];
+    }
+  };
+
+  // Read and compact semantic JSON
+  const semanticDoc = await readModuleSemanticDocument(workingDir);
+  let semanticSection = "";
+  if (semanticDoc) {
+    const compacted = compactDocumentForAgent(semanticDoc);
+    semanticSection = `### module-semantic.json（精简版，已预加载）
+\`\`\`json
+${JSON.stringify(compacted, null, 2)}
+\`\`\``;
+  }
+
+  // Read output files
+  const outputSections: string[] = [];
+  const filesToRead = [
+    "preview.fragment.html",
+    "module.css",
+    "manifest.json",
+  ] as const;
+  for (const filename of filesToRead) {
+    const content = await safeRead(path.join(workingDir, filename));
+    if (content !== null) {
+      outputSections.push(`### ${filename}
+\`\`\`
+${content}
+\`\`\``);
+    }
+  }
+
+  // Asset listing
+  const assetFiles = await safeReaddir(path.join(workingDir, "assets"));
+  const assetSection = assetFiles.length > 0
+    ? `### assets/ 目录\n${assetFiles.join(", ")}`
+    : "### assets/ 目录\n（空）";
+
+  return `
+---
+## 模块当前状态（已预加载，首次无需再 read 这些文件）
+
+${semanticSection}
+
+${outputSections.join("\n\n")}
+
+${assetSection}
+---`;
+};
+
+const resolveAgentFinalDiffRatio = ({
+  postSanitizeVerify,
+  turn,
+}: {
+  postSanitizeVerify?: PostSanitizeVerifySummary;
+  turn: AgentTurnForDiffResolution;
+}) => {
+  if (postSanitizeVerify) return postSanitizeVerify.diffRatio;
+  if (turn.turnSummary.verifyUsage.bestDiffRatio !== undefined) {
+    return turn.turnSummary.verifyUsage.bestDiffRatio;
+  }
+  const verifyDiffRatios = turn.turnSummary.internalRounds
+    .map((internalRound) => internalRound.diffRatio)
+    .filter((diffRatio): diffRatio is number => diffRatio !== undefined);
+  if (!verifyDiffRatios.length) return undefined;
+  return Math.min(...verifyDiffRatios);
+};
+
+const verifyAfterSanitizeIfNeeded = async ({
+  controller,
+  design,
+  module,
+  modulePlan,
+  moduleSvgPath,
+  outputFormat,
+  round,
+  sessionId,
+  turn,
+  workingDir,
+}: {
+  controller: AbortController;
+  design: ResolvedDesignTarget;
+  module: SvgVerticalModule;
+  modulePlan: SvgVerticalModuleReport;
+  moduleSvgPath: string;
+  outputFormat: ReturnType<typeof resolveModuleOutputFormat>;
+  round: number;
+  sessionId: string;
+  turn: AgentTurnForDiffResolution;
+  workingDir: string;
+}): Promise<PostSanitizeVerifySummary | undefined> => {
+  if (turn.turnSummary.verifyUsage.verifyCount <= 0) return undefined;
+
+  const verifyRound = Math.max(0, round + turn.turnSummary.verifyUsage.verifyCount);
+  const localVerify = await verifyModuleLocal({
+    module,
+    moduleDir: workingDir,
+    modulePlan,
+    modulePlanPath: path.join(path.dirname(workingDir), "module-plan.json"),
+    moduleSvgPath,
+    onProgress: (message) =>
+      sessionStore.addLog(
+        sessionId,
+        `[agent-unit:${module.id}] post-sanitize verify: ${message}`,
+      ),
+    round: verifyRound,
+    scale: design.scale,
+    scaffoldHtmlPath: path.join(path.dirname(workingDir), "modules-scaffold.html"),
+    signal: controller.signal,
+  });
+  throwIfRunAborted(controller);
+
+  let finalDiffRatio = localVerify.diffRatio;
+  let verifyCount = 1;
+  sessionStore.addLog(
+    sessionId,
+    `[agent-unit:${module.id}] post-sanitize local diffRatio=${(localVerify.diffRatio * 100).toFixed(2)}%`,
+  );
+
+  let frameworkDiffRatio: number | undefined;
+  if (outputFormat !== "html") {
+    const frameworkVerify = await verifyModuleFrameworkLocal({
+      design,
+      module,
+      moduleDir: workingDir,
+      moduleSvgPath,
+      onProgress: (message) =>
+        sessionStore.addLog(
+          sessionId,
+          `[agent-unit:${module.id}] post-sanitize framework verify: ${message}`,
+        ),
+      outputFormat,
+      round: verifyRound,
+      signal: controller.signal,
+    });
+    throwIfRunAborted(controller);
+    if (frameworkVerify) {
+      verifyCount += 1;
+      frameworkDiffRatio = frameworkVerify.diffRatio;
+      finalDiffRatio = Math.max(finalDiffRatio, frameworkVerify.diffRatio);
+      sessionStore.addLog(
+        sessionId,
+        `[agent-unit:${module.id}] post-sanitize framework diffRatio=${(frameworkVerify.diffRatio * 100).toFixed(2)}%`,
+      );
+    }
+  }
+
+  return {
+    diffRatio: finalDiffRatio,
+    frameworkDiffRatio,
+    localDiffRatio: localVerify.diffRatio,
+    round: verifyRound,
+    verifyCount,
+  };
+};
+
+/**
  * 统一的 agent 执行单元
  *
  * 为单个模块执行一次 agent turn（初始生成或后续修复）。
@@ -346,7 +535,6 @@ export async function runAgentUnit(
   const startedAt = Date.now();
   const promptKind = revisionPrompt ? "revision" : "initial";
   const revisionRounds = revisionPrompt ? 1 : 0;
-  let finalDiffRatio: number | undefined;
   const outputFormat = resolveModuleOutputFormat({ design, modulePlan });
 
   // 输出文件路径（提前声明，用于 rollback 备份）
@@ -378,20 +566,26 @@ export async function runAgentUnit(
   }
 
   // 构造 prompt（初始或后续修复）
-  const prompt = revisionPrompt
-    ? `${buildAgentUnitFollowupBasePrompt({
-        module,
-        design,
-        modulePlan,
-        workingDir,
-        round,
-      })}\n\n${revisionPrompt}`
-    : buildAgentUnitPrompt({
-        module,
-        design,
-        modulePlan,
-        workingDir,
-      });
+  let prompt: string;
+  if (revisionPrompt) {
+    prompt = `${buildAgentUnitFollowupBasePrompt({
+      module,
+      design,
+      modulePlan,
+      workingDir,
+      round,
+    })}\n\n${revisionPrompt}`;
+  } else {
+    const basePrompt = buildAgentUnitPrompt({
+      module,
+      design,
+      modulePlan,
+      workingDir,
+    });
+    // 首次 prompt：注入 compacted semantic + output files，省去 4-8 次 read
+    const injectedContext = await buildInjectedModuleContext(workingDir);
+    prompt = `${basePrompt}\n${injectedContext}`;
+  }
   const thread =
     inputThread ??
     createAgentUnitThread({
@@ -482,63 +676,31 @@ export async function runAgentUnit(
     moduleDir: workingDir,
   });
   throwIfRunAborted(controller);
-  const turnRanVerify = turn.turnSummary.verifyUsage.verifyCount > 0;
+  let postSanitizeVerify: PostSanitizeVerifySummary | undefined;
   if (sanitizeResult.changed) {
     sessionStore.addLog(
       sessionId,
       `[agent-unit:${module.id}] sanitized module output: ${sanitizeResult.reason ?? "normalized root styles"}`,
     );
-    if (turnRanVerify) {
-      const localVerify = await verifyModuleLocal({
-        module,
-        moduleDir: workingDir,
-        modulePlan,
-        modulePlanPath: path.join(path.dirname(workingDir), "module-plan.json"),
-        moduleSvgPath,
-        onProgress: (message) =>
-          sessionStore.addLog(
-            sessionId,
-            `[agent-unit:${module.id}] post-sanitize verify: ${message}`,
-          ),
-        round,
-        scale: design.scale,
-        scaffoldHtmlPath: path.join(path.dirname(workingDir), "modules-scaffold.html"),
-        signal: controller.signal,
-      });
-      throwIfRunAborted(controller);
-      finalDiffRatio = localVerify.diffRatio;
-      sessionStore.addLog(
-        sessionId,
-        `[agent-unit:${module.id}] post-sanitize local diffRatio=${(localVerify.diffRatio * 100).toFixed(2)}%`,
-      );
-      if (outputFormat !== "html") {
-        const frameworkVerify = await verifyModuleFrameworkLocal({
-          design,
-          module,
-          moduleDir: workingDir,
-          moduleSvgPath,
-          onProgress: (message) =>
-            sessionStore.addLog(
-              sessionId,
-              `[agent-unit:${module.id}] post-sanitize framework verify: ${message}`,
-            ),
-          outputFormat,
-          round,
-          signal: controller.signal,
-        });
-        throwIfRunAborted(controller);
-        if (frameworkVerify) {
-          finalDiffRatio = Math.max(finalDiffRatio, frameworkVerify.diffRatio);
-          sessionStore.addLog(
-            sessionId,
-            `[agent-unit:${module.id}] post-sanitize framework diffRatio=${(frameworkVerify.diffRatio * 100).toFixed(2)}%`,
-          );
-        }
-      }
-    }
+    postSanitizeVerify = await verifyAfterSanitizeIfNeeded({
+      controller,
+      design,
+      module,
+      modulePlan,
+      moduleSvgPath,
+      outputFormat,
+      round,
+      sessionId,
+      turn,
+      workingDir,
+    });
   }
 
   throwIfRunAborted(controller);
+  const finalDiffRatio = resolveAgentFinalDiffRatio({
+    postSanitizeVerify,
+    turn,
+  });
   // 读取输出文件
   const [
     previewFragmentHtml,
@@ -603,12 +765,24 @@ export async function runAgentUnit(
         .map((internalRound) => ({
           diffRatio: internalRound.diffRatio!,
           round: internalRound.roundNumber,
-        })),
+        }))
+        .concat(
+          postSanitizeVerify
+            ? [
+                {
+                  diffRatio: postSanitizeVerify.diffRatio,
+                  round: postSanitizeVerify.round,
+                },
+              ]
+            : [],
+        ),
       metrics: turn.turnSummary.metrics,
       totalCommands: turn.turnSummary.totalCommands,
       totalInternalRounds: turn.turnSummary.totalInternalRounds,
       totalShellCommands: turn.turnSummary.totalShellCommands,
-      verifyCount: turn.turnSummary.verifyUsage.verifyCount,
+      verifyCount:
+        turn.turnSummary.verifyUsage.verifyCount +
+        (postSanitizeVerify?.verifyCount ?? 0),
       rollbackCount: turn.turnSummary.verifyUsage.rollbackCount,
       rollbackReasons: turn.turnSummary.verifyUsage.rollbackReasons,
     },

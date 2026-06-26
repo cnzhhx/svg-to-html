@@ -133,7 +133,7 @@ ${moduleCss.split("\n").map((line) => `      ${line}`).join("\n")}
   <body>
     <main class="browser-eval-root" data-module-dir="${escapeHtmlAttribute(moduleDir)}">
       <section class="design-module ${escapeHtmlAttribute(moduleId)}" data-module-id="${escapeHtmlAttribute(moduleId)}">
-${previewFragmentHtml.split("\n").map((line) => `        ${line}`).join("\n")}
+${previewFragmentHtml.trim()}
       </section>
     </main>
     <script>window.__RENDER_READY__ = true;</script>

@@ -161,8 +161,19 @@ const main = async () => {
   console.log(
     JSON.stringify({
       alignmentDiagnostics,
+      artifacts: {
+        artifactDir: result.artifactDir,
+        diffPngPath: result.diffPngPath,
+        previewHtmlPath: result.previewHtmlPath,
+        renderPngPath: result.renderPngPath,
+        svgPngPath: result.svgPngPath,
+      },
       diffRatio: result.diffRatio,
+      diffPngPath: result.diffPngPath,
       passed: result.passed,
+      previewHtmlPath: result.previewHtmlPath,
+      renderPngPath: result.renderPngPath,
+      svgPngPath: result.svgPngPath,
     }),
   )
 }

@@ -7,6 +7,7 @@ type TextStyleInferenceInputBlock = {
   color?: string;
   currentDeclarations?: Record<string, string>;
   id: string;
+  lines?: string[];
   lineCount?: number;
   lineHeight?: number;
   region: Box;
@@ -53,6 +54,15 @@ const visualSimilarityProfile = {
 
 const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
 
+const normalizeTextLines = (value: unknown) =>
+  Array.isArray(value)
+    ? value
+        .flatMap((line) =>
+          typeof line === "string" ? [normalizeText(line)] : [],
+        )
+        .filter((line) => line.length > 0)
+    : undefined;
+
 const normalizeFontFamily = (value?: string) => {
   if (!value) return "";
   const families = value
@@ -90,6 +100,7 @@ const inferTextStyles = async ({
               ...(block.currentDeclarations ?? {}),
               'font-family': normalizeFontFamily(block.currentDeclarations?.['font-family']),
             },
+            lines: normalizeTextLines(block.lines),
             text: normalizeText(block.text),
           })),
         )};
@@ -463,6 +474,12 @@ const inferTextStyles = async ({
           const renderScale =
             getRenderScale(block);
           const text = String(block.text ?? '').replace(/\\s+/g, ' ').trim();
+          const explicitLines = Array.isArray(block.lines)
+            ? block.lines
+                .map((line) => String(line ?? '').replace(/\\s+/g, ' ').trim())
+                .filter((line) => line.length > 0)
+            : [];
+          const measureText = explicitLines.length ? explicitLines.join('') : text;
           const currentSize = parsePx(block.currentDeclarations['font-size']);
           const currentWeight = block.currentDeclarations['font-weight'] ?? '';
           const currentFamily = block.currentDeclarations['font-family'] ?? '';
@@ -472,8 +489,11 @@ const inferTextStyles = async ({
             typeof block.styleMetricWeight === 'number' && Number.isFinite(block.styleMetricWeight)
               ? Math.max(0, block.styleMetricWeight)
               : 0;
-          const lineCount =
-            typeof block.lineCount === 'number' && Number.isFinite(block.lineCount) && block.lineCount >= 1
+          const explicitLineCount = explicitLines.length;
+          const usesExplicitLineLayout = explicitLineCount > 1;
+          const lineCount = explicitLineCount > 0
+            ? explicitLineCount
+            : typeof block.lineCount === 'number' && Number.isFinite(block.lineCount) && block.lineCount >= 1
               ? Math.round(block.lineCount)
               : 1;
           const lineHeightTarget =
@@ -488,7 +508,7 @@ const inferTextStyles = async ({
           const fontSizeTarget = lineCount > 1
             ? Math.max(8, Math.round((lineHeightTarget ?? styleTargetHeight) * 0.84))
             : styleTargetHeight;
-          const compactMetricSizing = lineCount === 1 && usesCompactMetricSizing(text);
+          const compactMetricSizing = lineCount === 1 && usesCompactMetricSizing(measureText);
           const families = currentFamily
             ? [currentFamily, ...fontFamilies.filter((family) => family !== currentFamily)]
             : fontFamilies;
@@ -527,7 +547,7 @@ const inferTextStyles = async ({
                 family,
                 fontSize: 100,
                 fontWeight,
-                text,
+                text: measureText,
               });
               const heightRatio = reference.height / 100;
               if (!Number.isFinite(heightRatio) || heightRatio <= 0) {
@@ -539,13 +559,15 @@ const inferTextStyles = async ({
               );
             })();
             const candidateLines = lineCount > 1
-              ? wrapText({
-                  family,
-                  fontSize: renderFontSize,
-                  fontWeight,
-                  maxWidth: targetPhysicalWidth,
-                  text,
-                })
+              ? (explicitLines.length
+                  ? explicitLines
+                  : wrapText({
+                      family,
+                      fontSize: renderFontSize,
+                      fontWeight,
+                      maxWidth: targetPhysicalWidth,
+                      text,
+                    }))
               : [text];
             const base = lineCount > 1
               ? measureLines({
@@ -559,10 +581,13 @@ const inferTextStyles = async ({
                   family,
                   fontSize: renderFontSize,
                   fontWeight,
-                  text,
+                  text: measureText,
                 });
             const widthDelta = base.width - targetPhysicalWidth;
-            if (widthDelta > targetPhysicalWidth * maxAcceptedWidthOverflowRatio) {
+            if (
+              !usesExplicitLineLayout &&
+              widthDelta > targetPhysicalWidth * maxAcceptedWidthOverflowRatio
+            ) {
               return null;
             }
             const heightDelta = lineCount > 1 ? 0 : base.height - targetPhysicalHeight;
@@ -575,8 +600,10 @@ const inferTextStyles = async ({
               Math.abs(fontSize - measuredFontSizeTarget) * (compactMetricSizing ? 2.8 : 4.5) +
               Math.max(0, measuredFontSizeTarget - fontSize) * (compactMetricSizing ? 1.2 : 2) +
               Math.max(0, fontSize - measuredFontSizeTarget) * (compactMetricSizing ? 0.9 : 1.25);
+            const widthMetricWeight = usesExplicitLineLayout ? 0.05 : 1.1;
             const widthFitPrior =
-              (Math.abs(widthDelta) / Math.max(1, targetPhysicalWidth)) * 14;
+              (Math.abs(widthDelta) / Math.max(1, targetPhysicalWidth)) *
+              (usesExplicitLineLayout ? 0.25 : 14);
             const familyIndex = Math.max(0, families.indexOf(family));
             const familyPrior = familyIndex * 2;
             const visualSignalStrength = Number(targetCrop?.signalStrength ?? 0);
@@ -590,7 +617,7 @@ const inferTextStyles = async ({
                 ? Math.max(0.25, 1 - visualSignalStrength * 0.65)
                 : 1);
             const visual =
-              targetCrop?.hasUsableSignal
+              !usesExplicitLineLayout && targetCrop?.hasUsableSignal
                 ? compareVisual(
                     targetCrop,
                     renderCandidate({
@@ -614,7 +641,7 @@ const inferTextStyles = async ({
                 lineCountDelta * 80 +
                 familyPrior +
                 weightPrior
-              : Math.abs(widthDelta) * 1.1 +
+              : Math.abs(widthDelta) * widthMetricWeight +
                 Math.abs(heightDelta) * 1.1 +
                 widthFitPrior +
                 Math.abs(styleWidthDelta) * styleMetricWeight +
@@ -636,6 +663,7 @@ const inferTextStyles = async ({
                   1,
                   Math.round(lineHeightTarget ?? targetCssHeight),
                 ) + 'px',
+                ...(explicitLines.length > 1 ? { 'white-space': 'pre' } : {}),
               },
               fit: {
                 heightDelta: round(heightDelta),
@@ -716,6 +744,7 @@ const inferTextStyles = async ({
                 'font-size': fallbackSize + 'px',
                 'font-weight': String(weights[0] ?? '400'),
                 'line-height': fallbackLineHeight + 'px',
+                ...(explicitLines.length > 1 ? { 'white-space': 'pre' } : {}),
               },
               fit: { score: 0 },
             };

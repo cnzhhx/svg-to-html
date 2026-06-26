@@ -128,18 +128,15 @@ type CliArgs = {
 };
 
 type AlignmentDiagnosticsSummary = {
-  alignedTargets: number;
   ambiguousTargets: number;
   assetTargets: number;
-  likelyNonActionablePixelDiff: boolean;
-  majorIssues: number;
   matchedTargets: number;
-  minorIssues: number;
   missingExpectedBoxes: number;
   missingTargets: number;
   pixelDiffRatio: number | null;
+  positionIssues: number;
   textTargets: number;
-  unmatchedTargets: number;
+  totalTargets: number;
 };
 
 type AlignmentDiagnosticsReport = ReturnType<typeof buildReport>;
@@ -441,10 +438,7 @@ ${moduleCss
   <body>
     <main class="design-page">
       <section class="design-module ${escapeHtmlAttribute(moduleId)}" data-module-id="${escapeHtmlAttribute(moduleId)}">
-${previewFragmentHtml
-  .split("\n")
-  .map((line) => `        ${line}`)
-  .join("\n")}
+${previewFragmentHtml.trim()}
       </section>
     </main>
   </body>
@@ -1197,101 +1191,31 @@ const matchTexts = ({
   );
 };
 
-const buildCoordinateWarnings = ({
-  measurement,
-  scaleX,
-  scaleY,
-}: {
-  measurement: DomMeasurement;
-  scaleX: number;
-  scaleY: number;
-}) => {
-  const warnings: string[] = [];
-  if (measurement.root.strategy.endsWith("first-ambiguous")) {
-    warnings.push(
-      `模块根选择存在多个候选，已使用第一个：${measurement.root.strategy} (${measurement.root.candidateCount})`,
-    );
-  }
-  if (measurement.root.strategy === "body-fallback") {
-    warnings.push(
-      "未找到明确模块根，已使用 document.body 作为坐标原点；actual rect 可能包含宿主偏移。",
-    );
-  }
-  if (
-    !Number.isFinite(scaleX) ||
-    !Number.isFinite(scaleY) ||
-    scaleX <= 0 ||
-    scaleY <= 0
-  ) {
-    warnings.push("模块根尺寸异常，无法可靠反推 CSS transform scale。");
-  } else {
-    if (scaleX < 0.25 || scaleX > 4 || scaleY < 0.25 || scaleY > 4) {
-      warnings.push(
-        `模块根 scale 异常：scaleX=${roundMetric(scaleX)}, scaleY=${roundMetric(scaleY)}。`,
-      );
-    }
-    if (Math.abs(scaleX - scaleY) > 0.05) {
-      warnings.push(
-        `模块根存在非等比缩放：scaleX=${roundMetric(scaleX)}, scaleY=${roundMetric(scaleY)}。`,
-      );
-    }
-  }
-  return warnings;
-};
-
 const analyzeEntries = ({
-  diffRatio,
   entries,
   missingExpected,
 }: {
-  diffRatio?: number;
   entries: DiagnosticEntry[];
   missingExpected: DiagnosticEntry[];
 }) => {
   const allEntries = [...missingExpected, ...entries];
-  const actionableIssues = allEntries.filter(
-    (entry) => entry.severity !== "ok" || Boolean(entry.status),
+  const positionIssues = allEntries.filter(
+    (entry) => Boolean(entry.status) || (entry.maxDeviation ?? 0) >= 2,
   );
-  const alignedTargets = entries.filter(
-    (entry) => entry.severity === "ok" && !entry.status,
-  );
-  const unmatchedTargets = allEntries.filter((entry) => Boolean(entry.status));
+  const statusIssues = positionIssues.filter((entry) => Boolean(entry.status));
   const matchedTargets = entries.length - entries.filter((entry) => entry.status).length;
-  const missingTargets = unmatchedTargets.filter((entry) =>
+  const missingTargets = statusIssues.filter((entry) =>
     entry.status?.startsWith("missing"),
   ).length;
-  const ambiguousTargets = unmatchedTargets.filter(
+  const ambiguousTargets = statusIssues.filter(
     (entry) => entry.status === "ambiguous-dom",
   ).length;
-  const majorIssues = actionableIssues.filter(
-    (entry) => entry.severity === "major",
-  ).length;
-  const minorIssues = actionableIssues.filter(
-    (entry) => entry.severity === "minor",
-  ).length;
-  const minorEntries = actionableIssues.filter(
-    (entry) => entry.severity === "minor",
-  );
-  const likelyNonActionablePixelDiff =
-    typeof diffRatio === "number" &&
-    diffRatio >= 0.05 &&
-    majorIssues === 0 &&
-    missingTargets === 0 &&
-    ambiguousTargets === 0 &&
-    matchedTargets > 0 &&
-    minorIssues / matchedTargets <= 0.15 &&
-    minorEntries.every((entry) => (entry.maxDeviation ?? 0) <= 2);
 
   return {
-    actionableIssues,
-    alignedTargets,
     ambiguousTargets,
-    likelyNonActionablePixelDiff,
-    majorIssues,
     matchedTargets,
-    minorIssues,
     missingTargets,
-    unmatchedTargets,
+    positionIssues,
   };
 };
 
@@ -1302,15 +1226,26 @@ const sortEntry = (entry: DiagnosticEntry) => {
   return 3;
 };
 
+const simplifyPositionIssue = (entry: DiagnosticEntry) => ({
+  kind: entry.kind,
+  targetId: entry.targetId,
+  ...(entry.assetPath ? { assetPath: entry.assetPath } : {}),
+  ...(entry.text ? { text: entry.text } : {}),
+  ...(entry.status ? { status: entry.status } : {}),
+  ...(entry.match ? { match: entry.match } : {}),
+  ...(entry.expected ? { expected: entry.expected } : {}),
+  ...(entry.actual ? { actual: entry.actual } : {}),
+  ...(entry.delta ? { delta: entry.delta } : {}),
+  ...(entry.maxDeviation !== undefined ? { maxDeviation: entry.maxDeviation } : {}),
+});
+
 const buildReport = ({
   args,
   measurement,
-  renderEntry,
   semantic,
 }: {
   args: CliArgs;
   measurement: DomMeasurement;
-  renderEntry: RenderEntryResolution;
   semantic: SemanticInput;
 }) => {
   const rawScaleX = measurement.root.rect.width / semantic.module.width;
@@ -1319,11 +1254,6 @@ const buildReport = ({
     Number.isFinite(rawScaleX) && rawScaleX > 0 ? rawScaleX : 1;
   const scaleY =
     Number.isFinite(rawScaleY) && rawScaleY > 0 ? rawScaleY : 1;
-  const coordinateWarnings = buildCoordinateWarnings({
-    measurement,
-    scaleX: rawScaleX,
-    scaleY: rawScaleY,
-  });
   const dataAssetIndex = buildElementIndex(
     measurement.dataAssetElements,
     "dataAssetId",
@@ -1353,51 +1283,24 @@ const buildReport = ({
     (a, b) => sortEntry(a) - sortEntry(b),
   );
   const analysis = analyzeEntries({
-    diffRatio: args.diffRatio,
     entries,
     missingExpected: semantic.missingExpected,
   });
-  const nonActionableNotes = analysis.likelyNonActionablePixelDiff
-    ? [
-        "多数可测图片和文本 rect 已对齐；剩余 diff 可能主要来自字体抗锯齿、图片纹理边缘、圆角/阴影边缘或浏览器渲染差异。该提示不代表自动通过，只用于停止无依据布局猜测。",
-      ]
-    : [];
 
   return {
-    actionableIssues: analysis.actionableIssues,
-    alignedTargets: analysis.alignedTargets,
-    coordinate: {
-      rootCandidateCount: measurement.root.candidateCount,
-      rootRect: roundRect(measurement.root.rect),
-      rootStrategy: measurement.root.strategy,
-      scaleX: roundMetric(scaleX),
-      scaleY: roundMetric(scaleY),
-      warnings: coordinateWarnings,
-    },
-    generatedAt: Date.now(),
-    imageLoadErrors: measurement.imageLoadErrors,
     moduleId: semantic.module.id,
-    nonActionableNotes,
-    renderEntry: {
-      mode: renderEntry.mode,
-      path: renderEntry.path,
-      verifyRound: renderEntry.verifyRound,
-    },
+    positionIssues: analysis.positionIssues.map(simplifyPositionIssue),
     summary: {
-      alignedTargets: analysis.alignedTargets.length,
       ambiguousTargets: analysis.ambiguousTargets,
       assetTargets: semantic.assetTargets.length,
-      likelyNonActionablePixelDiff: analysis.likelyNonActionablePixelDiff,
-      majorIssues: analysis.majorIssues,
       matchedTargets: analysis.matchedTargets,
-      minorIssues: analysis.minorIssues,
       missingExpectedBoxes: semantic.missingExpected.length,
       missingTargets: analysis.missingTargets,
       pixelDiffRatio: args.diffRatio ?? null,
+      positionIssues: analysis.positionIssues.length,
       textTargets: semantic.textTargets.length,
-      unmatchedTargets: analysis.unmatchedTargets.length,
+      totalTargets: semantic.assetTargets.length + semantic.textTargets.length,
     },
-    unmatchedTargets: analysis.unmatchedTargets,
   };
 };
 
@@ -1462,7 +1365,6 @@ const writeMeasuredModuleAlignmentDiagnostics = async (
       verifyRound: measured.renderEntry.verifyRound,
     },
     measurement: measured.measurement,
-    renderEntry: measured.renderEntry,
     semantic: measured.semantic,
   });
   const outputPath = input.output

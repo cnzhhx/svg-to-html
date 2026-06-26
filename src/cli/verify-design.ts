@@ -143,11 +143,20 @@ const main = async () => {
 
   // Compact output: only key metrics for agent consumption (saves thread context tokens)
   const compact = {
+    artifacts: {
+      artifactDir: result.artifactDir,
+      diffPngPath: result.diffPngPath,
+      renderEntryPath: requiredRenderEntryPath,
+      renderPngPath: result.renderPngPath,
+      svgPngPath: result.svgPngPath,
+    },
+    diffPngPath: result.diffPngPath,
     diffRatio: result.diffRatio,
     mode: result.mode ?? mode,
     artifactDir: result.artifactDir,
     renderEntryPath: requiredRenderEntryPath,
     renderPngPath: result.renderPngPath,
+    svgPngPath: result.svgPngPath,
   };
   console.log(JSON.stringify(compact));
 };
