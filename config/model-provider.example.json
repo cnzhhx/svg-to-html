@@ -4,6 +4,7 @@
   "models": {
     "your-model": {
       "runtime": "opencode",
+      "wireApi": "chat-completions",
       "provider": "your-provider",
       "baseURL": "https://api.example.com/v1",
       "apiKeyEnv": "YOUR_PROVIDER_API_KEY",

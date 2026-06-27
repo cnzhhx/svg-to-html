@@ -181,6 +181,11 @@ const resolveOpencodeVariant = (
   const variant = normalizeReasoningEffort(value);
   if (!variant) return undefined;
   if (variant === "none") return undefined;
+  if (modelConfig.wireApi === "anthropic") {
+    if (variant === "high") return "high";
+    if (variant === "xhigh") return "max";
+    return undefined;
+  }
   if (variant === "xhigh" && modelConfig.wireApi !== "responses") {
     return "max";
   }
@@ -267,10 +272,11 @@ const createProviderTelemetry = ({
   retryEvents: [],
 });
 
-const getProviderNpmPackage = (modelConfig: ModelProviderConfig) =>
-  modelConfig.wireApi === "responses"
-    ? "@ai-sdk/openai"
-    : "@ai-sdk/openai-compatible";
+const getProviderNpmPackage = (modelConfig: ModelProviderConfig) => {
+  if (modelConfig.wireApi === "anthropic") return "@ai-sdk/anthropic";
+  if (modelConfig.wireApi === "responses") return "@ai-sdk/openai";
+  return "@ai-sdk/openai-compatible";
+};
 
 const createOpencodeConfigFile = async ({
   modelConfig,

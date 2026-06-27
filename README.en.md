@@ -94,6 +94,7 @@ Edit `config/model-provider.json` (copy from `config/model-provider.example.json
   "models": {
     "your-model": {
       "runtime": "opencode",
+      "wireApi": "chat-completions",
       "provider": "your-provider",
       "baseURL": "https://api.example.com/v1",
       "apiKeyEnv": "YOUR_PROVIDER_API_KEY",
@@ -102,6 +103,8 @@ Edit `config/model-provider.json` (copy from `config/model-provider.example.json
   }
 }
 ```
+
+`wireApi` accepts `chat-completions` (default, OpenAI-compatible), `responses` (OpenAI Responses), or `anthropic` (Anthropic).
 
 ### Environment Variables
 

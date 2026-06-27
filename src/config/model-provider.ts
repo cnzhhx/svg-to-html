@@ -8,7 +8,7 @@ import {
 import type { AgentReasoningEffort } from "./agent-reasoning.js";
 
 type ModelRuntime = "opencode";
-type ModelWireApi = "chat-completions" | "responses";
+type ModelWireApi = "anthropic" | "chat-completions" | "responses";
 type ModelConfigRole = "text" | "vision" | "moduleAgent";
 
 type ModelDefinition = Partial<{
@@ -63,7 +63,11 @@ type ModelProviderConfig = {
 };
 
 const MODEL_RUNTIMES: ModelRuntime[] = ["opencode"];
-const MODEL_WIRE_APIS: ModelWireApi[] = ["chat-completions", "responses"];
+const MODEL_WIRE_APIS: ModelWireApi[] = [
+  "anthropic",
+  "chat-completions",
+  "responses",
+];
 const ROLE_ENV_PREFIX: Record<ModelConfigRole, string> = {
   moduleAgent: "MODULE_AGENT",
   text: "TEXT",
