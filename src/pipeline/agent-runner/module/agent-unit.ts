@@ -56,6 +56,7 @@ type AgentUnitThreadInput = {
   originalSvgPath: string;
   reasoningEffort: AgentReasoningEffort;
   threadId?: string;
+  turnStartedAt?: number;
   workingDir: string;
 };
 
@@ -87,6 +88,7 @@ type AgentUnitResult = {
     verifyCount: number;
     rollbackCount?: number;
     rollbackReasons?: string[];
+    softStopRecommendation?: string;
   };
   usage: AgentTokenUsage | null;
   outputFiles: {
@@ -292,6 +294,7 @@ const createAgentUnitThread = ({
   originalSvgPath,
   reasoningEffort,
   threadId,
+  turnStartedAt,
   workingDir,
 }: AgentUnitThreadInput) => {
   const options = {
@@ -307,6 +310,9 @@ const createAgentUnitThread = ({
       (dir): dir is string => typeof dir === "string" && existsSync(dir),
     ),
     deviceScaleFactor: design.scale,
+    environment: {
+      AGENT_TURN_STARTED_AT: String(turnStartedAt ?? Date.now()),
+    },
     modelReasoningEffort: reasoningEffort,
     runtimeTraceDir: path.join(
       artifactDir,
@@ -593,6 +599,7 @@ export async function runAgentUnit(
       design,
       originalSvgPath,
       reasoningEffort,
+      turnStartedAt: startedAt,
       workingDir,
     });
 
@@ -663,6 +670,8 @@ export async function runAgentUnit(
           verifyCount: turn.turnSummary.verifyUsage.verifyCount,
           rollbackCount: turn.turnSummary.verifyUsage.rollbackCount,
           rollbackReasons: turn.turnSummary.verifyUsage.rollbackReasons,
+          softStopRecommendation:
+            turn.turnSummary.verifyUsage.softStopRecommendation,
         },
         usage: turn.usage,
       });
@@ -785,6 +794,8 @@ export async function runAgentUnit(
         (postSanitizeVerify?.verifyCount ?? 0),
       rollbackCount: turn.turnSummary.verifyUsage.rollbackCount,
       rollbackReasons: turn.turnSummary.verifyUsage.rollbackReasons,
+      softStopRecommendation:
+        turn.turnSummary.verifyUsage.softStopRecommendation,
     },
     usage: turn.usage,
     outputFiles: {

@@ -220,11 +220,6 @@ function buildAgentUnitPrompt(input: {
     process.cwd(),
     "src/cli/diagnose-module-alignment.ts",
   );
-  const exportSvgNodeCliPath = path.join(
-    process.cwd(),
-    "src/cli/export-svg-node-asset.ts",
-  );
-
   const moduleSemanticJsonPath = path.join(
     workingDir,
     "module-semantic.json",
@@ -245,10 +240,8 @@ function buildAgentUnitPrompt(input: {
     typeof module.reason === "string" && module.reason.trim().length > 0
       ? `- planner reason: ${module.reason.trim()}`
       : "";
-  const exportCmdPrefix = `pnpm --dir ${process.cwd()} exec tsx ${exportSvgNodeCliPath} --module-dir ${workingDir} --scale ${scaleLabel}`;
-
   const semanticJsonUsageLine = "- module-semantic.json：结构化主输入，已在末尾预加载（精简版）。导出资产后如需刷新 generatedAssets，再次 read 磁盘文件";
-  const methodFirstStep = "1. 直接使用末尾预加载的 module-semantic.json 精简版（无需再 read）；只按需读取输入路径列表里实际提供的参考图，确认语义层级、关键视觉块、关键文本框和区域类型。generatedAssets 初始可能为空，不代表缺资源；首批视觉还原优先把 textBlocks 之外的复杂视觉节点/组合节点导出 PNG（可并行导出），不要先花大量时间用 CSS 手绘或逐节点推理。需要图片资源时，从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断并导出。不要把所有节点坐标逐项重算成超长“几何账本”。结构化坐标（已导出图片资产用 generatedAssets[].box，其余按需参考 nodes[].bbox）是坐标主来源，截图只用于理解语义和验证。";
+  const methodFirstStep = "1. 直接使用末尾预加载的 module-semantic.json 精简版（无需再 read）；只按需读取输入路径列表里实际提供的参考图，确认语义层级、关键视觉块、关键文本框和区域类型。generatedAssets 初始可能为空，不代表缺资源；首批视觉还原优先把 textBlocks 之外的复杂视觉节点/组合节点通过 export_svg_node tool 导出 PNG，不要先花大量时间用 CSS 手绘或逐节点推理。需要图片资源时，从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断并导出。不要把所有节点坐标逐项重算成超长“几何账本”。结构化坐标（已导出图片资产用 generatedAssets[].box，其余按需参考 nodes[].bbox）是坐标主来源，截图只用于理解语义和验证。";
   const dualFragmentSection = isFrameworkOutput
     ? `
 ## 双片段对齐（${outputFormat === "vue" ? "Vue" : "React"}）
@@ -285,7 +278,7 @@ module-semantic.json 关键字段（按此优先级取用）：
 | generatedAssets[] | agent 已经按需导出的资产；模块启动时可以为空，不代表缺资源 |
 | generatedAssets[].box | 已导出 PNG 的 CSS 放置外框（x/y/宽/高，对应截图 clip，可能包含小数坐标取整留下的透明边）；**引用该资产时用它定位 + 定尺寸**，宽高比即 PNG 比例。资产只给路径，不会自动作为图片附件塞入请求 |
 | generatedAssets[].sourceNodeIds | 该资产由哪些 SVG 节点导出，便于合并/重导 |
-| nodes[].id / nodeId | SVG 节点 id；按需导出 PNG 时优先用 --node-id |
+| nodes[].id / nodeId | SVG 节点 id；按需导出 PNG 时传给 export_svg_node 的 nodeIds |
 | nodes[].bbox | 节点几何框；用于判断位置、尺寸、分组和按需导出范围 |
 | nodes[].inspectIndex | 绘制顺序，越大越靠上，是 z-index 的依据 |
 | nodes[].semantic | 节点语义与导出决策 |
@@ -344,20 +337,13 @@ ${sourceDataContractSection}
   script 是在页面上下文执行的 JS，最后 return JSON。
   示例: browser_eval({ moduleDir: "${workingDir}", script: "const el=document.querySelector('.selector'); const r=el.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height};" })
   页面自动加载最新的 HTML/CSS，不需要手动 reload。
-- **导出命令前缀**（固定不变，直接复制）: \`${exportCmdPrefix}\`
-- 导出 SVG 节点为 PNG: \`${exportCmdPrefix} --node-id <节点id> --output assets/<name>.png --register-semantic --padding 0\`
-  - ⚠️ **常见错误**：\`pnpm --dir <脚本路径>\` 会报 ENOTDIR。\`--dir\` 后面必须是**项目根目录**，不是 .ts 文件路径。请直接使用上方 \`${exportCmdPrefix}\` 前缀，不要自己拼。
-  - 合并多个节点：追加多个 \`--node-id n0001 --node-id n0002\`；导出后直接在 HTML 引用 \`./assets/<name>.png\`
+- 导出 SVG 节点为 PNG:
+  直接调用 export_svg_node tool，传入 moduleDir、nodeIds、output、padding。不要用 bash 手写 \`pnpm ... export-svg-node-asset.ts\` 命令。
+  示例: export_svg_node({ moduleDir: "${workingDir}", nodeIds: ["n0001"], output: "assets/icon-a.png", padding: 0 })
+  - 合并多个节点：nodeIds 传多个 id，例如 ["n0001", "n0002"]；导出后直接在 HTML 引用 \`./assets/<name>.png\`
+  - tool 会自动注册 generatedAssets，返回 JSON（含 \`clip\`/\`renderedBox\`/\`registeredAsset\`）；需要定位信息时优先用返回值，必要时再 read module-semantic.json 刷新。
   - 导出工具只会阻止导出 \`textBlocks\` 对应的预处理 DOM 文本节点及其父子树；除此之外，资产里包含非 \`textBlocks\` 的装饰字/徽章字/截图字/图片自身文字是允许的，不需要额外清理或重构。
-  - **并行导出多个独立资产**：需要导出多张**互相独立**的 PNG 时（例如多个不相关图标），用 shell \`&\` + \`wait\` 并行执行多个命令，可把总等待时间从 N×单次降到约 1×单次。module-semantic.json 的写入已加跨进程锁，\`--node-id\` 并行导出安全。
-    示例（3 个独立图标并行）：
-    \`\`\`bash
-    ${exportCmdPrefix} --node-id n0001 --output assets/icon-a.png --register-semantic --padding 0 &
-    ${exportCmdPrefix} --node-id n0002 --output assets/icon-b.png --register-semantic --padding 0 &
-    ${exportCmdPrefix} --node-id n0003 --output assets/icon-c.png --register-semantic --padding 0 &
-    wait
-    \`\`\`
-    每条命令的 stdout 会输出 JSON（含 \`clip\`/\`renderedBox\`/\`registeredAsset\`），需要定位信息时优先从对应命令的输出解析，避免重读整个 module-semantic.json。**禁止并行**：写同一输出文件、verify 命令本身、以及会冲突的文件改写。独立资产数 ≥3 个时优先用并行，不要用 \`&&\` 串行连接；1-2 个资产按需。**单次并行上限 4 条**（避免同时启动过多浏览器进程），超过 4 个资产分批 \`wait\`。
+  - 独立资产可以逐个调用 tool；不要为了导出资产改用 shell 并行拼命令。
   - **禁止写 python/node 脚本去 inspect module-semantic.json**（启动 pnpm/tsx 解释器开销大）。需要查 JSON 内容直接用 read 工具读文件。
 - Semantic JSON: ${moduleSemanticJsonPath}
 - 对齐诊断（诊断位置/尺寸，不替代最终 diff 验收）:
@@ -366,12 +352,12 @@ ${sourceDataContractSection}
 
 ## 校验与停损
 - 空产物比低保真初版更严重：任何时候如果发现自己在同一冲突点上反复权衡，必须停止继续分析，保留/写出当前最佳可运行产物，再用 browser-eval 或 verify 进入修复循环。
-- verify/browser-eval/exportSvgNode 都只能在三件套产物已经非空后执行；结束前必须确认 preview.fragment.html、module.css、manifest.json 已写齐且不是空文件。
+- verify/browser-eval/export_svg_node 都只能在三件套产物已经非空后执行；结束前必须确认 preview.fragment.html、module.css、manifest.json 已写齐且不是空文件。
 - 修复优先级用可观察现象判断，不要给问题贴等级标签：先批量修内容缺失、结构层级错、错误资产、明显重叠、明显布局/裁切错误；文本 width/height 度量差、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差不要反复追。不要每个小改动都 verify。
 - **宿主自动回滚机制**：每次 verify 后，如果 diffRatio 比当前最佳值反弹超过 0.5 个百分点，宿主会自动回滚到上一次最佳版本的文件状态，并终止本轮 agent。你不需要手动恢复文件。因此：如果一轮修改后 verify 结果变差，不要慌张，宿主已帮你回滚；你只需要在下一轮重新分析原因、换一种修复策略即可。
 - **browser-eval 阶段无自动回滚**：browser-eval 只返回坐标信息，不产生 diffRatio，因此不会触发自动回滚。如果你在 browser-eval 后发现关键元素位置偏差很大（如 >5px），可以自行撤销最近的修改（重新写入文件），或者继续调整后再 verify——verify 阶段的自动回滚会保护你。
 - Verify 后诊断与读图对比：先看 verify stdout 的 \`alignmentDiagnostics\` 摘要和 \`alignment-diagnostics.json\` 的 \`positionIssues\`，只批量修复真正会改变结构结果的布局/资产问题。若 positionIssues 为空或只剩文本 width/height、glyph 度量、抗锯齿、字重/字体渲染或 1-2px 边缘偏差，即使 diffRatio 仍高也必须停止猜字体、阴影、z-index、overflow 等无依据参数。只有诊断缺失/报错，或诊断无法解释区域级问题时，再读取 verify stdout 的 \`artifacts.renderPngPath\`（当前 HTML 渲染）和 \`artifacts.svgPngPath\`（原 SVG 参考），列出区域级差异清单后一次性批量修复。**任何情况下都不要读取 artifacts.diffPngPath / diff.png**（像素差异热力图，对定位问题帮助小且极耗 token）。
-- Verify 螺旋停损：每轮 verify 后先看是否还有结构性问题，再一次性批量修复；禁止一次只改一个元素的 1-3px left/top。若同一模块/同一区域相邻两次 verify 的 diffRatio 改善都 < 0.1 个百分点（绝对值降幅 < 0.001），或出现反弹且诊断没有新的结构性问题，保留当前最佳版本停止，转去别处或结束。
+- Verify 螺旋停损：每轮 verify 后先看是否还有结构性问题，再一次性批量修复；禁止一次只改一个元素的 1-3px left/top。若当前最佳 diffRatio 已低于 5%，本轮执行超过 15 分钟，并且相邻两次 verify 的 diffRatio 改善都 < 0.1 个百分点（绝对值降幅 < 0.001），verify stdout 会给出 stopLoss 建议；看到该建议后不要继续微调，保留当前最佳版本停止，转去别处或结束。若出现反弹且诊断没有新的结构性问题，也保留当前最佳版本停止。
 - 低收益小问题停损：当剩余问题只是轻微文本偏移、文本 width/height 度量差、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差时，不论 diffRatio 是否低于 0.05，最多围绕同一问题做一次修复和一次复验；若复验 diffRatio 没有下降至少 0.001，禁止继续实验、查源码、查字体、拆字符、改 font-smoothing/text-rendering 或反复改 DOM 结构，直接保留当前最佳版本并结束。
 
 ## 最小范例（仅示意结构，按实际数据填坐标）

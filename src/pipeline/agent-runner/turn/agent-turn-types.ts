@@ -36,6 +36,7 @@ type AgentVerifyUsageSummary = {
   verifyCount: number
   rollbackCount?: number
   rollbackReasons?: string[]
+  softStopRecommendation?: string
 }
 
 type AgentTokenUsage = {
