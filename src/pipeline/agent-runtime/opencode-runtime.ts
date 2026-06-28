@@ -376,7 +376,7 @@ const createOpencodeConfigFile = async ({
               String(options.deviceScaleFactor ?? 1),
             ],
             enabled: true,
-            timeout: 15000,
+            timeout: 120000,
           },
         },
         tools: {
@@ -867,6 +867,7 @@ class OpencodeThread implements AgentThread {
       cwd: this.options.workingDirectory ?? process.cwd(),
       env: {
         ...process.env,
+        ...this.options.environment,
         OPENCODE_CONFIG: configPath,
       },
       stdio: ["ignore", "pipe", "pipe"],

@@ -1,7 +1,8 @@
 /**
- * Browser-Eval MCP Server
+ * Browser Tools MCP Server
  *
- * 通过 stdio 暴露一个 MCP server，提供 `browser_eval` tool。
+ * 通过 stdio 暴露一个 MCP server，提供 `browser_eval` 和
+ * `export_svg_node` tool。
  * 内部持有常驻 BrowserSession，每个模块一个 tab，按需打开，
  * evaluate 前自动 reload 以反映最新 preview.fragment.html / module.css。
  *
@@ -12,6 +13,7 @@ import process from "node:process";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
+import { exportSvgNodeAsset } from "../cli/export-svg-node-asset.js";
 import { BrowserSession } from "../core/browser-session.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
@@ -35,6 +37,45 @@ const BROWSER_EVAL_TOOL = {
     type: "object",
   },
   name: "browser_eval",
+} as const;
+
+const EXPORT_SVG_NODE_TOOL = {
+  description:
+    "将模块 SVG 中的一个或多个可见节点导出为 PNG，并写入 module-semantic.json 的 generatedAssets。用于复杂非文本视觉、图标、装饰层、图片内容等资产导出；会阻止导出预处理 DOM textBlocks。",
+  inputSchema: {
+    properties: {
+      assetRole: {
+        description: "可选资产角色，例如 visual-asset、photo-or-bitmap、icon-or-illustration",
+        type: "string",
+      },
+      moduleDir: {
+        description: "模块目录的绝对路径",
+        type: "string",
+      },
+      nodeIds: {
+        description:
+          "module-semantic.json 中的 SVG 节点 id。传多个 id 会合并导出成一张 PNG",
+        items: { type: "string" },
+        type: "array",
+      },
+      output: {
+        description: "模块目录内的输出路径，例如 assets/icon-a.png",
+        type: "string",
+      },
+      padding: {
+        default: 0,
+        description: "导出裁切框四周额外 padding，单位 px",
+        type: "number",
+      },
+      textTreatment: {
+        description: "可选文本处理说明；通常不需要传",
+        type: "string",
+      },
+    },
+    required: ["moduleDir", "nodeIds", "output"],
+    type: "object",
+  },
+  name: "export_svg_node",
 } as const;
 
 const parseScaleArg = (args: string[]): number => {
@@ -147,7 +188,11 @@ class McpServer {
     }
 
     if (method === "tools/list") {
-      this.write(makeJsonRpcResponse(id, { tools: [BROWSER_EVAL_TOOL] }));
+      this.write(
+        makeJsonRpcResponse(id, {
+          tools: [BROWSER_EVAL_TOOL, EXPORT_SVG_NODE_TOOL],
+        }),
+      );
       return;
     }
 
@@ -162,6 +207,23 @@ class McpServer {
   }
 
   private async handleToolCall(
+    id: unknown,
+    params: Record<string, unknown>,
+  ) {
+    const toolName =
+      typeof params.name === "string" ? params.name : "browser_eval";
+    if (toolName === "browser_eval") {
+      await this.handleBrowserEvalToolCall(id, params);
+      return;
+    }
+    if (toolName === "export_svg_node") {
+      await this.handleExportSvgNodeToolCall(id, params);
+      return;
+    }
+    this.write(makeJsonRpcError(id, -32601, `Unknown tool: ${toolName}`));
+  }
+
+  private async handleBrowserEvalToolCall(
     id: unknown,
     params: Record<string, unknown>,
   ) {
@@ -211,6 +273,108 @@ class McpServer {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logDebug(`tool call failed: ${message}`);
+      this.write(
+        makeJsonRpcError(id, -32603, `Tool execution failed: ${message}`),
+      );
+    }
+  }
+
+  private async handleExportSvgNodeToolCall(
+    id: unknown,
+    params: Record<string, unknown>,
+  ) {
+    try {
+      const args = params.arguments as Record<string, unknown> | undefined;
+      const moduleDir =
+        typeof args?.moduleDir === "string"
+          ? args.moduleDir
+          : typeof params.moduleDir === "string"
+            ? params.moduleDir
+            : undefined;
+      const nodeIdsRaw = Array.isArray(args?.nodeIds)
+        ? args.nodeIds
+        : Array.isArray(params.nodeIds)
+          ? params.nodeIds
+          : undefined;
+      const output =
+        typeof args?.output === "string"
+          ? args.output
+          : typeof params.output === "string"
+            ? params.output
+            : undefined;
+      const paddingRaw =
+        typeof args?.padding === "number" || typeof args?.padding === "string"
+          ? args.padding
+          : typeof params.padding === "number" || typeof params.padding === "string"
+            ? params.padding
+            : undefined;
+      const assetRole =
+        typeof args?.assetRole === "string"
+          ? args.assetRole
+          : typeof params.assetRole === "string"
+            ? params.assetRole
+            : undefined;
+      const textTreatment =
+        typeof args?.textTreatment === "string"
+          ? args.textTreatment
+          : typeof params.textTreatment === "string"
+            ? params.textTreatment
+            : undefined;
+
+      const nodeIds = (nodeIdsRaw ?? [])
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+      const padding = paddingRaw === undefined ? 0 : Number(paddingRaw);
+
+      if (!moduleDir || nodeIds.length === 0 || !output) {
+        this.write(
+          makeJsonRpcError(
+            id,
+            -32602,
+            "Missing required arguments: moduleDir, nodeIds, and output",
+          ),
+        );
+        return;
+      }
+      if (!Number.isFinite(padding) || padding < 0) {
+        this.write(
+          makeJsonRpcError(
+            id,
+            -32602,
+            "Invalid padding: expected a non-negative number",
+          ),
+        );
+        return;
+      }
+
+      const result = await exportSvgNodeAsset({
+        allowText: false,
+        assetRole,
+        elementIndex: undefined,
+        help: false,
+        moduleDir,
+        moduleSvg: "module.svg",
+        nodeIds,
+        output,
+        padding,
+        registerSemantic: true,
+        scale: this.deviceScaleFactor,
+        selector: undefined,
+        textTreatment,
+      });
+
+      this.write(
+        makeJsonRpcResponse(id, {
+          content: [
+            { text: JSON.stringify(result, null, 2), type: "text" },
+          ],
+          isError: false,
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logDebug(`export_svg_node failed: ${message}`);
       this.write(
         makeJsonRpcError(id, -32603, `Tool execution failed: ${message}`),
       );

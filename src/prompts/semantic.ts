@@ -1,11 +1,11 @@
-const EXPORT_SVG_NODE_COMMAND_TEMPLATE =
-  "pnpm --dir <repo> exec tsx src/cli/export-svg-node-asset.ts --module-dir <module-dir> --node-id <node-id> [--node-id <node-id> ...] --output assets/<name>.png --register-semantic --padding 0 --scale";
+const EXPORT_SVG_NODE_TOOL_TEMPLATE =
+  'export_svg_node({ moduleDir: "<module-dir>", nodeIds: ["<node-id>"], output: "assets/<name>.png", padding: 0 })';
 
 const SEMANTIC_READ_POLICY = [
   "按 inputContract.focusOrder 阅读。",
   "textBlocks 是 DOM 文本主依据，layoutTargetRegion 是首选文本容器框。",
   "generatedAssets 只记录 agent 已经按需导出的资产，模块开始时可以为空；不要假设语义预处理已预导出视觉资源。",
-  "视觉样式默认尽量图片化；agent 应从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断需要导出的节点，并通过 guidance.exportSvgNodeCommand 按需导出。",
+  "视觉样式默认尽量图片化；agent 应从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断需要导出的节点，并通过 guidance.exportSvgNodeTool 按需导出。",
   "nodes[].visualEffects 若存在，是由 SVG filter 解析出的轻量视觉提示，可辅助判断简单边缘阴影、分隔线等效果；edge/edges 表示效果靠近的边，仍需结合节点几何和截图判断实现方式。",
   "nodes/svgNodeAssets 用于分组、覆盖关系、相对位置和按需导出判断，不要逐节点翻译成 HTML。",
 ].join("\n");
@@ -14,7 +14,7 @@ const LAYOUT_TARGET_RULE =
   "textBlocks[].layoutTargetRegion 是宿主优先推荐的 DOM 文本容器框；textRegion 仅作为合理性检查。";
 
 const INPUT_CONTRACT_INSTRUCTION = [
-  "使用 textBlocks/textResources 还原 DOM 文本；textBlocks/textResources 未覆盖的内容不得以截图或资产为依据自行识别为 DOM 文本。generatedAssets 可能为空，非文本视觉样式应由 agent 基于截图和 nodes 自主判断，并通过 guidance.exportSvgNodeCommand 按需导出。",
+  "使用 textBlocks/textResources 还原 DOM 文本；textBlocks/textResources 未覆盖的内容不得以截图或资产为依据自行识别为 DOM 文本。generatedAssets 可能为空，非文本视觉样式应由 agent 基于截图和 nodes 自主判断，并通过 guidance.exportSvgNodeTool 按需导出。",
   "先根据模块职责组织语义 DOM；存在重复/连续/同构内容时，优先还原为统一父容器和可复用 item/card/tab/token 结构。",
   "若两个可见节点明显重叠，可将更大的 inspectIndex 视为更靠上；证据不足时，优先保持语义结构正确和布局稳定。",
 ].join("\n");
@@ -153,7 +153,7 @@ ${nodeFacts}
 
 export {
   buildVisionPrompt,
-  EXPORT_SVG_NODE_COMMAND_TEMPLATE,
+  EXPORT_SVG_NODE_TOOL_TEMPLATE,
   SEMANTIC_READ_POLICY,
   LAYOUT_TARGET_RULE,
   INPUT_CONTRACT_INSTRUCTION,

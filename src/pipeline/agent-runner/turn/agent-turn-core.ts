@@ -12,6 +12,11 @@ import {
 import { logThreadEvent } from './agent-turn-events.js'
 import { isAbortError } from '../session/run-control.js'
 import { backupBestFiles, restoreBestFiles } from './rollback-utils.js'
+import {
+  buildVerifyStopLossRecommendation,
+  type VerifyStopLossSample,
+  writeVerifyStopLossState,
+} from './verify-stop-loss.js'
 
 import type {
   AgentCommandKind,
@@ -176,6 +181,8 @@ export async function runAgentTurnCore(
   let earlyStopReason: string | undefined
   let rollbackCount = 0
   let rollbackReasons: string[] = []
+  let softStopRecommendation: string | undefined
+  const verifySamples: VerifyStopLossSample[] = []
 
   const commandStartTimes = new Map<string, number>()
   const turnStartedAt = Date.now()
@@ -201,6 +208,22 @@ export async function runAgentTurnCore(
       )
     }
   }
+
+  const writeStopLossState = async () => {
+    if (!input.rollbackBackupRoot) return
+    await writeVerifyStopLossState({
+      moduleDir: input.rollbackBackupRoot,
+      samples: verifySamples,
+      turnStartedAt,
+    }).catch((error) => {
+      sessionStore.addLog(
+        sessionId,
+        `[agent:verify-stop-loss] failed to write state: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    })
+  }
+
+  await writeStopLossState()
 
   try {
     for await (const event of streamedTurn.events) {
@@ -257,6 +280,8 @@ export async function runAgentTurnCore(
           if (isVerifyCommandKind(commandKind)) {
             verifyRunCount++
             if (diffRatio !== undefined) {
+              verifySamples.push({ diffRatio, round: internalRound })
+              await writeStopLossState()
               const degraded =
                 bestVerifyDiffRatio !== undefined &&
                 diffRatio > bestVerifyDiffRatio + AGENT_VERIFY_ROLLBACK_THRESHOLD
@@ -295,6 +320,21 @@ export async function runAgentTurnCore(
                       )
                     }
                   }
+                }
+              }
+
+              if (!softStopRecommendation) {
+                const recommendation = buildVerifyStopLossRecommendation({
+                  now: Date.now(),
+                  samples: verifySamples,
+                  turnStartedAt,
+                })
+                if (recommendation) {
+                  softStopRecommendation = recommendation.message
+                  sessionStore.addLog(
+                    sessionId,
+                    `[agent:verify-stop-loss] ${recommendation.message}`,
+                  )
                 }
               }
             }
@@ -452,6 +492,7 @@ export async function runAgentTurnCore(
       verifyCount: verifyRunCount,
       rollbackCount,
       rollbackReasons,
+      softStopRecommendation,
     },
   }
 

@@ -70,6 +70,7 @@ type ThreadOptions = {
   additionalDirectories?: string[];
   approvalPolicy?: string;
   deviceScaleFactor?: number;
+  environment?: Record<string, string | undefined>;
   model?: string;
   modelReasoningEffort?: string;
   networkAccessEnabled?: boolean;

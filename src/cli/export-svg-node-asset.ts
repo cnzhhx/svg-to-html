@@ -50,6 +50,41 @@ type ExportResult =
       ok: false;
     };
 
+const isFailedExportResult = (
+  result: ExportResult,
+): result is Extract<ExportResult, { ok: false }> => result.ok === false;
+
+type ExportSvgNodeAssetCommandResult = {
+  captureScale: number;
+  clip: Clip;
+  manifestEntry: ReturnType<typeof createGeneratedAssetManifestEntry>;
+  moduleSvgPath: string;
+  outputPath: string;
+  outputRef: string;
+  padding: number;
+  rasterScaleMultiplier: number;
+  registeredAsset?: ModuleSemanticGeneratedAsset;
+  renderedBox: Clip;
+  renderedClip: Clip;
+  renderedPixelBox: Clip;
+  rootSize: {
+    height: number;
+    width: number;
+  };
+  scale: number;
+  selected: Array<{
+    index: number;
+    nodeId?: string;
+    nodePath?: string;
+    tag: string;
+  }>;
+  transparentBackground: true;
+  viewportSize: {
+    height: number;
+    width: number;
+  };
+};
+
 type SelectedSemanticNode = ModuleSemanticNode & {
   inspectIndex: number;
 };
@@ -888,13 +923,9 @@ const registerGeneratedAsset = async ({
   return registeredAsset;
 };
 
-const main = async () => {
-  const args = parseExportSvgNodeAssetArgs(process.argv.slice(2));
-  if (args.help) {
-    console.log(getExportSvgNodeAssetUsage());
-    return;
-  }
-
+const exportSvgNodeAsset = async (
+  args: ExportSvgNodeAssetArgs,
+): Promise<ExportSvgNodeAssetCommandResult> => {
   if (!args.output) throw new Error("Missing required --output");
 
   const moduleDir = path.resolve(args.moduleDir);
@@ -989,8 +1020,11 @@ const main = async () => {
       viewportWidth: viewportDimensions.width,
     });
 
-    if (!result?.ok) {
-      throw new Error(result?.error ?? "Failed to prepare SVG node export");
+    if (!result) {
+      throw new Error("Failed to prepare SVG node export");
+    }
+    if (isFailedExportResult(result)) {
+      throw new Error(result.error);
     }
 
     await capturePage({
@@ -1040,43 +1074,58 @@ const main = async () => {
         })
       : undefined;
 
-    console.log(
-      JSON.stringify(
-        {
-          clip: result.clip,
-          moduleSvgPath,
-          outputPath,
-          outputRef,
-          padding: args.padding,
-          captureScale,
-          rasterScaleMultiplier: PNG_RASTER_SCALE_MULTIPLIER,
-          renderedClip: scaleClip(result.clip, captureScale),
-          renderedBox: result.renderedBox,
-          renderedPixelBox: scaleClip(result.renderedBox, captureScale),
-          rootSize: result.rootSize,
-          viewportSize: viewportDimensions,
-          scale: args.scale,
-          selected: result.selected.map((entry) => ({
-            index: entry.index,
-            nodeId: selectedByIndex.get(entry.index)?.id,
-            nodePath: selectedByIndex.get(entry.index)?.nodePath,
-            tag: entry.tag,
-          })),
-          manifestEntry,
-          registeredAsset,
-          transparentBackground: true,
-        },
-        null,
-        2,
-      ),
-    );
+    return {
+      captureScale,
+      clip: result.clip,
+      manifestEntry,
+      moduleSvgPath,
+      outputPath,
+      outputRef,
+      padding: args.padding,
+      rasterScaleMultiplier: PNG_RASTER_SCALE_MULTIPLIER,
+      renderedClip: scaleClip(result.clip, captureScale),
+      renderedBox: result.renderedBox,
+      renderedPixelBox: scaleClip(result.renderedBox, captureScale),
+      rootSize: result.rootSize,
+      viewportSize: viewportDimensions,
+      scale: args.scale,
+      selected: result.selected.map((entry) => ({
+        index: entry.index,
+        nodeId: selectedByIndex.get(entry.index)?.id,
+        nodePath: selectedByIndex.get(entry.index)?.nodePath,
+        tag: entry.tag,
+      })),
+      ...(registeredAsset ? { registeredAsset } : {}),
+      transparentBackground: true,
+    };
   } finally {
     await browser.close();
     await rm(wrapperDir, { force: true, recursive: true });
   }
 };
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+const isDirectRun = () => {
+  const entryPath = process.argv[1];
+  if (!entryPath) return false;
+  return import.meta.url === pathToFileURL(path.resolve(entryPath)).href;
+};
+
+const main = async () => {
+  const args = parseExportSvgNodeAssetArgs(process.argv.slice(2));
+  if (args.help) {
+    console.log(getExportSvgNodeAssetUsage());
+    return;
+  }
+
+  console.log(JSON.stringify(await exportSvgNodeAsset(args), null, 2));
+};
+
+if (isDirectRun()) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
+
+export { exportSvgNodeAsset };
+export type { Clip, ExportSvgNodeAssetCommandResult };

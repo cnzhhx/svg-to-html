@@ -23,7 +23,7 @@ import {
   type ModuleSemanticVisualEffect,
 } from "./module-semantic.js";
 import {
-  EXPORT_SVG_NODE_COMMAND_TEMPLATE,
+  EXPORT_SVG_NODE_TOOL_TEMPLATE,
   INPUT_CONTRACT_INSTRUCTION,
   SEMANTIC_READ_POLICY,
   LAYOUT_TARGET_RULE,
@@ -1166,7 +1166,7 @@ const writeModuleSemanticPayload = async ({
     summaryStats,
     graphicAssets: assetSummary,
     guidance: {
-      exportSvgNodeCommand: `${EXPORT_SVG_NODE_COMMAND_TEMPLATE} ${scale}`,
+      exportSvgNodeTool: EXPORT_SVG_NODE_TOOL_TEMPLATE,
       readPolicy: SEMANTIC_READ_POLICY,
       layoutTargetRule: LAYOUT_TARGET_RULE,
     },

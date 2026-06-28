@@ -11,6 +11,12 @@ import {
   parseCliFlags,
   resolveRequiredPath,
 } from './cli-utils.js'
+import {
+  buildVerifyStopLossRecommendation,
+  parseVerifyStopLossHistory,
+  parseVerifyStopLossTurnStartedAt,
+  readVerifyStopLossState,
+} from '../pipeline/agent-runner/turn/verify-stop-loss.js'
 
 const VALUE_FLAGS = new Set([
   '--module-dir',
@@ -157,6 +163,18 @@ const main = async () => {
     .catch((error) => ({
       error: error instanceof Error ? error.message : String(error),
     }))
+  const stopLossState = await readVerifyStopLossState(moduleDir)
+  const stopLossRecommendation = buildVerifyStopLossRecommendation({
+    now: Date.now(),
+    samples: [
+      ...(stopLossState?.samples ?? []),
+      ...parseVerifyStopLossHistory(process.env['AGENT_VERIFY_DIFF_HISTORY']),
+      { diffRatio: result.diffRatio, round: Number.isFinite(args.round) ? args.round : 0 },
+    ],
+    turnStartedAt:
+      stopLossState?.turnStartedAt ??
+      parseVerifyStopLossTurnStartedAt(process.env['AGENT_TURN_STARTED_AT']),
+  })
 
   console.log(
     JSON.stringify({
@@ -174,6 +192,7 @@ const main = async () => {
       previewHtmlPath: result.previewHtmlPath,
       renderPngPath: result.renderPngPath,
       svgPngPath: result.svgPngPath,
+      ...(stopLossRecommendation ? { stopLossRecommendation } : {}),
     }),
   )
 }
