@@ -23,8 +23,8 @@ import {
 } from "./module-semantic.js";
 import type {
   SvgVerticalModule,
-  SvgVerticalModuleReport,
 } from "../../../core/svg-vertical-modules/types.js";
+import type { ModulePlan } from "../../module-merge/types.js";
 import {
   buildAgentUnitPrompt,
   buildAgentUnitFollowupBasePrompt,
@@ -40,7 +40,7 @@ type AgentUnitInput = {
   design: ResolvedDesignTarget;
   workingDir: string; // 该模块的独立工作目录 modules/<id>/
   artifactDir: string;
-  modulePlan: SvgVerticalModuleReport;
+  modulePlan: ModulePlan;
   reasoningEffort: AgentReasoningEffort;
   sessionId: string;
   controller: AbortController;
@@ -428,7 +428,7 @@ const verifyAfterSanitizeIfNeeded = async ({
   controller: AbortController;
   design: ResolvedDesignTarget;
   module: SvgVerticalModule;
-  modulePlan: SvgVerticalModuleReport;
+  modulePlan: ModulePlan;
   moduleSvgPath: string;
   outputFormat: ReturnType<typeof resolveModuleOutputFormat>;
   round: number;

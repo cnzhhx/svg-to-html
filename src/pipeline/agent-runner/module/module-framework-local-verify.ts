@@ -1,10 +1,11 @@
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
-import react from "@vitejs/plugin-react";
-import vue from "@vitejs/plugin-vue";
-import { build } from "vite";
-
+import {
+  buildFrameworkProject,
+  writeFrameworkEntryFiles,
+  type FrameworkFormat,
+} from "../../../core/framework-build.js";
 import { isRecord } from "../../../core/type-guards.js";
 import { writeTextFile } from "../../../core/file-io.js";
 import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types.js";
@@ -197,7 +198,7 @@ export const verifyModuleFrameworkLocal = async ({
   round: number;
   signal?: AbortSignal;
 }): Promise<ModuleFrameworkLocalVerifyResult | null> => {
-  const frameworkFormat = outputFormat ?? null;
+  const frameworkFormat: FrameworkFormat | null = outputFormat ?? null;
   if (!frameworkFormat) return null;
 
   const artifactDir = getFrameworkVerifyArtifactDir(moduleDir, round);
@@ -238,7 +239,6 @@ export const verifyModuleFrameworkLocal = async ({
   const srcDir = path.join(entryDir, "src");
   const distDir = path.join(entryDir, "dist");
   await rm(artifactDir, { force: true, recursive: true });
-  await mkdir(srcDir, { recursive: true });
 
   const semanticAssetRefs = (allowedAssetsRaw ?? [])
     .flatMap((asset) => [
@@ -291,32 +291,6 @@ export const verifyModuleFrameworkLocal = async ({
           value: sourceData,
         });
 
-  const mountId = frameworkFormat === "vue" ? "app" : "root";
-  const indexHtml = `<!DOCTYPE html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=${module.region.width}, initial-scale=1.0" />
-    <title>${module.id}</title>
-    <style>
-      html, body, #${mountId} {
-        margin: 0;
-        width: ${module.region.width}px;
-        height: ${module.region.height}px;
-        overflow: hidden;
-        background: transparent;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="${mountId}"></div>
-    <script type="module" src="/src/main.${frameworkFormat === "vue" ? "ts" : "tsx"}"></script>
-  </body>
-</html>
-`;
-
-  await writeTextFile(path.join(entryDir, "index.html"), indexHtml);
-
   if (frameworkFormat === "vue") {
     const vueSource = await buildVueModuleEntry({
       moduleCss: rewrittenCss,
@@ -326,10 +300,6 @@ export const verifyModuleFrameworkLocal = async ({
       sourceFragment: rewrittenSourceFragment,
     });
     await writeTextFile(path.join(srcDir, "Module.vue"), vueSource);
-    await writeTextFile(
-      path.join(srcDir, "main.ts"),
-      `import { createApp } from "vue";\nimport Module from "./Module.vue";\n\ncreateApp(Module).mount("#app");\n`,
-    );
   } else {
     const { jsx, moduleCss } = await buildReactModuleEntry({
       moduleCss: rewrittenCss,
@@ -340,28 +310,28 @@ export const verifyModuleFrameworkLocal = async ({
     });
     await writeTextFile(path.join(srcDir, "Module.tsx"), jsx);
     await writeTextFile(path.join(srcDir, "Module.css"), moduleCss);
-    await writeTextFile(
-      path.join(srcDir, "main.tsx"),
-      `import React from "react";\nimport { createRoot } from "react-dom/client";\nimport Module from "./Module.tsx";\nimport "./Module.css";\n\ncreateRoot(document.getElementById("root")!).render(<Module />);\n`,
-    );
   }
 
+  await writeFrameworkEntryFiles({
+    designName: module.id,
+    entryDir,
+    format: frameworkFormat,
+    height: module.region.height,
+    sourceEntryPath: path.join(
+      srcDir,
+      `Module.${frameworkFormat === "vue" ? "vue" : "tsx"}`,
+    ),
+    sourceStylePath:
+      frameworkFormat === "react" ? path.join(srcDir, "Module.css") : undefined,
+    srcDir,
+    width: module.region.width,
+  });
+
   try {
-    await build({
-      base: "./",
-      build: {
-        assetsInlineLimit: 0,
-        assetsDir: "assets",
-        emptyOutDir: true,
-        outDir: distDir,
-      },
-      configFile: false,
-      logLevel: "warn",
-      plugins: frameworkFormat === "vue" ? [vue()] : [react()],
-      resolve: {
-        alias: [],
-      },
-      root: entryDir,
+    await buildFrameworkProject({
+      distDir,
+      entryDir,
+      format: frameworkFormat,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

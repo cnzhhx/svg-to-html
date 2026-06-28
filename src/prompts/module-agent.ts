@@ -2,22 +2,20 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 
 import type { ResolvedDesignTarget } from "../core/design-resolve.js";
-import type {
-  SvgVerticalModule,
-  SvgVerticalModuleReport,
-} from "../core/svg-vertical-modules/types.js";
+import type { SvgVerticalModule } from "../core/svg-vertical-modules/types.js";
 import {
   getSourceFragmentFileName,
   normalizeOutputFormat,
   type OutputFormat,
 } from "../core/output-target.js";
+import type { ModulePlan } from "../pipeline/module-merge/types.js";
 
 const resolveModuleOutputFormat = ({
   design,
   modulePlan,
 }: {
   design: ResolvedDesignTarget;
-  modulePlan: SvgVerticalModuleReport;
+  modulePlan: ModulePlan;
 }) =>
   normalizeOutputFormat(
     (modulePlan as { outputFormat?: unknown }).outputFormat ??
@@ -108,7 +106,7 @@ const buildOptionalReferenceUsageLines = (workingDir: string) => {
 function buildAgentUnitFollowupBasePrompt(input: {
   module: SvgVerticalModule;
   design: ResolvedDesignTarget;
-  modulePlan: SvgVerticalModuleReport;
+  modulePlan: ModulePlan;
   workingDir: string;
   round: number;
 }): string {
@@ -174,7 +172,7 @@ ${inputPathList}
 function buildAgentUnitPrompt(input: {
   module: SvgVerticalModule;
   design: ResolvedDesignTarget;
-  modulePlan: SvgVerticalModuleReport;
+  modulePlan: ModulePlan;
   workingDir: string;
 }): string {
   const {

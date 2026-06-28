@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "build:mcp": "node scripts/build-mcp.mjs",
+    "check": "pnpm run lint:types && pnpm test && pnpm run build:mcp",
     "doctor": "node scripts/doctor.mjs",
     "lint:types": "tsc --noEmit",
     "start": "tsx src/server.ts",
+    "test": "tsx --test tests/unit/**/*.test.ts",
     "task:generate": "tsx src/cli/generate-design.ts",
     "task:resolve-container-layout": "tsx src/cli/resolve-container-layout.ts",
     "task:split-svg-modules": "tsx src/cli/split-svg-modules.ts",
