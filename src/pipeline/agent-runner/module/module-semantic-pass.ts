@@ -1,10 +1,9 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { inflateSync } from "node:zlib";
 
 import {
   PNG_RASTER_SCALE_MULTIPLIER,
@@ -12,7 +11,7 @@ import {
 } from "../../../config/index.js";
 import { capturePage, launchEdge } from "../../../core/cdp.js";
 import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types.js";
-import { type Box, intersectionArea, areaOf } from "../../../core/geometry.js";
+import type { Box } from "../../../core/geometry.js";
 import { runVisionLlm } from "../../llm-client.js";
 import { sessionStore } from "../../../session-store.js";
 import { Semaphore } from "../queue/concurrency.js";
@@ -30,6 +29,30 @@ import {
   buildVisionPrompt,
   type SemanticProbeSheetCell,
 } from "../../../prompts/semantic.js";
+import {
+  readPaintLuminance,
+  textColorFromNodePaint,
+} from "./module-semantic-paint.js";
+import {
+  normalizeVisionNodeSemantic,
+  stripJsonMarkdown,
+  type VisionNodeSemantic,
+} from "./module-semantic-vision-normalize.js";
+import {
+  applyTextEffectLayerSemantics,
+  detectTextEffectLayerGroups,
+} from "./module-semantic-text-effects.js";
+import {
+  deduplicateProbeNodes,
+  hasIntrinsicVisualPresence,
+  toProbeNode,
+  type SemanticProbeNode,
+} from "./module-semantic-probes.js";
+import {
+  readPngAlphaStats,
+  type PngAlphaStats,
+} from "./module-semantic-png.js";
+import { buildDeterministicSemantic } from "./module-semantic-deterministic.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -67,20 +90,6 @@ type ModuleElementAnalysisResult = {
   skipIndices: number[];
 };
 
-type SemanticProbeNode = ModuleSemanticNode & {
-  bbox: Box;
-  selector: string;
-};
-
-type VisionNodeSemantic = {
-  isPureText?: boolean;
-  id?: string;
-  text?: string;
-  lineCount?: number;
-  contentType?: string;
-  visualLines?: string[];
-};
-
 type ProbeArtifact = {
   node: SemanticProbeNode;
   outputPath: string;
@@ -92,18 +101,11 @@ type ProbeImageResult = {
   transparentNodeIds: string[];
 };
 
-type PngAlphaStats = {
-  averageLuminance?: number;
-  hasAlpha: boolean;
-  visiblePixelCount: number;
-};
-
 type ProbePreviewBackground = "dark" | "light";
 
 const MODULE_ELEMENT_ANALYSIS_VERSION = 3;
 const ANALYSIS_BATCH_SIZES = [6, 4, 2] as const;
 const PROBE_PADDING = 0;
-const PROBE_ALPHA_VISIBLE_THRESHOLD = 10;
 const SHEET_OUTER_PADDING = 16;
 const SHEET_GAP = 12;
 const CELL_INNER_PADDING = 8;
@@ -114,169 +116,12 @@ const SEMANTIC_PROBE_SCALE_MULTIPLIER = 2;
 const RECHECK_BATCH_SIZE = 4;
 const MAX_TEXT_RECHECK_CANDIDATES = 12;
 
-const MISSING_TEXT_RECHECK_NOTE =
-  "Vision output looked text-like but omitted readable text; downgraded until recheck resolves it.";
-const CONTAINER_VISUAL_TAGS = new Set(["a", "g", "svg", "switch", "symbol"]);
-const VISUAL_CONTEXT_REFERENCE_ATTRS = [
-  "clip-path",
-  "filter",
-  "mask",
-] as const;
-
-const IGNORED_TAGS = new Set([
-  "clipPath",
-  "defs",
-  "desc",
-  "filter",
-  "linearGradient",
-  "marker",
-  "mask",
-  "metadata",
-  "pattern",
-  "radialGradient",
-  "stop",
-  "style",
-  "symbol",
-  "title",
-].map((tag) => tag.toLowerCase()));
-
-const JSON_MARKDOWN_RE = /^```(?:json)?\s*|\s*```$/gi;
-
 const toBboxArray = (box: Box): [number, number, number, number] => [
   box.x,
   box.y,
   box.width,
   box.height,
 ];
-
-const stripJsonMarkdown = (raw: string) => {
-  let content = raw.trim();
-  // Strip <think>...</think> tags (reasoning content from some models)
-  content = content.replace(/<think>.*?<\/think>/gs, "");
-  content = content.replace(/<think>/g, "");
-  content = content.replace(/<\/think>/g, "");
-  content = content.trim();
-  content = content.replace(JSON_MARKDOWN_RE, "");
-  const arrayStart = content.indexOf("[");
-  const arrayEnd = content.lastIndexOf("]");
-  if (arrayStart >= 0 && arrayEnd > arrayStart) {
-    return content.slice(arrayStart, arrayEnd + 1);
-  }
-  return content;
-};
-
-const parseNumericAttr = (value: string | undefined) => {
-  if (!value) return undefined;
-  const parsed = Number(value.trim());
-  return Number.isFinite(parsed) ? parsed : undefined;
-};
-
-const isExplicitPaint = (value: string | undefined) => {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return (
-    normalized.length > 0 &&
-    normalized !== "none" &&
-    normalized !== "transparent" &&
-    !normalized.startsWith("url(")
-  );
-};
-
-const formatAlpha = (value: number) =>
-  Number(value.toFixed(3)).toString();
-
-const applyPaintOpacity = (
-  paint: string,
-  opacity: number | undefined,
-) => {
-  if (opacity === undefined || opacity >= 0.999) return paint;
-  if (opacity <= 0.001) return "rgba(0, 0, 0, 0)";
-  const normalized = paint.trim();
-  const alpha = formatAlpha(opacity);
-
-  const hex = normalized.match(
-    /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i,
-  );
-  if (hex) {
-    const raw = hex[1]!;
-    const expand = (value: string) =>
-      value.length === 1 ? `${value}${value}` : value;
-    const r = Number.parseInt(
-      raw.length <= 4 ? expand(raw[0]!) : raw.slice(0, 2),
-      16,
-    );
-    const g = Number.parseInt(
-      raw.length <= 4 ? expand(raw[1]!) : raw.slice(2, 4),
-      16,
-    );
-    const b = Number.parseInt(
-      raw.length <= 4 ? expand(raw[2]!) : raw.slice(4, 6),
-      16,
-    );
-    const embeddedAlpha =
-      raw.length === 4
-        ? Number.parseInt(expand(raw[3]!), 16) / 255
-        : raw.length === 8
-          ? Number.parseInt(raw.slice(6, 8), 16) / 255
-          : 1;
-    return `rgba(${r}, ${g}, ${b}, ${formatAlpha(embeddedAlpha * opacity)})`;
-  }
-
-  const rgb = normalized.match(
-    /^rgb\(\s*([^)]+)\s*\)$/i,
-  );
-  if (rgb) return `rgba(${rgb[1]}, ${alpha})`;
-
-  return paint;
-};
-
-const textColorFromNodePaint = (node: ModuleSemanticNode) => {
-  if (!isExplicitPaint(node.attrs.fill)) return undefined;
-  const fillOpacity = parseNumericAttr(node.attrs["fill-opacity"]) ?? 1;
-  const opacity = parseNumericAttr(node.attrs.opacity) ?? 1;
-  return applyPaintOpacity(node.attrs.fill!.trim(), fillOpacity * opacity);
-};
-
-const isTransparentPaint = (value: string | undefined) => {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || normalized === "none" || normalized === "transparent") {
-    return true;
-  }
-  const rgba = normalized.match(
-    /^rgba\(\s*[^,]+\s*,\s*[^,]+\s*,\s*[^,]+\s*,\s*([^)]+)\s*\)$/,
-  );
-  if (rgba) {
-    const alpha = Number(rgba[1]);
-    return Number.isFinite(alpha) && alpha <= 0.05;
-  }
-  const hexAlpha = normalized.match(/^#(?:[0-9a-f]{4}|[0-9a-f]{8})$/i);
-  if (hexAlpha) {
-    const alphaHex = normalized.length === 5 ? normalized.slice(4, 5).repeat(2) : normalized.slice(7, 9);
-    const alpha = Number.parseInt(alphaHex, 16) / 255;
-    return Number.isFinite(alpha) && alpha <= 0.05;
-  }
-  return false;
-};
-
-const isPureTransparentNode = (node: ModuleSemanticNode) => {
-  const opacity = parseNumericAttr(node.attrs.opacity);
-  if (opacity !== undefined && opacity <= 0.05) return true;
-  if (node.attrs.display?.trim().toLowerCase() === "none") return true;
-  if (node.attrs.visibility?.trim().toLowerCase() === "hidden") return true;
-  if (node.tag === "text" || node.tag === "tspan" || node.tag === "image") {
-    return false;
-  }
-
-  const fillTransparent =
-    isTransparentPaint(node.attrs.fill) ||
-    (parseNumericAttr(node.attrs["fill-opacity"]) ?? 1) <= 0.05;
-  const strokeTransparent =
-    isTransparentPaint(node.attrs.stroke) ||
-    (parseNumericAttr(node.attrs["stroke-opacity"]) ?? 1) <= 0.05;
-
-  return fillTransparent && strokeTransparent;
-};
 
 type SheetRenderVariant = "primary" | "recheck";
 
@@ -291,47 +136,6 @@ type SheetCellLayout = SemanticProbeSheetCell & {
   width: number;
   x: number;
   y: number;
-};
-
-const parseHexPaintLuminance = (value: string) => {
-  const normalized = value.trim().replace(/^#/, "");
-  const hex =
-    normalized.length === 3
-      ? normalized
-          .split("")
-          .map((char) => `${char}${char}`)
-          .join("")
-      : normalized.length === 6
-        ? normalized
-        : "";
-  if (!hex) return undefined;
-  const red = Number.parseInt(hex.slice(0, 2), 16);
-  const green = Number.parseInt(hex.slice(2, 4), 16);
-  const blue = Number.parseInt(hex.slice(4, 6), 16);
-  if (![red, green, blue].every(Number.isFinite)) return undefined;
-  return (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255;
-};
-
-const parseRgbPaintLuminance = (value: string) => {
-  const match = value
-    .trim()
-    .match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*[\d.]+\s*)?\)$/i);
-  if (!match) return undefined;
-  const red = Number(match[1]);
-  const green = Number(match[2]);
-  const blue = Number(match[3]);
-  if (![red, green, blue].every(Number.isFinite)) return undefined;
-  return (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255;
-};
-
-const readPaintLuminance = (value: string | undefined) => {
-  const token = value?.trim().toLowerCase();
-  if (!token || token === "none" || token === "transparent") return undefined;
-  if (token === "white") return 1;
-  if (token === "black") return 0;
-  if (token.startsWith("#")) return parseHexPaintLuminance(token);
-  if (token.startsWith("rgb")) return parseRgbPaintLuminance(token);
-  return undefined;
 };
 
 const getProbeFrameSize = (probe: ProbeArtifact) => {
@@ -636,478 +440,6 @@ const roundBox = (box: Box): Box => ({
   y: Number(box.y.toFixed(3)),
 });
 
-const VALID_CONTENT_TYPES = new Set([
-  "cover",
-  "photo",
-  "icon",
-  "badge",
-  "avatar",
-  "background",
-  "decoration",
-  "unknown",
-]);
-
-const normalizeInlineText = (value: string) =>
-  value.replace(/\s+/g, " ").trim();
-
-const normalizeDomText = (value: string) =>
-  value
-    .split(/\r?\n/)
-    .map((line) => normalizeInlineText(line))
-    .filter((line) => line.length > 0)
-    .join("\n");
-
-const normalizeVisualLineText = (value: unknown) =>
-  typeof value === "string" ? normalizeInlineText(value) : undefined;
-
-const readVisionVisualLines = (
-  input: VisionNodeSemantic,
-): string[] => {
-  if (!Array.isArray(input.visualLines)) return [];
-  return input.visualLines.flatMap((line) => {
-    const text = normalizeVisualLineText(line);
-    return text ? [text] : [];
-  });
-};
-
-const mergeVisualLinesForDomText = ({
-  fallbackText,
-  visualLines,
-}: {
-  fallbackText: string;
-  visualLines: string[];
-}) => {
-  const lines = visualLines
-    .map((line) => normalizeInlineText(line))
-    .filter((text) => text.length > 0);
-  if (lines.length === 0) return normalizeDomText(fallbackText);
-  return lines.join("\n");
-};
-
-const normalizeVisionNodeSemantic = (
-  input: VisionNodeSemantic,
-): ModuleSemanticNodeSemantic => {
-  const visionMarkedPureText = input.isPureText === true;
-  const visualLines = readVisionVisualLines(input);
-  const rawText =
-    mergeVisualLinesForDomText({
-      fallbackText: readString(input.text) ?? "",
-      visualLines,
-    }) || readString(input.text);
-  const rawContentType = readString(input.contentType);
-  const contentType =
-    rawContentType && VALID_CONTENT_TYPES.has(rawContentType)
-      ? rawContentType
-      : "unknown";
-
-  if (visionMarkedPureText && !rawText) {
-    return {
-      containsReadableText: false,
-      contentType,
-      exportDecision: "export",
-      kind: "unknown",
-      notes: MISSING_TEXT_RECHECK_NOTE,
-      textHandling: "ignore",
-    };
-  }
-  const isPureText = visionMarkedPureText && Boolean(rawText);
-
-  const lineCount =
-    typeof input.lineCount === "number" && Number.isFinite(input.lineCount) && input.lineCount >= 1
-      ? Math.round(input.lineCount)
-      : visualLines.length > 0
-        ? visualLines.length
-      : undefined;
-
-  return {
-    containsReadableText: isPureText || Boolean(rawText),
-    contentType,
-    exportDecision: isPureText ? "skip" : "export",
-    kind: isPureText ? "text" : rawText ? "visual-text" : "unknown",
-    lineCount,
-    text: rawText,
-    textHandling: isPureText
-      ? "dom-text"
-      : rawText
-        ? "export-asset"
-        : "ignore",
-    ...(visualLines.length > 0 ? { visualLines } : {}),
-  };
-};
-
-/** Minimum dimension (px) below which a node is too small to carry readable text. */
-const TINY_NODE_MIN_DIMENSION = 6;
-/** Maximum area (px²) below which a node is too small to carry readable text. */
-const TINY_NODE_MAX_AREA = 36;
-/**
- * Maximum pathDataLength-to-perimeter ratio for a path to be considered a simple geometric
- * shape (not text). Text paths pack dense curve commands into their bounding box; simple
- * shapes (rounded rects, decorative outlines) have very few commands relative to perimeter.
- * Empirically: text paths >= 0.98, simple shapes <= 0.22. Threshold at 0.5 gives ~2x margin.
- */
-const SIMPLE_SHAPE_PDL_PER_PERIMETER_MAX = 0.5;
-
-const hasVisualContextReference = (node: ModuleSemanticNode) =>
-  VISUAL_CONTEXT_REFERENCE_ATTRS.some((attr) => {
-    const value = node.attrs[attr];
-    return typeof value === "string" && /^url\(/i.test(value.trim());
-  });
-
-const buildDeterministicSemantic = (
-  node: ModuleSemanticNode,
-): ModuleSemanticNodeSemantic | null => {
-  const text = readString(node.textContent);
-  if (node.depth === 0 || node.tag === "svg") {
-    return {
-      confidence: 1,
-      containsReadableText: false,
-      exportDecision: "skip",
-      kind: "container",
-      notes: "module root",
-      textHandling: "ignore",
-    };
-  }
-  if (!node.visible || !node.bbox) {
-    return {
-      confidence: 1,
-      containsReadableText: false,
-      exportDecision: "skip",
-      kind: "unknown",
-      notes: "non-visible or empty bounding box",
-      textHandling: "ignore",
-    };
-  }
-  if (IGNORED_TAGS.has(node.tag)) {
-    return {
-      confidence: 1,
-      containsReadableText: false,
-      exportDecision: "skip",
-      kind: "container",
-      notes: "definition node",
-      textHandling: "ignore",
-    };
-  }
-  if (isPureTransparentNode(node)) {
-    return {
-      confidence: 1,
-      containsReadableText: false,
-      exportDecision: "skip",
-      kind: "unknown",
-      notes: "pure transparent node",
-      textHandling: "ignore",
-    };
-  }
-  if (CONTAINER_VISUAL_TAGS.has(node.tag) && node.childIds.length > 0) {
-    if (hasVisualContextReference(node)) {
-      return {
-        confidence: 1,
-        containsReadableText: false,
-        exportDecision: "export",
-        kind: "visual-context-wrapper",
-        notes: "container has mask/clip/filter context that affects descendant rendering; export wrapper to preserve visual context",
-        textHandling: "ignore",
-      };
-    }
-    return {
-      confidence: 1,
-      containsReadableText: false,
-      exportDecision: "skip",
-      kind: "container",
-      notes: "structural container analyzed via descendant single-node probes only",
-      textHandling: "ignore",
-    };
-  }
-  if ((node.tag === "text" || node.tag === "tspan") && text) {
-    return {
-      confidence: 1,
-      containsReadableText: true,
-      exportDecision: "skip",
-      kind: "text",
-      text,
-      textHandling: "dom-text",
-      textKind: "svg-text",
-    };
-  }
-  if (DEFINITE_NON_TEXT_TAGS.has(node.tag)) {
-    return {
-      containsReadableText: false,
-      exportDecision: "export",
-      kind: node.tag === "image" ? "image" : "shape",
-      notes:
-        node.tag === "image"
-          ? "bitmap/image node cannot be pure DOM text"
-          : "simple geometric node cannot be pure DOM text",
-      textHandling: "ignore",
-    };
-  }
-  // --- Size-based deterministic rules (primarily reduces path candidates) ---
-  const bbox = node.bbox;
-  if (bbox) {
-    const bboxWidth = bbox.width;
-    const bboxHeight = bbox.height;
-    const bboxArea = bboxWidth * bboxHeight;
-    // Rule: extremely small nodes cannot carry readable text
-    if (
-      Math.min(bboxWidth, bboxHeight) < TINY_NODE_MIN_DIMENSION ||
-      bboxArea < TINY_NODE_MAX_AREA
-    ) {
-      return {
-        containsReadableText: false,
-        exportDecision: "export",
-        kind: "decoration",
-        notes: `tiny node (${bboxWidth.toFixed(1)}×${bboxHeight.toFixed(1)}) cannot carry readable text`,
-        textHandling: "ignore",
-      };
-    }
-    // Rule: path with very low pathDataLength relative to perimeter is a simple geometric
-    // shape (rounded rect, outline, separator) — not text.
-    const pathDataLength = Number(node.attrs.pathDataLength ?? 0);
-    if (node.tag === "path" && pathDataLength > 0) {
-      const perimeter = 2 * (bboxWidth + bboxHeight);
-      if (
-        perimeter > 0 &&
-        pathDataLength / perimeter < SIMPLE_SHAPE_PDL_PER_PERIMETER_MAX
-      ) {
-        return {
-          containsReadableText: false,
-          exportDecision: "export",
-          kind: "shape",
-          notes: `simple path shape (pdl/perimeter=${(pathDataLength / perimeter).toFixed(2)}, threshold=${SIMPLE_SHAPE_PDL_PER_PERIMETER_MAX})`,
-          textHandling: "ignore",
-        };
-      }
-    }
-  }
-  return null;
-};
-
-// ---------------------------------------------------------------------------
-// Text effect layer detection
-// ---------------------------------------------------------------------------
-// Design tools (Figma, Sketch) often export text with visual effects (outside
-// stroke, inner stroke, gradient overlay, etc.) as multiple stacked path nodes
-// under a shared parent <g>. These effect layer paths share nearly identical
-// bounding boxes with the text fill path but have significantly more complex
-// path data (high pathDataLength) and typically carry a `mask` attribute.
-//
-// Detecting this pattern deterministically allows us to skip these nodes from
-// the expensive vision classification pass and provide structured info to the
-// module agent instead.
-// ---------------------------------------------------------------------------
-
-type TextEffectLayerGroup = {
-  /** The parent <g> node containing the layers. */
-  parentId: string;
-  /** The primary fill layer node id (likely the actual text). */
-  fillNodeId: string;
-  /** The effect layer node id(s) (stroke/mask layers). */
-  effectNodeIds: string[];
-  /** Detected effect type description. */
-  effectType: string;
-};
-
-/**
- * Detect text effect layer groups among the document nodes.
- *
- * Generic detection criteria (not dependent on specific URL naming):
- * 1. A parent <g> node (typically with a filter attribute for drop shadow).
- * 2. Contains 2+ leaf path children with no children of their own.
- * 3. At least one child path has a `mask` attribute (the effect layer).
- * 4. The masked path's bbox overlaps significantly with a sibling's bbox
- *    (overlap ratio > 0.6 based on smaller area).
- * 5. The masked path has substantially higher pathDataLength than the fill
- *    sibling (ratio >= 3x), indicating it carries outline/stroke geometry.
- */
-const detectTextEffectLayerGroups = (
-  nodes: ModuleSemanticNode[],
-): TextEffectLayerGroup[] => {
-  const nodesById = new Map(nodes.map((n) => [n.id, n]));
-  const groups: TextEffectLayerGroup[] = [];
-  const processedIds = new Set<string>();
-
-  for (const node of nodes) {
-    // Only inspect <g> nodes that are containers
-    if (node.tag !== "g") continue;
-    if (!node.childIds || node.childIds.length < 2) continue;
-
-    // Gather leaf path children
-    const pathChildren: ModuleSemanticNode[] = [];
-    for (const childId of node.childIds) {
-      const child = nodesById.get(childId);
-      if (
-        child &&
-        child.tag === "path" &&
-        child.childIds.length === 0 &&
-        child.bbox
-      ) {
-        pathChildren.push(child);
-      }
-    }
-    if (pathChildren.length < 2) continue;
-
-    // Identify effect layers: paths with a mask attribute
-    const effectCandidates = pathChildren.filter((c) => Boolean(c.attrs.mask));
-    if (effectCandidates.length === 0) continue;
-
-    // Identify fill candidates: paths WITHOUT a mask
-    const fillCandidates = pathChildren.filter((c) => !c.attrs.mask);
-    if (fillCandidates.length === 0) continue;
-
-    // For each effect candidate, find a matching fill sibling
-    const effectNodeIds: string[] = [];
-    let fillNodeId: string | undefined;
-    let effectType = "masked-layer";
-
-    for (const effect of effectCandidates) {
-      if (!effect.bbox) continue;
-      const effectPdl = Number(effect.attrs.pathDataLength ?? 0);
-
-      // Find a fill sibling with high bbox overlap
-      const matchingFill = fillCandidates.find((fill) => {
-        if (!fill.bbox) return false;
-        const smaller = Math.min(areaOf(fill.bbox), areaOf(effect.bbox!));
-        if (smaller <= 0) return false;
-        const overlap = intersectionArea(fill.bbox, effect.bbox!) / smaller;
-        if (overlap < 0.6) return false;
-
-        // Verify pdl ratio: effect layer should have significantly more path data
-        const fillPdl = Number(fill.attrs.pathDataLength ?? 0);
-        if (fillPdl <= 0 || effectPdl <= 0) return false;
-        const pdlRatio = effectPdl / fillPdl;
-        return pdlRatio >= 3;
-      });
-
-      if (matchingFill) {
-        effectNodeIds.push(effect.id);
-        fillNodeId = matchingFill.id;
-
-        // Infer effect type from mask URL or attributes
-        const mask = effect.attrs.mask ?? "";
-        if (mask.includes("outside")) {
-          effectType = "outside-stroke";
-        } else if (mask.includes("inside")) {
-          effectType = "inside-stroke";
-        }
-      }
-    }
-
-    if (fillNodeId && effectNodeIds.length > 0 && !processedIds.has(fillNodeId)) {
-      groups.push({
-        parentId: node.id,
-        fillNodeId,
-        effectNodeIds,
-        effectType,
-      });
-      processedIds.add(fillNodeId);
-      effectNodeIds.forEach((id) => processedIds.add(id));
-    }
-  }
-
-  return groups;
-};
-
-/**
- * Apply deterministic semantics for detected text effect layer groups.
- * The parent group is the export target so the fill and effect layers stay
- * merged as one visual asset. Child layers are skipped to prevent agents from
- * exporting only the fill path and dropping masks/strokes.
- */
-const applyTextEffectLayerSemantics = (
-  groups: TextEffectLayerGroup[],
-  deterministicById: Map<string, ModuleSemanticNodeSemantic>,
-  nodes: ModuleSemanticNode[],
-) => {
-  const nodesById = new Map(nodes.map((n) => [n.id, n]));
-  let count = 0;
-
-  for (const group of groups) {
-    const parentNode = nodesById.get(group.parentId);
-
-    // Mark parent <g>: export the complete text effect bundle.
-    if (parentNode) {
-      deterministicById.set(group.parentId, {
-        containsReadableText: true,
-        exportDecision: "export",
-        kind: "text-effect-group",
-        notes: `text effect group (${group.effectType}); fill: ${group.fillNodeId}; effects: [${group.effectNodeIds.join(", ")}]`,
-        textHandling: "export-asset",
-      });
-      count += 1;
-    }
-
-    // Mark fill layer as skipped because the parent group is the export target.
-    deterministicById.set(group.fillNodeId, {
-      containsReadableText: true,
-      exportDecision: "skip",
-      kind: "visual-text",
-      notes: `text fill layer of ${group.parentId}; export parent text effect group to preserve ${group.effectType}`,
-      textHandling: "ignore",
-    });
-    count += 1;
-
-    // Mark effect layer(s): skip entirely, they are decorative companions
-    for (const effectId of group.effectNodeIds) {
-      deterministicById.set(effectId, {
-        containsReadableText: false,
-        exportDecision: "skip",
-        kind: "text-effect-layer",
-        notes: `${group.effectType} effect layer of ${group.fillNodeId}; parent: ${group.parentId}`,
-        textHandling: "ignore",
-      });
-      count += 1;
-    }
-  }
-
-  return count;
-};
-
-const toProbeNode = (node: ModuleSemanticNode): SemanticProbeNode | null =>
-  node.bbox && node.selector && node.childIds.length === 0
-    ? {
-        ...node,
-        bbox: node.bbox,
-        selector: node.selector,
-      }
-    : null;
-
-const SHAPE_TAGS = new Set([
-  "circle",
-  "ellipse",
-  "line",
-  "path",
-  "polygon",
-  "polyline",
-  "rect",
-]);
-
-const DEFINITE_NON_TEXT_TAGS = new Set([
-  "circle",
-  "ellipse",
-  "image",
-  "line",
-  "rect",
-]);
-
-const hasIntrinsicVisualPresence = (node: SemanticProbeNode): boolean => {
-  // Leaf nodes may render themselves. Fully transparent leaf output is pruned
-  // after probe rasterization, which catches empty foreignObject/backdrop-filter
-  // scaffolding without dropping legitimate <use> or custom SVG elements.
-  if (node.childIds.length === 0) return true;
-  // Text and image nodes always carry their own content.
-  if (
-    node.tag === "text" ||
-    node.tag === "tspan" ||
-    node.tag === "image"
-  ) {
-    return true;
-  }
-  // Native shape tags always render something (they have geometry).
-  if (SHAPE_TAGS.has(node.tag)) return true;
-  // Everything else is a structural container whose visual output comes
-  // entirely from descendants. Skip from vision analysis.
-  return false;
-};
-
 const hasCompletedStages = (
   document: ModuleSemanticDocument,
   stages: string[],
@@ -1151,169 +483,6 @@ const summarizeSemanticNodes = (
 const preserveExistingGeneratedAssets = (
   document: ModuleSemanticDocument,
 ) => (document.generatedAssets ?? []).slice();
-
-const PNG_SIGNATURE = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-]);
-
-const getPngChannelCount = (colorType: number) => {
-  switch (colorType) {
-    case 0:
-    case 3:
-      return 1;
-    case 2:
-      return 3;
-    case 4:
-      return 2;
-    case 6:
-      return 4;
-    default:
-      return undefined;
-  }
-};
-
-const paethPredictor = (left: number, up: number, upLeft: number) => {
-  const estimate = left + up - upLeft;
-  const distanceLeft = Math.abs(estimate - left);
-  const distanceUp = Math.abs(estimate - up);
-  const distanceUpLeft = Math.abs(estimate - upLeft);
-  if (distanceLeft <= distanceUp && distanceLeft <= distanceUpLeft) return left;
-  if (distanceUp <= distanceUpLeft) return up;
-  return upLeft;
-};
-
-const readPngAlphaStats = async (
-  filePath: string,
-): Promise<PngAlphaStats | null> => {
-  const buffer = await readFile(filePath);
-  if (
-    buffer.length < PNG_SIGNATURE.length ||
-    !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
-  ) {
-    return null;
-  }
-
-  let bitDepth = 0;
-  let colorType = -1;
-  let height = 0;
-  let interlace = 0;
-  let offset = PNG_SIGNATURE.length;
-  let width = 0;
-  const idatChunks: Buffer[] = [];
-
-  while (offset + 12 <= buffer.length) {
-    const chunkLength = buffer.readUInt32BE(offset);
-    const chunkType = buffer.toString("ascii", offset + 4, offset + 8);
-    const dataStart = offset + 8;
-    const dataEnd = dataStart + chunkLength;
-    if (dataEnd + 4 > buffer.length) return null;
-
-    if (chunkType === "IHDR") {
-      width = buffer.readUInt32BE(dataStart);
-      height = buffer.readUInt32BE(dataStart + 4);
-      bitDepth = buffer[dataStart + 8] ?? 0;
-      colorType = buffer[dataStart + 9] ?? -1;
-      interlace = buffer[dataStart + 12] ?? 0;
-    } else if (chunkType === "IDAT") {
-      idatChunks.push(buffer.subarray(dataStart, dataEnd));
-    } else if (chunkType === "IEND") {
-      break;
-    }
-
-    offset = dataEnd + 4;
-  }
-
-  const channelCount = getPngChannelCount(colorType);
-  if (
-    !channelCount ||
-    bitDepth !== 8 ||
-    height <= 0 ||
-    idatChunks.length === 0 ||
-    interlace !== 0 ||
-    width <= 0
-  ) {
-    return null;
-  }
-
-  const hasAlpha = colorType === 4 || colorType === 6;
-  if (!hasAlpha) {
-    return { hasAlpha: false, visiblePixelCount: width * height };
-  }
-
-  const inflated = inflateSync(Buffer.concat(idatChunks));
-  const rowLength = width * channelCount;
-  const previous = new Uint8Array(rowLength);
-  const current = new Uint8Array(rowLength);
-  let sourceOffset = 0;
-  let luminanceSum = 0;
-  let visiblePixelCount = 0;
-  const alphaChannelOffset = colorType === 6 ? 3 : 1;
-
-  for (let y = 0; y < height; y += 1) {
-    if (sourceOffset >= inflated.length) return null;
-    const filterType = inflated[sourceOffset] ?? -1;
-    sourceOffset += 1;
-    if (sourceOffset + rowLength > inflated.length) return null;
-
-    for (let x = 0; x < rowLength; x += 1) {
-      const raw = inflated[sourceOffset + x] ?? 0;
-      const left = x >= channelCount ? (current[x - channelCount] ?? 0) : 0;
-      const up = previous[x] ?? 0;
-      const upLeft =
-        x >= channelCount ? (previous[x - channelCount] ?? 0) : 0;
-      let value: number;
-      switch (filterType) {
-        case 0:
-          value = raw;
-          break;
-        case 1:
-          value = raw + left;
-          break;
-        case 2:
-          value = raw + up;
-          break;
-        case 3:
-          value = raw + Math.floor((left + up) / 2);
-          break;
-        case 4:
-          value = raw + paethPredictor(left, up, upLeft);
-          break;
-        default:
-          return null;
-      }
-      current[x] = value & 0xff;
-    }
-
-    sourceOffset += rowLength;
-
-    for (let pixelOffset = 0; pixelOffset < rowLength; pixelOffset += channelCount) {
-      const alpha = current[pixelOffset + alphaChannelOffset] ?? 0;
-      if (alpha > PROBE_ALPHA_VISIBLE_THRESHOLD) {
-        const red = current[pixelOffset] ?? 0;
-        const green =
-          colorType === 6
-            ? current[pixelOffset + 1] ?? red
-            : red;
-        const blue =
-          colorType === 6
-            ? current[pixelOffset + 2] ?? red
-            : red;
-        luminanceSum += (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255;
-        visiblePixelCount += 1;
-      }
-    }
-
-    previous.set(current);
-    current.fill(0);
-  }
-
-  return {
-    averageLuminance:
-      visiblePixelCount > 0 ? luminanceSum / visiblePixelCount : undefined,
-    hasAlpha,
-    visiblePixelCount,
-  };
-};
 
 const chooseProbePreviewBackground = (
   alphaStats: PngAlphaStats | null,
@@ -1949,74 +1118,6 @@ const analyzeModuleElements = async ({
   const filteredProbeCandidates = textEffectNodeIds.size > 0
     ? allProbeCandidates.filter((node) => !textEffectNodeIds.has(node.id))
     : allProbeCandidates;
-
-  // --- Probe node deduplication ---
-  // Nodes with identical visual fingerprints (same tag, same bbox dimensions,
-  // same visual attributes) will produce identical probe images. We only need
-  // to send one representative to the vision model and copy the result to all
-  // duplicates. This significantly reduces vision calls for designs with
-  // repeated visual elements (e.g. same icon/text in a card grid).
-  const deduplicateProbeNodes = (
-    nodes: SemanticProbeNode[],
-  ): {
-    deduplicated: SemanticProbeNode[];
-    duplicateToRepresentative: Map<string, string>;
-  } => {
-    if (nodes.length <= 1) {
-      return { deduplicated: nodes, duplicateToRepresentative: new Map() };
-    }
-
-    // Compute a visual fingerprint for each node based on properties that
-    // determine its rendered appearance (independent of position).
-    const computeFingerprint = (node: SemanticProbeNode): string => {
-      if (node.tag === "image") return `${node.tag}|${node.id}`;
-      const attrs = node.attrs;
-      const parts = [
-        node.tag,
-        // bbox dimensions (rounded to avoid floating point noise)
-        Math.round(node.bbox.width * 1000).toString(),
-        Math.round(node.bbox.height * 1000).toString(),
-        // visual attributes that affect rendering
-        attrs.pathDataLength ?? "",
-        attrs.fill ?? "",
-        attrs.stroke ?? "",
-        attrs.opacity ?? "",
-        attrs.mask ?? "",
-        attrs["clip-path"] ?? "",
-        attrs["fill-opacity"] ?? "",
-        attrs["stroke-width"] ?? "",
-      ];
-      return parts.join("|");
-    };
-
-    const fingerprintGroups = new Map<string, SemanticProbeNode[]>();
-    for (const node of nodes) {
-      const fp = computeFingerprint(node);
-      const group = fingerprintGroups.get(fp);
-      if (group) {
-        group.push(node);
-      } else {
-        fingerprintGroups.set(fp, [node]);
-      }
-    }
-
-    const deduplicated: SemanticProbeNode[] = [];
-    const duplicateToRepresentative = new Map<string, string>();
-
-    for (const [, group] of fingerprintGroups) {
-      if (group.length === 0) continue;
-      // First node in the group is the representative
-      const representative = group[0]!;
-      deduplicated.push(representative);
-
-      // Map all other nodes in the group to the representative
-      for (let i = 1; i < group.length; i++) {
-        duplicateToRepresentative.set(group[i]!.id, representative.id);
-      }
-    }
-
-    return { deduplicated, duplicateToRepresentative };
-  };
 
   const {
     deduplicated: deduplicatedProbes,
