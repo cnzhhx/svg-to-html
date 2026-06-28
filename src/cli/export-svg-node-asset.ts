@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { PNG_RASTER_SCALE_MULTIPLIER } from "../config/index.js";
+import { getPngRasterScaleMultiplier } from "../config/index.js";
 import { capturePage, evaluatePage, launchEdge } from "../core/cdp.js";
 import { readSvgDimensions } from "../core/svg-parse.js";
 import {
@@ -1010,7 +1010,8 @@ const exportSvgNodeAsset = async (
 
   try {
     const url = pathToFileURL(wrapperPath).href;
-    const captureScale = args.scale * PNG_RASTER_SCALE_MULTIPLIER;
+    const rasterScaleMultiplier = getPngRasterScaleMultiplier();
+    const captureScale = args.scale * rasterScaleMultiplier;
     const result = await evaluatePage<ExportResult>({
       deviceScaleFactor: captureScale,
       expression: "window.__EXPORT_RESULT__",
@@ -1082,7 +1083,7 @@ const exportSvgNodeAsset = async (
       outputPath,
       outputRef,
       padding: args.padding,
-      rasterScaleMultiplier: PNG_RASTER_SCALE_MULTIPLIER,
+      rasterScaleMultiplier,
       renderedClip: scaleClip(result.clip, captureScale),
       renderedBox: result.renderedBox,
       renderedPixelBox: scaleClip(result.renderedBox, captureScale),

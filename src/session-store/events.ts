@@ -2,10 +2,10 @@ import type { EventEmitter } from 'node:events'
 
 import { truncate } from '../core/string-utils.js'
 import {
-  MAX_AGENT_EVENT_OUTPUT_CHARS,
-  MAX_AGENT_REASONING_EVENT_CHARS,
-  MAX_SESSION_LOG_CHARS,
-  MAX_SESSION_LOG_ENTRIES,
+  getMaxAgentEventOutputChars,
+  getMaxAgentReasoningEventChars,
+  getMaxSessionLogChars,
+  getMaxSessionLogEntries,
 } from '../config/index.js'
 import type { Session, SessionEvent } from './types.js'
 
@@ -43,7 +43,7 @@ const sanitizeAgentEvent = (event: Record<string, unknown>) => {
           ? {
               message: sampleText(
                 errorRecord['message'],
-                MAX_AGENT_EVENT_OUTPUT_CHARS,
+                getMaxAgentEventOutputChars(),
               ),
             }
           : {}),
@@ -53,7 +53,7 @@ const sanitizeAgentEvent = (event: Record<string, unknown>) => {
   if (eventType === 'error' && typeof event['message'] === 'string') {
     nextEvent['message'] = sampleText(
       event['message'],
-      MAX_AGENT_EVENT_OUTPUT_CHARS,
+      getMaxAgentEventOutputChars(),
     )
   }
 
@@ -73,35 +73,35 @@ const sanitizeAgentEvent = (event: Record<string, unknown>) => {
   if (itemType === 'reasoning' && typeof itemRecord['text'] === 'string') {
     nextItem['text'] = sampleText(
       itemRecord['text'],
-      MAX_AGENT_REASONING_EVENT_CHARS,
+      getMaxAgentReasoningEventChars(),
     )
   }
 
   if (itemType === 'error' && typeof itemRecord['message'] === 'string') {
     nextItem['message'] = sampleText(
       itemRecord['message'],
-      MAX_AGENT_EVENT_OUTPUT_CHARS,
+      getMaxAgentEventOutputChars(),
     )
   }
 
   if (itemType === 'command_execution') {
     if (typeof command === 'string') {
-      nextItem['command'] = sampleText(command, MAX_AGENT_EVENT_OUTPUT_CHARS)
+      nextItem['command'] = sampleText(command, getMaxAgentEventOutputChars())
     }
     if (typeof aggregatedOutput === 'string') {
       nextItem['aggregated_output'] = sampleText(
         aggregatedOutput,
-        MAX_AGENT_EVENT_OUTPUT_CHARS,
+        getMaxAgentEventOutputChars(),
       )
     }
   }
 
   if (itemType === 'mcp_tool_call') {
     if (typeof server === 'string') {
-      nextItem['server'] = sampleText(server, MAX_AGENT_EVENT_OUTPUT_CHARS)
+      nextItem['server'] = sampleText(server, getMaxAgentEventOutputChars())
     }
     if (typeof tool === 'string') {
-      nextItem['tool'] = sampleText(tool, MAX_AGENT_EVENT_OUTPUT_CHARS)
+      nextItem['tool'] = sampleText(tool, getMaxAgentEventOutputChars())
     }
     if (error && typeof error === 'object') {
       const errorRecord = error as Record<string, unknown>
@@ -111,14 +111,14 @@ const sanitizeAgentEvent = (event: Record<string, unknown>) => {
           ? {
               message: sampleText(
                 errorRecord['message'],
-                MAX_AGENT_EVENT_OUTPUT_CHARS,
+                getMaxAgentEventOutputChars(),
               ),
             }
           : {}),
       }
     }
     if (result !== undefined) {
-      nextItem['result'] = sampleUnknown(result, MAX_AGENT_EVENT_OUTPUT_CHARS)
+      nextItem['result'] = sampleUnknown(result, getMaxAgentEventOutputChars())
     }
   }
 
@@ -132,7 +132,7 @@ const sanitizeAgentEvent = (event: Record<string, unknown>) => {
           ? {
               text: sampleText(
                 entryRecord['text'],
-                MAX_AGENT_EVENT_OUTPUT_CHARS,
+                getMaxAgentEventOutputChars(),
               ),
             }
           : {}),
@@ -150,7 +150,7 @@ const sanitizeAgentEvent = (event: Record<string, unknown>) => {
           ? {
               path: sampleText(
                 changeRecord['path'],
-                MAX_AGENT_EVENT_OUTPUT_CHARS,
+                getMaxAgentEventOutputChars(),
               ),
             }
           : {}),
@@ -161,7 +161,7 @@ const sanitizeAgentEvent = (event: Record<string, unknown>) => {
   if (itemType === 'web_search' && typeof itemRecord['query'] === 'string') {
     nextItem['query'] = sampleText(
       itemRecord['query'],
-      MAX_AGENT_EVENT_OUTPUT_CHARS,
+      getMaxAgentEventOutputChars(),
     )
   }
 
@@ -198,9 +198,9 @@ const emitSessionEvent = (
 }
 
 export {
-  MAX_SESSION_LOG_CHARS,
-  MAX_SESSION_LOG_ENTRIES,
   emitSessionEvent,
+  getMaxSessionLogChars,
+  getMaxSessionLogEntries,
   stringifyError,
   truncateText,
 }

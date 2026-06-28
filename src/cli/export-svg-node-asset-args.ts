@@ -1,4 +1,4 @@
-import { PNG_RASTER_SCALE_MULTIPLIER } from "../config/index.js";
+import { getPngRasterScaleMultiplier } from "../config/index.js";
 
 type ExportSvgNodeAssetArgs = {
   allowText: boolean;
@@ -173,7 +173,7 @@ const getExportSvgNodeAssetUsage = () =>
     "  - Overlap with text outside the selected nodes is allowed.",
     "  - --node-id exports automatically write/update generatedAssets with readableByAgent=true; --register-semantic makes that requirement explicit.",
     "  - --scale must match the session SVG render scale passed by upload/CLI.",
-    `  - PNG output adds a ${PNG_RASTER_SCALE_MULTIPLIER}x raster multiplier on top of layout scale for sharper crops.`,
+    `  - PNG output adds a ${getPngRasterScaleMultiplier()}x raster multiplier on top of layout scale for sharper crops.`,
     "  - The selected nodes are rendered in their original SVG coordinate context while non-selected sibling visuals are hidden.",
   ].join("\n");
 

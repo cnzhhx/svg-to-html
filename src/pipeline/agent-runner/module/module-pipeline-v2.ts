@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { SEMANTIC_VISION_CONCURRENCY } from "../../../config/index.js";
+import { getSemanticVisionConcurrency } from "../../../config/index.js";
 import { normalizeOutputFormat } from "../../../core/output-target.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import { writeJsonFile } from "../../../core/file-io.js";
@@ -112,11 +112,12 @@ export async function runModulePipelineV2(
   const failedModuleKinds = new Map<string, ModuleValidationFailureKind>();
   const persistedModuleThreadIds = readPersistedModuleAgentThreadIds(sessionId);
 
-  const visionSemaphore = new Semaphore(SEMANTIC_VISION_CONCURRENCY);
+  const semanticVisionConcurrency = getSemanticVisionConcurrency();
+  const visionSemaphore = new Semaphore(semanticVisionConcurrency);
 
   sessionStore.addLog(
     sessionId,
-    `[module-pipeline-v2] starting unified module pipeline: modules=${modules.length}, maxParallel=${maxParallelModuleAgents}, visionConcurrency=${SEMANTIC_VISION_CONCURRENCY}`,
+    `[module-pipeline-v2] starting unified module pipeline: modules=${modules.length}, maxParallel=${maxParallelModuleAgents}, visionConcurrency=${semanticVisionConcurrency}`,
   );
 
   await runInitialModuleRound({

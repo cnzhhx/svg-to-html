@@ -15,7 +15,7 @@ import {
   rewriteModuleLocalAssetReferencesInValue,
 } from "../../module-merge/html-render.js";
 import type { ModuleFragmentManifest } from "../../module-merge/types.js";
-import { MODULE_DIFF_RATIO_THRESHOLD } from "../../../config/index.js";
+import { getModuleDiffRatioThreshold } from "../../../config/index.js";
 import { readModuleAllowedAssets } from "./module-semantic.js";
 import { verifyDesign } from "../../verify.js";
 
@@ -367,7 +367,7 @@ export const verifyModuleFrameworkLocal = async ({
     artifactDir: result.artifactDir,
     diffPngPath: result.diffPngPath,
     diffRatio: result.diffRatio,
-    passed: result.diffRatio <= MODULE_DIFF_RATIO_THRESHOLD,
+    passed: result.diffRatio <= getModuleDiffRatioThreshold(),
     renderEntryPath: frameworkRenderEntryPath,
     renderPngPath: result.renderPngPath,
     svgPngPath: result.svgPngPath,

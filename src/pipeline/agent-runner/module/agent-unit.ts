@@ -3,7 +3,10 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 
 import type { AgentReasoningEffort } from "../../../config/agent-reasoning.js";
-import { MODULE_AGENT_TIMEOUT_MS } from "../../../config/index.js";
+import {
+  getActiveRuntimeSettingsEnv,
+  getModuleAgentTimeoutMs,
+} from "../../../config/index.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import { sessionStore } from "../../../session-store.js";
 import type { AgentThread } from "../../agent-runtime/index.js";
@@ -11,7 +14,6 @@ import type { AgentTokenUsage, AgentTurnMetrics } from "../turn/agent-turn-types
 import {
   resumeAgentThread,
   startAgentThread,
-  threadOptions,
 } from "../../llm-client.js";
 import { runAgentTurnCore } from "../turn/agent-turn-core.js";
 import { throwIfRunAborted } from "../session/run-control.js";
@@ -298,7 +300,6 @@ const createAgentUnitThread = ({
   workingDir,
 }: AgentUnitThreadInput) => {
   const options = {
-    ...threadOptions,
     // 设计还原是纯本地任务：禁用网络/网页搜索，收紧工具空间，避免无谓的 webfetch/websearch step。
     networkAccessEnabled: false,
     webSearchEnabled: false,
@@ -311,6 +312,7 @@ const createAgentUnitThread = ({
     ),
     deviceScaleFactor: design.scale,
     environment: {
+      ...getActiveRuntimeSettingsEnv(),
       AGENT_TURN_STARTED_AT: String(turnStartedAt ?? Date.now()),
     },
     modelReasoningEffort: reasoningEffort,
@@ -618,7 +620,7 @@ export async function runAgentUnit(
     moduleId: module.id,
     onThreadStarted,
     updateSessionThread: false,
-    moduleTimeoutMs: MODULE_AGENT_TIMEOUT_MS,
+    moduleTimeoutMs: getModuleAgentTimeoutMs(),
     rollbackBackupRoot: workingDir,
     rollbackFiles: [
       previewFragmentHtmlPath,

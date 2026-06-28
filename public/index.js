@@ -51,6 +51,14 @@ const messageInput = $('#messageInput')
 const composerHint = $('#composerHint')
 const runtimeInfo = $('#runtimeInfo')
 const downloadBtn = $('#downloadBtn')
+const settingsBtn = $('#settingsBtn')
+const settingsDialog = $('#settingsDialog')
+const settingsDialogClose = $('#settingsDialogClose')
+const settingsDialogCancel = $('#settingsDialogCancel')
+const settingsDialogClear = $('#settingsDialogClear')
+const settingsDialogSave = $('#settingsDialogSave')
+const settingsDialogFields = $('#settingsDialogFields')
+const settingsDialogStatus = $('#settingsDialogStatus')
 const workflowPanel = $('#workflowPanel')
 const workflowCurrent = $('#workflowCurrent')
 const workflowDetail = $('#workflowDetail')
@@ -102,6 +110,10 @@ const LOCAL_ARTIFACT_RESULT_KEYS = [
 ]
 const UPLOAD_SCALE_KEY = 'svg2html:uploadScale'
 const UPLOAD_FORMAT_KEY = 'svg2html:uploadFormat'
+const RUN_SETTINGS_KEY = 'svg2html:runSettings:v1'
+const MODEL_CHANNELS_KEY = 'svg2html:modelChannels:v1'
+const ACTIVE_MODEL_CHANNEL_KEY = 'svg2html:activeModelChannel:v1'
+const BACKEND_ENV_MODEL_CHANNEL_ID = '__backend_env__'
 const DEFAULT_DIFF_RATIO_THRESHOLD = 0.15
 const DEFAULT_MODULE_CONCURRENCY_LIMIT = 5
 const urlParams = new URLSearchParams(location.search)
@@ -129,6 +141,13 @@ const OUTPUT_FORMAT_VALUES = new Set(OUTPUT_FORMAT_OPTIONS.map((option) => optio
 
 let selectedUploadScale = readStoredUploadScale()
 let selectedUploadFormat = readStoredUploadFormat()
+let frontendSettingsEnabled = false
+let frontendSettingsFields = []
+let runtimeSettingValues = readStoredRunSettings()
+let modelChannels = readStoredModelChannels()
+let activeModelChannelId = readStoredActiveModelChannelId(modelChannels)
+let activeSettingsSection = 'model'
+let settingsDialogSnapshot = null
 
 function createLocalClientId() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID()
@@ -618,6 +637,627 @@ function getSelectedOutputFormat() {
     : selectedUploadFormat
 }
 
+function getFrontendField(envName) {
+  return frontendSettingsFields.find((field) => field.envName === envName)
+}
+
+function getFieldBaselineValue(field) {
+  if (!field) return ''
+  const value = field.value !== null && field.value !== undefined
+    ? field.value
+    : field.defaultValue
+  return value === null || value === undefined ? '' : value
+}
+
+function getFrontendFieldBaseline(envName, options = {}) {
+  const field = getFrontendField(envName)
+  if (!field || (field.sensitive && !options.includeSensitive)) return ''
+  return String(getFieldBaselineValue(field) ?? '')
+}
+
+function getDefaultModelChannelValues() {
+  const providerName =
+    getFrontendFieldBaseline('MODEL_PROVIDER_NAME') ||
+    getFrontendFieldBaseline('MODEL_PROVIDER')
+  const modelName = getFrontendFieldBaseline('MODEL_ID')
+  const channelName = [providerName, modelName].filter(Boolean).join(' / ')
+  return {
+    baseURL: getFrontendFieldBaseline('MODEL_BASE_URL'),
+    model: modelName,
+    name: channelName,
+    provider: getFrontendFieldBaseline('MODEL_PROVIDER'),
+    reasoningEffort: getFrontendFieldBaseline('MODEL_REASONING_EFFORT'),
+    wireApi: getFrontendFieldBaseline('MODEL_WIRE_API') || 'chat-completions',
+  }
+}
+
+function createModelChannel(overrides = {}) {
+  const id = overrides.id || `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const defaults = getDefaultModelChannelValues()
+  return {
+    apiKey: '',
+    baseURL: defaults.baseURL,
+    id,
+    model: defaults.model,
+    name: overrides.name || defaults.name || '自定义渠道',
+    provider: defaults.provider,
+    reasoningEffort: defaults.reasoningEffort,
+    wireApi: overrides.wireApi || defaults.wireApi || 'chat-completions',
+    ...overrides,
+  }
+}
+
+function readStoredModelChannels() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MODEL_CHANNELS_KEY) || '[]')
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+      .map((item) => createModelChannel({
+        baseURL: String(item.baseURL || ''),
+        id: String(item.id || ''),
+        model: String(item.model || ''),
+        name: String(item.name || item.provider || ''),
+        provider: String(item.provider || ''),
+        reasoningEffort: String(item.reasoningEffort || ''),
+        wireApi: String(item.wireApi || 'chat-completions'),
+      }))
+      .filter((item) => item.id)
+  } catch {
+    return []
+  }
+}
+
+function writeStoredModelChannels() {
+  try {
+    const safeChannels = modelChannels.map(({ apiKey: _apiKey, ...channel }) => channel)
+    localStorage.setItem(MODEL_CHANNELS_KEY, JSON.stringify(safeChannels))
+    localStorage.setItem(ACTIVE_MODEL_CHANNEL_KEY, activeModelChannelId || BACKEND_ENV_MODEL_CHANNEL_ID)
+  } catch {}
+}
+
+function readStoredActiveModelChannelId(channels) {
+  try {
+    const stored = String(localStorage.getItem(ACTIVE_MODEL_CHANNEL_KEY) || '')
+    if (stored === BACKEND_ENV_MODEL_CHANNEL_ID) return ''
+    if (channels.some((channel) => channel.id === stored)) return stored
+  } catch {}
+  return channels[0]?.id || ''
+}
+
+function getActiveModelChannel() {
+  if (!activeModelChannelId) return null
+  if (activeModelChannelId && modelChannels.some((channel) => channel.id === activeModelChannelId)) {
+    return modelChannels.find((channel) => channel.id === activeModelChannelId)
+  }
+  activeModelChannelId = modelChannels[0]?.id || ''
+  return modelChannels[0] || null
+}
+
+function cloneModelChannels(channels) {
+  return channels.map((channel) => ({ ...channel }))
+}
+
+function captureSettingsSnapshot() {
+  return {
+    activeModelChannelId,
+    modelChannels: cloneModelChannels(modelChannels),
+    runtimeSettingValues: { ...runtimeSettingValues },
+  }
+}
+
+function restoreSettingsSnapshot() {
+  if (!settingsDialogSnapshot) return
+  activeModelChannelId = settingsDialogSnapshot.activeModelChannelId
+  modelChannels = cloneModelChannels(settingsDialogSnapshot.modelChannels)
+  runtimeSettingValues = { ...settingsDialogSnapshot.runtimeSettingValues }
+  writeStoredModelChannels()
+  writeStoredRunSettings(runtimeSettingValues)
+  settingsDialogSnapshot = null
+  syncSettingsButtonState()
+}
+
+function readStoredRunSettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RUN_SETTINGS_KEY) || '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, value]) =>
+        typeof value === 'string' ||
+        typeof value === 'number' ||
+        typeof value === 'boolean',
+      ),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function writeStoredRunSettings(values) {
+  try {
+    const advancedFields = getAdvancedSettingsFields()
+    const persisted = Object.fromEntries(
+      Object.entries(values).filter(([envName]) => {
+        const field = advancedFields.find((item) => item.envName === envName)
+        return field && !field.sensitive
+      }),
+    )
+    localStorage.setItem(RUN_SETTINGS_KEY, JSON.stringify(persisted))
+  } catch {}
+}
+
+function getRunSettingsPayload() {
+  if (!frontendSettingsEnabled) return {}
+  const payload = Object.fromEntries(
+    Object.entries(runtimeSettingValues).filter(([, value]) =>
+      value !== '' && value !== null && value !== undefined,
+    ),
+  )
+  const channel = getActiveModelChannel()
+  if (channel && channel.baseURL.trim() && channel.model.trim()) {
+    const provider = channel.provider.trim() || channel.name.trim() || 'frontend-model'
+    payload.MODEL_PROVIDER = provider
+    payload.MODEL_PROVIDER_NAME = channel.name.trim() || provider
+    payload.MODEL_BASE_URL = channel.baseURL.trim()
+    payload.MODEL_ID = channel.model.trim()
+    payload.MODEL_WIRE_API = channel.wireApi || 'chat-completions'
+    if (channel.apiKey.trim()) payload.MODEL_API_KEY = channel.apiKey.trim()
+    if (channel.reasoningEffort) payload.MODEL_REASONING_EFFORT = channel.reasoningEffort
+  }
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, value]) =>
+      value !== '' && value !== null && value !== undefined,
+    ),
+  )
+}
+
+function hasRunSettingsPayload() {
+  return Object.keys(getRunSettingsPayload()).length > 0
+}
+
+function pruneRuntimeSettingValues() {
+  const fieldByEnvName = new Map(getAdvancedSettingsFields().map((field) => [field.envName, field]))
+  runtimeSettingValues = Object.fromEntries(
+    Object.entries(runtimeSettingValues).filter(([envName]) => {
+      const field = fieldByEnvName.get(envName)
+      return field && !field.sensitive
+    }),
+  )
+  writeStoredRunSettings(runtimeSettingValues)
+}
+
+function getAdvancedSettingsFields() {
+  return frontendSettingsFields.filter((field) => field.section !== 'model')
+}
+
+function getFieldText(field) {
+  return FIELD_TEXT[field.configKey] || {
+    description: field.description,
+    label: field.configKey,
+  }
+}
+
+const FIELD_TEXT = {
+  'agent.defaultReasoningEffort': {
+    description: '默认推理强度，未单独指定时作为 agent 的兜底值。',
+    label: '默认推理强度',
+  },
+  'agent.maxParallelModuleAgents': {
+    description: '单个任务内同时运行的模块 agent 数量。',
+    label: '模块并发数',
+  },
+  'agent.moduleTimeoutMs': {
+    description: '单个模块 agent 最长执行时间，单位毫秒。',
+    label: '模块超时时间',
+  },
+  'agent.semanticVisionConcurrency': {
+    description: '视觉语义分析的并发上限。',
+    label: '视觉分析并发',
+  },
+  'agent.supportReasoningEffort': {
+    description: '规划、辅助和视觉调用使用的推理强度。',
+    label: '辅助推理强度',
+  },
+  'agent.unitReasoningEffort': {
+    description: '单个模块 agent 回合使用的推理强度。',
+    label: '模块推理强度',
+  },
+  'agent.verifyRollbackThreshold': {
+    description: 'diffRatio 反弹超过此值时触发回滚。',
+    label: '回滚阈值',
+  },
+  'diff.diffRatioThreshold': {
+    description: '整页对比通过阈值，0.05 表示 5%。',
+    label: '整页 Diff 阈值',
+  },
+  'diff.moduleDiffRatioThreshold': {
+    description: '单模块对比通过阈值。',
+    label: '模块 Diff 阈值',
+  },
+  'diff.pngRasterScaleMultiplier': {
+    description: '导出 PNG 局部资产时额外放大的倍率。',
+    label: 'PNG 导出倍率',
+  },
+  'logging.maxSessionLogChars': {
+    description: '单条 session 日志最多保留的字符数。',
+    label: '单条日志长度',
+  },
+  'runtime.opencodeCliPath': {
+    description: '启动 opencode CLI 的命令或绝对路径。',
+    label: 'opencode 路径',
+  },
+  'session.visionTextTimeoutMs': {
+    description: '视觉文字识别最长等待时间，单位毫秒。',
+    label: '视觉文字识别超时',
+  },
+  'workflow.archiveFullEveryN': {
+    description: '每隔多少轮保存一次完整工作流归档。',
+    label: '完整归档间隔',
+  },
+  'workflow.archiveTextMaxChars': {
+    description: '工作流归档中单段文本最多保留的字符数。',
+    label: '归档文本长度',
+  },
+  'workflow.modelPlannerMockResponse': {
+    description: '开发调试用，填写后规划器跳过真实模型调用。',
+    label: '规划器模拟响应',
+  },
+  'workflow.modelPlannerTurnTimeoutMs': {
+    description: '模型规划器单轮最长等待时间，单位毫秒。',
+    label: '规划器超时',
+  },
+}
+
+const SETTINGS_SECTIONS = [
+  { id: 'model', label: '大模型配置' },
+  { id: 'agent', label: 'Agent' },
+  { id: 'diff', label: 'Diff 对比' },
+  { id: 'workflow', label: '工作流' },
+  { id: 'session', label: 'Session' },
+  { id: 'browser', label: '浏览器' },
+  { id: 'logging', label: '日志' },
+  { id: 'runtime', label: '运行时' },
+]
+
+function formatSettingDomValue(value) {
+  return value === null || value === undefined ? '' : String(value)
+}
+
+function fieldValuesEqual(field, left, right) {
+  if (right === null || right === undefined || right === '') return false
+  if (field.type === 'boolean') return String(left) === String(right)
+  if (field.type === 'number') return Number(left) === Number(right)
+  return String(left) === String(right)
+}
+
+function fieldControlHtml(field, value, hasOverride) {
+  const baselineValue = getFieldBaselineValue(field)
+  const currentValue = field.sensitive
+    ? ''
+    : hasOverride
+      ? value
+      : baselineValue
+  const currentDomValue = formatSettingDomValue(currentValue)
+  const baselineLabel = baselineValue !== ''
+    ? `后端当前值：${formatSettingDomValue(baselineValue)}`
+    : '留空则使用后端 env'
+  const placeholder =
+    field.sensitive && value !== undefined
+      ? '已在本页面配置；留空保存会保留'
+      : field.sensitive
+        ? '留空则使用后端 env；填写后仅本页面临时生效'
+        : baselineLabel
+  if (field.options?.length) {
+    const options = [
+      `<option value=""${currentDomValue === '' ? ' selected' : ''}>使用后端 env</option>`,
+      ...field.options.map((option) =>
+        `<option value="${escapeHtml(option)}"${currentDomValue === String(option) ? ' selected' : ''}>${escapeHtml(option)}</option>`,
+      ),
+    ].join('')
+    return `<select class="settings-input" data-setting-env="${escapeHtml(field.envName)}">${options}</select>`
+  }
+  if (field.type === 'boolean') {
+    return `
+      <select class="settings-input" data-setting-env="${escapeHtml(field.envName)}">
+        <option value=""${currentDomValue === '' ? ' selected' : ''}>使用后端 env</option>
+        <option value="true"${currentDomValue === 'true' ? ' selected' : ''}>开启</option>
+        <option value="false"${currentDomValue === 'false' ? ' selected' : ''}>关闭</option>
+      </select>
+    `
+  }
+  const inputType = field.sensitive ? 'password' : field.type === 'number' ? 'number' : 'text'
+  const valueAttr = field.sensitive ? '' : ` value="${escapeHtml(currentDomValue)}"`
+  return `<input class="settings-input" data-setting-env="${escapeHtml(field.envName)}" type="${inputType}"${valueAttr} placeholder="${escapeHtml(placeholder)}" />`
+}
+
+function renderSettingsDialog() {
+  if (!settingsDialogFields || !settingsDialogStatus) return
+  const advancedFields = getAdvancedSettingsFields()
+  if (!frontendSettingsFields.length) {
+    settingsDialogFields.innerHTML = '<div class="empty-state">暂无可从前端覆盖的运行参数</div>'
+    settingsDialogStatus.textContent = '未启用前端执行设置'
+    settingsDialogStatus.classList.remove('has-overrides')
+    return
+  }
+
+  const sections = SETTINGS_SECTIONS.filter((section) =>
+    section.id === 'model' || advancedFields.some((field) => field.section === section.id),
+  )
+  if (!sections.some((section) => section.id === activeSettingsSection)) {
+    activeSettingsSection = sections[0]?.id || 'model'
+  }
+
+  settingsDialogFields.innerHTML = `
+    <nav class="settings-nav" aria-label="设置模块">
+      ${sections.map((section) => `
+        <button class="settings-nav-item${section.id === activeSettingsSection ? ' is-active' : ''}" type="button" data-settings-section="${escapeHtml(section.id)}">
+          ${escapeHtml(section.label)}
+        </button>
+      `).join('')}
+    </nav>
+    <div class="settings-panel">
+      ${activeSettingsSection === 'model'
+        ? renderModelSettingsPanel()
+        : renderAdvancedSettingsPanel(activeSettingsSection)}
+    </div>
+  `
+
+  settingsDialogFields.querySelectorAll('[data-settings-section]').forEach((button) => {
+    button.addEventListener('click', () => {
+      activeSettingsSection = button.getAttribute('data-settings-section') || 'model'
+      renderSettingsDialog()
+    })
+  })
+  bindModelSettingsEvents()
+
+  syncSettingsButtonState()
+}
+
+function renderAdvancedSettingsPanel(section) {
+  const fields = getAdvancedSettingsFields().filter((field) => field.section === section)
+  const sectionLabel = SETTINGS_SECTIONS.find((item) => item.id === section)?.label || section
+  return `
+    <section class="settings-section">
+      <div class="settings-section-title">${escapeHtml(sectionLabel)}</div>
+      ${fields.map((field) => {
+        const text = getFieldText(field)
+        const hasOverride = Object.hasOwn(runtimeSettingValues, field.envName)
+        const value = runtimeSettingValues[field.envName]
+        const meta = hasOverride
+          ? field.sensitive
+            ? '已设置前端覆盖值'
+            : `前端覆盖：${String(value)}`
+          : field.value !== null && field.value !== undefined
+            ? `当前来源：${sourceLabel(field.source)}`
+            : '当前未配置'
+        return `
+          <label class="settings-field">
+            <span class="settings-field-main">
+              <span class="settings-field-name">${escapeHtml(text.label)}</span>
+              <span class="settings-field-env">${escapeHtml(field.envName)}</span>
+              <span class="settings-field-description">${escapeHtml(text.description)}</span>
+            </span>
+            <span class="settings-field-control">
+              ${fieldControlHtml(field, value, hasOverride)}
+              <span class="settings-field-meta">${escapeHtml(meta)}</span>
+            </span>
+          </label>
+        `
+      }).join('')}
+    </section>
+  `
+}
+
+function sourceLabel(source) {
+  if (source === 'frontend') return '前端覆盖'
+  if (source === 'env') return '后端 env'
+  return '默认值'
+}
+
+function renderModelSettingsPanel() {
+  const activeChannel = getActiveModelChannel()
+  return `
+    <section class="model-settings-panel">
+      <div class="model-channel-sidebar">
+        <div class="model-channel-head">
+          <div class="settings-section-title">大模型渠道</div>
+        </div>
+        <div class="model-channel-list">
+          <button class="model-channel-item${activeModelChannelId ? '' : ' is-active'}" type="button" data-model-channel-id="">
+            <span>使用后端 env</span>
+            <small>不发送前端模型覆盖</small>
+          </button>
+          ${modelChannels.length
+            ? modelChannels.map((channel) => `
+              <button class="model-channel-item${channel.id === activeModelChannelId ? ' is-active' : ''}" type="button" data-model-channel-id="${escapeHtml(channel.id)}">
+                <span>${escapeHtml(channel.name || channel.provider || '未命名渠道')}</span>
+                <small>${escapeHtml(channel.model || '未填写模型')}</small>
+              </button>
+            `).join('')
+            : '<div class="model-channel-empty">还没有大模型渠道</div>'}
+        </div>
+      </div>
+      <div class="model-channel-editor">
+        ${activeChannel ? renderModelChannelEditor(activeChannel) : renderModelChannelEmpty()}
+      </div>
+    </section>
+  `
+}
+
+function renderModelChannelEmpty() {
+  return `
+    <div class="model-empty-editor">
+      <div>
+        <div class="settings-section-title">当前使用后端 env</div>
+        <p>不会发送前端大模型覆盖。</p>
+      </div>
+      <button class="upload-dialog-submit" type="button" data-model-channel-add>添加渠道</button>
+    </div>
+  `
+}
+
+function renderModelChannelEditor(channel) {
+  return `
+    <div class="model-editor-head">
+      <div>
+        <div class="settings-section-title">当前渠道</div>
+        <h4 class="model-editor-title">${escapeHtml(channel.name || '未命名渠道')}</h4>
+      </div>
+      <div class="model-editor-actions">
+        <button class="upload-dialog-submit" type="button" data-model-channel-add>添加渠道</button>
+        <button class="upload-dialog-cancel" type="button" data-model-channel-delete="${escapeHtml(channel.id)}">删除渠道</button>
+      </div>
+    </div>
+    <div class="model-editor-grid">
+      ${modelInputHtml('渠道名称', 'name', channel.name, '例如：OpenAI 主账号')}
+      ${modelInputHtml('提供商标识', 'provider', channel.provider, '例如：openai / anthropic / deepseek')}
+      ${modelInputHtml('接口地址', 'baseURL', channel.baseURL, '例如：https://api.openai.com/v1')}
+      ${modelInputHtml('模型名称', 'model', channel.model, '例如：gpt-4.1 / claude-sonnet-4')}
+      ${modelInputHtml('API Key', 'apiKey', channel.apiKey, channel.apiKey ? '已在本页面配置；留空保存会保留' : '执行时发送给后端，不写入本地存储', 'password')}
+      <label class="settings-field model-editor-field">
+        <span class="settings-field-main">
+          <span class="settings-field-name">协议格式</span>
+          <span class="settings-field-description">后端调用模型服务时使用的协议。</span>
+        </span>
+        <span class="settings-field-control">
+          <select class="settings-input" data-model-channel-field="wireApi">
+            ${['chat-completions', 'responses', 'anthropic'].map((value) =>
+              `<option value="${value}"${channel.wireApi === value ? ' selected' : ''}>${value}</option>`,
+            ).join('')}
+          </select>
+        </span>
+      </label>
+      <label class="settings-field model-editor-field">
+        <span class="settings-field-main">
+          <span class="settings-field-name">推理强度</span>
+          <span class="settings-field-description">留空时使用后端默认推理强度。</span>
+        </span>
+        <span class="settings-field-control">
+          <select class="settings-input" data-model-channel-field="reasoningEffort">
+            <option value=""${channel.reasoningEffort ? '' : ' selected'}>后端默认</option>
+            ${['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].map((value) =>
+              `<option value="${value}"${channel.reasoningEffort === value ? ' selected' : ''}>${value}</option>`,
+            ).join('')}
+          </select>
+        </span>
+      </label>
+    </div>
+    <div class="settings-field-meta">默认支持视觉输入；运行时使用 opencode，其余高级模型属性沿用后端默认值。</div>
+  `
+}
+
+function modelInputHtml(label, field, value, placeholder, type = 'text') {
+  return `
+    <label class="settings-field model-editor-field">
+      <span class="settings-field-main">
+        <span class="settings-field-name">${escapeHtml(label)}</span>
+      </span>
+      <span class="settings-field-control">
+        <input class="settings-input" data-model-channel-field="${escapeHtml(field)}" type="${type}" value="${type === 'password' ? '' : escapeHtml(value || '')}" placeholder="${escapeHtml(placeholder)}" />
+      </span>
+    </label>
+  `
+}
+
+function bindModelSettingsEvents() {
+  if (activeSettingsSection !== 'model' || !settingsDialogFields) return
+  settingsDialogFields.querySelectorAll('[data-model-channel-add]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const channel = createModelChannel()
+      modelChannels.push(channel)
+      activeModelChannelId = channel.id
+      writeStoredModelChannels()
+      renderSettingsDialog()
+    })
+  })
+  settingsDialogFields.querySelectorAll('[data-model-channel-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      activeModelChannelId = button.getAttribute('data-model-channel-id') || ''
+      writeStoredModelChannels()
+      renderSettingsDialog()
+    })
+  })
+  settingsDialogFields.querySelector('[data-model-channel-delete]')?.addEventListener('click', (event) => {
+    const button = event.currentTarget
+    const id = button?.getAttribute('data-model-channel-delete')
+    if (!id) return
+    modelChannels = modelChannels.filter((channel) => channel.id !== id)
+    activeModelChannelId = modelChannels[0]?.id || ''
+    writeStoredModelChannels()
+    renderSettingsDialog()
+  })
+  settingsDialogFields.querySelectorAll('[data-model-channel-field]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const channel = getActiveModelChannel()
+      if (!channel) return
+      const field = input.getAttribute('data-model-channel-field')
+      if (!field) return
+      if (field === 'apiKey' && input.value === '') return
+      channel[field] = input.value
+      writeStoredModelChannels()
+      syncSettingsButtonState()
+      if (field === 'name' || field === 'model') {
+        const activeItem = settingsDialogFields.querySelector(`[data-model-channel-id="${CSS.escape(channel.id)}"]`)
+        if (activeItem) {
+          activeItem.querySelector('span').textContent = channel.name || channel.provider || '未命名渠道'
+          activeItem.querySelector('small').textContent = channel.model || '未填写模型'
+        }
+      }
+    })
+  })
+}
+
+function syncSettingsButtonState() {
+  if (!settingsBtn) return
+  settingsBtn.hidden = !frontendSettingsEnabled
+  settingsBtn.classList.toggle('icon-btn-accent', hasRunSettingsPayload())
+  if (settingsDialogStatus) {
+    const count = Object.keys(getRunSettingsPayload()).length
+    settingsDialogStatus.textContent = count > 0
+      ? `已配置 ${count} 个前端覆盖项，执行时随请求发送`
+      : '未配置前端覆盖项，执行时使用后端 env'
+    settingsDialogStatus.classList.toggle('has-overrides', count > 0)
+  }
+}
+
+function parseSettingInputValue(field, rawValue) {
+  if (rawValue === '') return undefined
+  if (field.type === 'boolean') return rawValue === 'true'
+  if (field.type === 'number') {
+    const value = Number(rawValue)
+    return Number.isFinite(value) ? value : undefined
+  }
+  return String(rawValue)
+}
+
+function saveSettingsDialogValues() {
+  const nextValues = { ...runtimeSettingValues }
+  settingsDialogFields?.querySelectorAll('[data-setting-env]').forEach((input) => {
+    const envName = input.getAttribute('data-setting-env')
+    if (envName) delete nextValues[envName]
+  })
+  settingsDialogFields?.querySelectorAll('[data-setting-env]').forEach((input) => {
+    const envName = input.getAttribute('data-setting-env')
+    const field = getAdvancedSettingsFields().find((item) => item.envName === envName)
+    if (!field) return
+    const hadOverride = Object.hasOwn(runtimeSettingValues, envName)
+    const value = parseSettingInputValue(field, input.value)
+    if (value === undefined && field.sensitive && hadOverride) {
+      nextValues[envName] = runtimeSettingValues[envName]
+      return
+    }
+    if (!hadOverride && value !== undefined && fieldValuesEqual(field, value, getFieldBaselineValue(field))) {
+      return
+    }
+    if (value !== undefined) nextValues[envName] = value
+  })
+  runtimeSettingValues = nextValues
+  writeStoredRunSettings(runtimeSettingValues)
+  writeStoredModelChannels()
+  settingsDialogSnapshot = null
+  syncSettingsButtonState()
+}
+
 function showExpiredNotice(count) {
   const el = document.createElement('div')
   el.className = 'expired-notice'
@@ -773,6 +1413,44 @@ deleteSessionBtn.addEventListener('click', async () => {
   await deleteCurrentSession()
 })
 
+settingsBtn?.addEventListener('click', () => {
+  if (!frontendSettingsEnabled || !settingsDialog) return
+  settingsDialogSnapshot = captureSettingsSnapshot()
+  renderSettingsDialog()
+  settingsDialog.showModal()
+})
+
+settingsDialogClose?.addEventListener('click', () => {
+  restoreSettingsSnapshot()
+  settingsDialog?.close()
+})
+
+settingsDialogCancel?.addEventListener('click', () => {
+  restoreSettingsSnapshot()
+  settingsDialog?.close()
+})
+
+settingsDialogClear?.addEventListener('click', () => {
+  runtimeSettingValues = {}
+  activeModelChannelId = ''
+  writeStoredRunSettings(runtimeSettingValues)
+  writeStoredModelChannels()
+  renderSettingsDialog()
+})
+
+settingsDialogSave?.addEventListener('click', () => {
+  saveSettingsDialogValues()
+  settingsDialog?.close()
+})
+
+settingsDialog?.addEventListener('cancel', () => {
+  restoreSettingsSnapshot()
+})
+
+settingsDialog?.addEventListener('close', () => {
+  settingsDialogSnapshot = null
+})
+
 modulePickerList.addEventListener('click', (e) => {
   const target = e.target instanceof Element ? e.target : null
   const button = target?.closest('[data-module-id]')
@@ -903,11 +1581,20 @@ async function loadRuntimeInfo() {
     sessionChatDisabled = data.sessionChatDisabled !== false
     deleteSessionBtn.style.display = sessionDeleteDisabled ? 'none' : ''
     syncChatFeatureUi()
+    frontendSettingsEnabled = Boolean(data.frontendSettingsEnabled)
+    frontendSettingsFields = Array.isArray(data.frontendSettingsFields)
+      ? data.frontendSettingsFields
+      : []
+    pruneRuntimeSettingValues()
+    renderSettingsDialog()
     runtimeInfo.textContent = ''
   } catch {
     enableSessionLocalStorage = false
     sessionChatDisabled = true
+    frontendSettingsEnabled = false
+    frontendSettingsFields = []
     syncChatFeatureUi()
+    syncSettingsButtonState()
     runtimeInfo.textContent = ''
   } finally {
     runtimeInfoLoaded = true
@@ -1101,6 +1788,10 @@ async function uploadFile(file, options = {}) {
     if (options.sessionCount && options.sessionCount > 1) {
       form.append('sessionCount', String(options.sessionCount))
     }
+    const settings = getRunSettingsPayload()
+    if (Object.keys(settings).length > 0) {
+      form.append('settings', JSON.stringify(settings))
+    }
 
     const res = await fetch(`${basePath}/api/upload`, { method: 'POST', body: form })
     const data = await readJsonResponse(res)
@@ -1182,6 +1873,8 @@ async function startUploadedSessionIfNeeded(sessionId, session) {
 
   const res = await fetch(`${basePath}/api/sessions/${sessionId}/start`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings: getRunSettingsPayload() }),
   })
   const data = await readJsonResponse(res)
   if (!res.ok) {

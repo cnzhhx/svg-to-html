@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
+import { getBackendConfig } from "../../config/backend.js";
 import type { ModelProviderConfig } from "../../config/model-provider.js";
 import { truncate } from "../../core/string-utils.js";
 import type {
@@ -863,7 +864,7 @@ class OpencodeThread implements AgentThread {
     }
     args.push(normalizedInput.message);
 
-    const child = spawn(process.env["OPENCODE_CLI_PATH"] ?? "opencode", args, {
+    const child = spawn(getBackendConfig().runtime.opencodeCliPath, args, {
       cwd: this.options.workingDirectory ?? process.cwd(),
       env: {
         ...process.env,

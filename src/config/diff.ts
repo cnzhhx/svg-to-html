@@ -1,18 +1,15 @@
+import { getBackendConfig } from './backend.js'
+
 // ─── Diff / 像素对比 ────────────────────────────────────────
 // 全页面 diff 合格阈值
-export const DIFF_RATIO_THRESHOLD = Number(
-  process.env['DIFF_RATIO_THRESHOLD'] ?? 0.05,
-)
+export const getDiffRatioThreshold = () =>
+  getBackendConfig().diff.diffRatioThreshold
+export const DIFF_RATIO_THRESHOLD = getDiffRatioThreshold()
 // 单模块 diff 合格阈值
-export const MODULE_DIFF_RATIO_THRESHOLD = Number(
-  process.env['MODULE_DIFF_RATIO_THRESHOLD'] ?? 0.05,
-)
+export const getModuleDiffRatioThreshold = () =>
+  getBackendConfig().diff.moduleDiffRatioThreshold
+export const MODULE_DIFF_RATIO_THRESHOLD = getModuleDiffRatioThreshold()
 // 截图缩放倍数
-const parsedPngRasterScaleMultiplier = Number(
-  process.env['PNG_RASTER_SCALE_MULTIPLIER'] ?? 2,
-)
-export const PNG_RASTER_SCALE_MULTIPLIER =
-  Number.isFinite(parsedPngRasterScaleMultiplier) &&
-  parsedPngRasterScaleMultiplier > 0
-    ? parsedPngRasterScaleMultiplier
-    : 2
+export const getPngRasterScaleMultiplier = () =>
+  getBackendConfig().diff.pngRasterScaleMultiplier
+export const PNG_RASTER_SCALE_MULTIPLIER = getPngRasterScaleMultiplier()

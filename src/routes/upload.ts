@@ -10,6 +10,10 @@ import {
   parseOutputFormat,
   resolveOutputTarget,
 } from "../core/output-target.js";
+import {
+  parseFrontendRuntimeSettings,
+  setSessionRuntimeSettings,
+} from "../config/index.js";
 import type { OutputFormat } from "../core/output-target.js";
 import { getWorkspaceRoot } from "../core/paths.js";
 import { sessionStore } from "../session-store.js";
@@ -37,6 +41,7 @@ const parseUploadSessionCount = (value: unknown) => {
 
 const UPLOAD_FIELD_KEYS = new Set([
   "outputFormat",
+  "settings",
   "scale",
   "sessionCount",
 ]);
@@ -104,6 +109,14 @@ router.post("/upload", async (req, res) => {
       }
 
       const scale = parseUploadScale(req.body?.scale);
+      let runtimeSettings;
+      try {
+        runtimeSettings = parseFrontendRuntimeSettings(req.body?.settings);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await badRequest(message);
+        return;
+      }
       let outputFormat: OutputFormat;
       try {
         outputFormat = parseOutputFormat(req.body?.outputFormat);
@@ -172,6 +185,7 @@ router.post("/upload", async (req, res) => {
           ],
           pendingUserMessages: [],
         });
+        setSessionRuntimeSettings(sessionId, runtimeSettings);
         sessions.push(session);
       }
 

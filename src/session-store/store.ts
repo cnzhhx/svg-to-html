@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
 
 import {
-  MAX_SESSION_LOG_CHARS,
-  MAX_SESSION_LOG_ENTRIES,
   emitSessionEvent,
+  getMaxSessionLogChars,
+  getMaxSessionLogEntries,
   truncateText,
 } from "./events.js";
 import {
@@ -207,10 +207,11 @@ class SessionStore extends EventEmitter {
   addLog(sessionId: string, message: string, visible = false) {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    const normalizedMessage = truncateText(message, MAX_SESSION_LOG_CHARS);
+    const normalizedMessage = truncateText(message, getMaxSessionLogChars());
     session.logs.push(normalizedMessage);
-    if (session.logs.length > MAX_SESSION_LOG_ENTRIES) {
-      session.logs.splice(0, session.logs.length - MAX_SESSION_LOG_ENTRIES);
+    const maxSessionLogEntries = getMaxSessionLogEntries();
+    if (session.logs.length > maxSessionLogEntries) {
+      session.logs.splice(0, session.logs.length - maxSessionLogEntries);
     }
     session.updatedAt = Date.now();
     this.persistence.persistSnapshot(session);

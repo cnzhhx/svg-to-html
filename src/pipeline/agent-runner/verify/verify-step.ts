@@ -1,5 +1,5 @@
 
-import { DIFF_RATIO_THRESHOLD } from "../../../config/index.js";
+import { getDiffRatioThreshold } from "../../../config/index.js";
 import { resolveSvgDesign } from "../../../core/design-resolve.js";
 import {
   sessionStore,
@@ -130,10 +130,11 @@ const runVerify = async (
     ],
   });
 
-  if (verifyResult.diffRatio > DIFF_RATIO_THRESHOLD) {
+  const diffRatioThreshold = getDiffRatioThreshold();
+  if (verifyResult.diffRatio > diffRatioThreshold) {
     sessionStore.addLog(
       sessionId,
-      `[pipeline] verify note (diff-ratio)${iterLabel}: diff=${(verifyResult.diffRatio * 100).toFixed(2)}%, threshold=${(DIFF_RATIO_THRESHOLD * 100).toFixed(2)}%`,
+      `[pipeline] verify note (diff-ratio)${iterLabel}: diff=${(verifyResult.diffRatio * 100).toFixed(2)}%, threshold=${(diffRatioThreshold * 100).toFixed(2)}%`,
     );
   }
 

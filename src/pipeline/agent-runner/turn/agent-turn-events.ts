@@ -1,15 +1,15 @@
 import { truncate } from '../../../core/string-utils.js'
 import {
-  MAX_AGENT_STDOUT_LOG_CHARS,
-  MAX_AGENT_STDOUT_LOG_LINE_CHARS,
-  MAX_AGENT_STDOUT_LOG_LINES,
-  MAX_EVENT_COMMAND_CHARS,
-  MAX_EVENT_COMMAND_OUTPUT_CHARS,
-  MAX_EVENT_METRIC_CHUNK_GAPS,
-  MAX_EVENT_METRIC_THINK_SAMPLES,
-  MAX_EVENT_REASONING_CHARS,
-  MAX_EVENT_TOOL_TEXT_CHARS,
-  MAX_MODEL_TELEMETRY_RECORDS,
+  getMaxAgentStdoutLogChars,
+  getMaxAgentStdoutLogLineChars,
+  getMaxAgentStdoutLogLines,
+  getMaxEventCommandChars,
+  getMaxEventCommandOutputChars,
+  getMaxEventMetricChunkGaps,
+  getMaxEventMetricThinkSamples,
+  getMaxEventReasoningChars,
+  getMaxEventToolTextChars,
+  getMaxModelTelemetryRecords,
 } from '../../../config/index.js'
 import { sessionStore } from '../../../session-store.js'
 import type {
@@ -19,18 +19,18 @@ import type {
 } from '../../agent-runtime/index.js'
 
 const truncateLine = (line: string) =>
-  truncate(line, MAX_AGENT_STDOUT_LOG_LINE_CHARS, '…')
+  truncate(line, getMaxAgentStdoutLogLineChars(), '…')
 
 const logCommandOutputPreview = (sessionId: string, output: string) => {
   const trimmed = output.trim()
   if (!trimmed) return
 
   const preview =
-    trimmed.length > MAX_AGENT_STDOUT_LOG_CHARS
-      ? trimmed.slice(0, MAX_AGENT_STDOUT_LOG_CHARS)
+    trimmed.length > getMaxAgentStdoutLogChars()
+      ? trimmed.slice(0, getMaxAgentStdoutLogChars())
       : trimmed
   const previewLines = preview.split(/\r?\n/).filter((line) => line.trim())
-  const lines = previewLines.slice(0, MAX_AGENT_STDOUT_LOG_LINES)
+  const lines = previewLines.slice(0, getMaxAgentStdoutLogLines())
 
   lines.forEach((line) => {
     sessionStore.addLog(sessionId, `[agent:stdout] ${truncateLine(line)}`)
@@ -60,14 +60,14 @@ const compactUnknownForEvent = (value: unknown, maxChars: number) => {
 const compactStringArray = (values: string[], maxItems: number) =>
   values
     .slice(0, maxItems)
-    .map((value) => truncateForEvent(value, MAX_EVENT_TOOL_TEXT_CHARS))
+    .map((value) => truncateForEvent(value, getMaxEventToolTextChars()))
 
 const compactMetricsForSession = (
   metrics: AgentTurnMetrics,
 ): AgentTurnMetrics => {
   return {
     ...metrics,
-    chunkGaps: metrics.chunkGaps.slice(0, MAX_EVENT_METRIC_CHUNK_GAPS),
+    chunkGaps: metrics.chunkGaps.slice(0, getMaxEventMetricChunkGaps()),
     providerTelemetry: metrics.providerTelemetry
       ? {
           ...metrics.providerTelemetry,
@@ -82,7 +82,7 @@ const compactMetricsForSession = (
           providerRequestIds: metrics.providerTelemetry.providerRequestIds.slice(
             0,
             20,
-          ).map((value) => truncateForEvent(value, MAX_EVENT_TOOL_TEXT_CHARS)),
+          ).map((value) => truncateForEvent(value, getMaxEventToolTextChars())),
           retryEvents: compactStringArray(
             metrics.providerTelemetry.retryEvents,
             20,
@@ -91,16 +91,16 @@ const compactMetricsForSession = (
             typeof metrics.providerTelemetry.stderrTail === 'string'
               ? truncateForEvent(
                   metrics.providerTelemetry.stderrTail,
-                  MAX_EVENT_TOOL_TEXT_CHARS,
+                  getMaxEventToolTextChars(),
                 )
               : metrics.providerTelemetry.stderrTail,
         }
       : undefined,
     thinkSamples: metrics.thinkSamples
-      .slice(0, MAX_EVENT_METRIC_THINK_SAMPLES)
+      .slice(0, getMaxEventMetricThinkSamples())
       .map((sample) => ({
         ...sample,
-        text: truncateForEvent(sample.text, MAX_EVENT_TOOL_TEXT_CHARS),
+        text: truncateForEvent(sample.text, getMaxEventToolTextChars()),
       })),
   }
 }
@@ -122,11 +122,11 @@ const compactEventForSession = (event: AgentThreadEvent): AgentThreadEvent => {
       ...event,
       item: {
         ...event.item,
-        command: truncateForEvent(event.item.command, MAX_EVENT_COMMAND_CHARS),
+        command: truncateForEvent(event.item.command, getMaxEventCommandChars()),
         aggregated_output: event.item.aggregated_output
           ? truncateForEvent(
               event.item.aggregated_output,
-              MAX_EVENT_COMMAND_OUTPUT_CHARS,
+              getMaxEventCommandOutputChars(),
             )
           : event.item.aggregated_output,
       },
@@ -142,7 +142,7 @@ const compactEventForSession = (event: AgentThreadEvent): AgentThreadEvent => {
       ...event,
       item: {
         ...event.item,
-        text: truncateForEvent(event.item.text, MAX_EVENT_REASONING_CHARS),
+        text: truncateForEvent(event.item.text, getMaxEventReasoningChars()),
       },
     }
   }
@@ -158,7 +158,7 @@ const compactEventForSession = (event: AgentThreadEvent): AgentThreadEvent => {
         ...event.item,
         message: truncateForEvent(
           event.item.message,
-          MAX_EVENT_TOOL_TEXT_CHARS,
+          getMaxEventToolTextChars(),
         ),
       },
     }
@@ -173,10 +173,10 @@ const compactEventForSession = (event: AgentThreadEvent): AgentThreadEvent => {
       ...event,
       item: {
         ...event.item,
-        server: truncateForEvent(event.item.server, MAX_EVENT_TOOL_TEXT_CHARS),
-        tool: truncateForEvent(event.item.tool, MAX_EVENT_TOOL_TEXT_CHARS),
+        server: truncateForEvent(event.item.server, getMaxEventToolTextChars()),
+        tool: truncateForEvent(event.item.tool, getMaxEventToolTextChars()),
         ...(event.item.filePath
-          ? { filePath: truncateForEvent(event.item.filePath, MAX_EVENT_TOOL_TEXT_CHARS) }
+          ? { filePath: truncateForEvent(event.item.filePath, getMaxEventToolTextChars()) }
           : {}),
         ...(event.item.error
           ? {
@@ -184,7 +184,7 @@ const compactEventForSession = (event: AgentThreadEvent): AgentThreadEvent => {
                 ...event.item.error,
                 message: truncateForEvent(
                   event.item.error.message,
-                  MAX_EVENT_TOOL_TEXT_CHARS,
+                  getMaxEventToolTextChars(),
                 ),
               },
             }
@@ -193,7 +193,7 @@ const compactEventForSession = (event: AgentThreadEvent): AgentThreadEvent => {
           ? {
               result: compactUnknownForEvent(
                 event.item.result,
-                MAX_EVENT_TOOL_TEXT_CHARS,
+                getMaxEventToolTextChars(),
               ),
             }
           : {}),
@@ -207,7 +207,7 @@ const compactEventForSession = (event: AgentThreadEvent): AgentThreadEvent => {
         ...event.error,
         message: truncateForEvent(
           event.error.message,
-          MAX_EVENT_TOOL_TEXT_CHARS,
+          getMaxEventToolTextChars(),
         ),
       },
     }
@@ -215,7 +215,7 @@ const compactEventForSession = (event: AgentThreadEvent): AgentThreadEvent => {
   if (event.type === 'error') {
     return {
       ...event,
-      message: truncateForEvent(event.message, MAX_EVENT_TOOL_TEXT_CHARS),
+      message: truncateForEvent(event.message, getMaxEventToolTextChars()),
     }
   }
   return event
@@ -225,7 +225,8 @@ const persistModelTelemetry = (
   sessionId: string,
   metrics: AgentTurnMetrics,
 ) => {
-  if (MAX_MODEL_TELEMETRY_RECORDS <= 0) return
+  const maxModelTelemetryRecords = getMaxModelTelemetryRecords()
+  if (maxModelTelemetryRecords <= 0) return
   const session = sessionStore.get(sessionId)
   if (!session) return
 
@@ -240,13 +241,13 @@ const persistModelTelemetry = (
     firstTextDelayMs: metrics.firstTextDelayMs,
     firstTextSample:
       typeof metrics.firstTextSample === 'string'
-        ? truncateForEvent(metrics.firstTextSample, MAX_EVENT_TOOL_TEXT_CHARS)
+        ? truncateForEvent(metrics.firstTextSample, getMaxEventToolTextChars())
         : metrics.firstTextSample,
     firstThinkAt: metrics.firstThinkAt,
     firstThinkDelayMs: metrics.firstThinkDelayMs,
     firstThinkSample:
       typeof metrics.firstThinkSample === 'string'
-        ? truncateForEvent(metrics.firstThinkSample, MAX_EVENT_TOOL_TEXT_CHARS)
+        ? truncateForEvent(metrics.firstThinkSample, getMaxEventToolTextChars())
         : metrics.firstThinkSample,
     maxChunkGapMs: metrics.maxChunkGapMs,
     providerTelemetry: metrics.providerTelemetry,
@@ -260,7 +261,7 @@ const persistModelTelemetry = (
     thinkChunkCount: metrics.thinkChunkCount,
   }
 
-  const updatedRecords = previousRecords.length >= MAX_MODEL_TELEMETRY_RECORDS
+  const updatedRecords = previousRecords.length >= maxModelTelemetryRecords
     ? [...previousRecords.slice(1), record]
     : [...previousRecords, record]
 
@@ -291,20 +292,20 @@ const summarizeItem = (item: AgentThreadItem) => {
       return '[reasoning omitted]'
     case 'agent_message':
       return item.text
-        ? `[message] ${truncateForEvent(item.text, MAX_EVENT_TOOL_TEXT_CHARS)}`
+        ? `[message] ${truncateForEvent(item.text, getMaxEventToolTextChars())}`
         : '[message]'
     case 'command_execution':
-      return `[command:${item.status}] ${truncateForEvent(item.command, MAX_EVENT_COMMAND_CHARS)}`
+      return `[command:${item.status}] ${truncateForEvent(item.command, getMaxEventCommandChars())}`
     case 'mcp_tool_call':
-      return `[mcp:${item.status}] ${truncateForEvent(item.server, MAX_EVENT_TOOL_TEXT_CHARS)}/${truncateForEvent(item.tool, MAX_EVENT_TOOL_TEXT_CHARS)}`
+      return `[mcp:${item.status}] ${truncateForEvent(item.server, getMaxEventToolTextChars())}/${truncateForEvent(item.tool, getMaxEventToolTextChars())}`
     case 'todo_list':
-      return `[todo] ${item.items.map((entry) => `${entry.completed ? 'x' : '-'} ${truncateForEvent(entry.text, MAX_EVENT_TOOL_TEXT_CHARS)}`).join(' | ')}`
+      return `[todo] ${item.items.map((entry) => `${entry.completed ? 'x' : '-'} ${truncateForEvent(entry.text, getMaxEventToolTextChars())}`).join(' | ')}`
     case 'error':
-      return `[error] ${truncateForEvent(item.message, MAX_EVENT_TOOL_TEXT_CHARS)}`
+      return `[error] ${truncateForEvent(item.message, getMaxEventToolTextChars())}`
     case 'file_change':
-      return `[file_change:${item.status}] ${item.changes.map((change) => `${change.kind}:${truncateForEvent(change.path, MAX_EVENT_TOOL_TEXT_CHARS)}`).join(', ')}`
+      return `[file_change:${item.status}] ${item.changes.map((change) => `${change.kind}:${truncateForEvent(change.path, getMaxEventToolTextChars())}`).join(', ')}`
     case 'web_search':
-      return `[web_search] ${truncateForEvent(item.query, MAX_EVENT_TOOL_TEXT_CHARS)}`
+      return `[web_search] ${truncateForEvent(item.query, getMaxEventToolTextChars())}`
     default:
       return '[item] unknown'
   }
@@ -411,7 +412,7 @@ const logThreadEvent = (
           statusSummary +
           requestIdSummary +
           (metrics.firstThinkSample
-            ? `, thinkSample="${truncateForEvent(metrics.firstThinkSample, MAX_EVENT_TOOL_TEXT_CHARS)}"`
+            ? `, thinkSample="${truncateForEvent(metrics.firstThinkSample, getMaxEventToolTextChars())}"`
             : ''),
       )
       return
@@ -419,7 +420,7 @@ const logThreadEvent = (
     case 'turn.failed':
       sessionStore.addLog(
         sessionId,
-        `[agent] turn failed: ${truncateForEvent(event.error.message, MAX_EVENT_TOOL_TEXT_CHARS)}`,
+        `[agent] turn failed: ${truncateForEvent(event.error.message, getMaxEventToolTextChars())}`,
       )
       return
     case 'item.started':
@@ -442,7 +443,7 @@ const logThreadEvent = (
         if (event.item.status === 'in_progress' && event.item.command) {
           sessionStore.addLog(
             sessionId,
-            `[agent:running] ${truncateForEvent(event.item.command, MAX_EVENT_COMMAND_CHARS)}`,
+            `[agent:running] ${truncateForEvent(event.item.command, getMaxEventCommandChars())}`,
           )
         }
         if (
@@ -456,7 +457,7 @@ const logThreadEvent = (
     case 'error':
       sessionStore.addLog(
         sessionId,
-        `[agent] stream error: ${truncateForEvent(event.message, MAX_EVENT_TOOL_TEXT_CHARS)}`,
+        `[agent] stream error: ${truncateForEvent(event.message, getMaxEventToolTextChars())}`,
       )
       return
   }

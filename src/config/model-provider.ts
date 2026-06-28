@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 
 import {
   AGENT_REASONING_EFFORTS,
   parseReasoningEffort,
 } from "./agent-reasoning.js";
 import type { AgentReasoningEffort } from "./agent-reasoning.js";
+import { getBackendConfig, readBackendEnvString } from "./backend.js";
 
 type ModelRuntime = "opencode";
 type ModelWireApi = "anthropic" | "chat-completions" | "responses";
@@ -74,10 +74,7 @@ const ROLE_ENV_PREFIX: Record<ModelConfigRole, string> = {
   vision: "VISION",
 };
 
-const MODEL_PROVIDER_CONFIG_PATH = path.resolve(
-  process.cwd(),
-  "config/model-provider.json",
-);
+const getModelProviderConfigPath = () => getBackendConfig().modelProvider.configPath;
 
 const trimToUndefined = (value: string | undefined) => {
   const trimmed = value?.trim();
@@ -136,23 +133,26 @@ const normalizeHeaders = (headers: ModelDefinition["headers"]) => {
 };
 
 const normalizeModalities = (modalities: ModelDefinition["modalities"]) => {
-  if (!modalities) return undefined;
+  if (!modalities) return { input: ["text", "image"], output: ["text"] };
   const normalizeList = (value: unknown) =>
     Array.isArray(value)
       ? value.filter((entry): entry is string => typeof entry === "string")
       : [];
   const input = normalizeList(modalities.input);
   const output = normalizeList(modalities.output);
-  if (input.length === 0 && output.length === 0) return undefined;
-  return { input, output };
+  return {
+    input: input.length ? input : ["text", "image"],
+    output: output.length ? output : ["text"],
+  };
 };
 
 const readModelProviderConfig = (): ModelProviderFileConfig => {
-  if (!existsSync(MODEL_PROVIDER_CONFIG_PATH)) return {};
-  const raw = readFileSync(MODEL_PROVIDER_CONFIG_PATH, "utf8");
+  const configPath = getModelProviderConfigPath();
+  if (!existsSync(configPath)) return {};
+  const raw = readFileSync(configPath, "utf8");
   const parsed: unknown = JSON.parse(raw);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${MODEL_PROVIDER_CONFIG_PATH} must contain a JSON object`);
+    throw new Error(`${configPath} must contain a JSON object`);
   }
   return parsed as ModelProviderFileConfig;
 };
@@ -177,9 +177,11 @@ const requireConfigValue = ({
 };
 
 const resolveModelDefinition = ({
+  allowInlineModelDefinition = false,
   models,
   requestedModel,
 }: {
+  allowInlineModelDefinition?: boolean;
   models: Record<string, ModelDefinition>;
   requestedModel: string;
 }) => {
@@ -196,8 +198,17 @@ const resolveModelDefinition = ({
     }
   }
 
+  if (allowInlineModelDefinition) {
+    return {
+      modelConfigId: requestedModel,
+      modelConfig: {
+        provider: requestedModel,
+      } satisfies ModelDefinition,
+    };
+  }
+
   throw new Error(
-    `Unknown model config "${requestedModel}". Add it to ${MODEL_PROVIDER_CONFIG_PATH}.`,
+    `Unknown model config "${requestedModel}". Add it to ${getModelProviderConfigPath()}.`,
   );
 };
 
@@ -205,10 +216,10 @@ const getRoleEnvName = (role: ModelConfigRole, envName: string) =>
   `${ROLE_ENV_PREFIX[role]}_${envName}`;
 
 const readRoleEnv = (role: ModelConfigRole, envName: string) =>
-  trimToUndefined(process.env[getRoleEnvName(role, envName)]);
+  readBackendEnvString(getRoleEnvName(role, envName));
 
 const readRoleAwareEnv = (role: ModelConfigRole, envName: string) =>
-  readRoleEnv(role, envName) ?? trimToUndefined(process.env[envName]);
+  readRoleEnv(role, envName) ?? readBackendEnvString(envName);
 
 const formatRoleAwareEnvNames = (role: ModelConfigRole, envNames: string[]) => {
   const roleEnvNames = envNames.map((envName) => getRoleEnvName(role, envName));
@@ -226,9 +237,12 @@ const resolveRequestedModel = ({
     role === "moduleAgent"
       ? fileConfig.moduleAgentModel
       : fileConfig.otherModel;
+  const inlineModelId = readRoleAwareEnv(role, "MODEL_ID");
   return (
     readRoleAwareEnv(role, "MODEL_CONFIG_ID") ??
     readRoleAwareEnv(role, "MODEL_PROVIDER") ??
+    readRoleAwareEnv(role, "MODEL_PROVIDER_NAME") ??
+    inlineModelId ??
     trimToUndefined(configuredModel)
   );
 };
@@ -242,6 +256,13 @@ const getDefaultReasoningEffort = (role: ModelConfigRole) =>
   role === "moduleAgent"
     ? AGENT_REASONING_EFFORTS.default
     : AGENT_REASONING_EFFORTS.support;
+
+const hasInlineModelDefinition = (role: ModelConfigRole) =>
+  Boolean(
+    readRoleAwareEnv(role, "MODEL_BASE_URL") &&
+      readRoleAwareEnv(role, "MODEL_ID") &&
+      readRoleAwareEnv(role, "MODEL_API_KEY"),
+  );
 
 const validateModelConfig = ({
   config,
@@ -269,10 +290,11 @@ const resolveModelProviderConfig = ({
   const requestedModel = resolveRequestedModel({ fileConfig, role });
   if (!requestedModel) {
     throw new Error(
-      `Missing model config for ${role} role. Set ${getConfiguredModelKey(role)} in ${MODEL_PROVIDER_CONFIG_PATH} or provide ${formatRoleAwareEnvNames(role, ["MODEL_CONFIG_ID", "MODEL_PROVIDER"])}.`,
+      `Missing model config for ${role} role. Set ${getConfiguredModelKey(role)} in ${getModelProviderConfigPath()} or provide ${formatRoleAwareEnvNames(role, ["MODEL_CONFIG_ID", "MODEL_PROVIDER"])}.`,
     );
   }
   const { modelConfigId, modelConfig } = resolveModelDefinition({
+    allowInlineModelDefinition: hasInlineModelDefinition(role),
     models,
     requestedModel,
   });
@@ -306,17 +328,17 @@ const resolveModelProviderConfig = ({
   const resolvedConfig: ModelProviderConfig = {
     apiKey: requireConfigValue({
       envName: `${formatRoleAwareEnvNames(role, ["MODEL_API_KEY"])}, ${providerApiKeyEnv}`,
-      configPath: MODEL_PROVIDER_CONFIG_PATH,
+      configPath: getModelProviderConfigPath(),
       provider: providerLabel,
       value:
         readRoleAwareEnv(role, "MODEL_API_KEY") ??
-        trimToUndefined(process.env[providerApiKeyEnv]) ??
+        readBackendEnvString(providerApiKeyEnv) ??
         trimToUndefined(modelConfig.apiKey),
       valueName: "api key",
     }),
     baseURL: requireConfigValue({
       envName: formatRoleAwareEnvNames(role, ["MODEL_BASE_URL"]),
-      configPath: MODEL_PROVIDER_CONFIG_PATH,
+      configPath: getModelProviderConfigPath(),
       provider: providerLabel,
       value:
         readRoleAwareEnv(role, "MODEL_BASE_URL") ??
@@ -335,7 +357,7 @@ const resolveModelProviderConfig = ({
     modalities: normalizeModalities(modelConfig.modalities),
     model: requireConfigValue({
       envName: formatRoleAwareEnvNames(role, ["MODEL_ID"]),
-      configPath: MODEL_PROVIDER_CONFIG_PATH,
+      configPath: getModelProviderConfigPath(),
       provider: providerLabel,
       value:
         readRoleAwareEnv(role, "MODEL_ID") ??
@@ -373,34 +395,15 @@ const resolveModelProviderConfig = ({
   return resolvedConfig;
 };
 
-const fileConfig = readModelProviderConfig();
-const models = fileConfig.models ?? {};
+const resolveModelConfigForRole = (role: ModelConfigRole) => {
+  const fileConfig = readModelProviderConfig();
+  return resolveModelProviderConfig({
+    fileConfig,
+    models: fileConfig.models ?? {},
+    role,
+  });
+};
 
-const TEXT_MODEL_CONFIG = resolveModelProviderConfig({
-  fileConfig,
-  models,
-  role: "text",
-});
-const VISION_MODEL_CONFIG = resolveModelProviderConfig({
-  fileConfig,
-  models,
-  role: "vision",
-});
-const MODULE_AGENT_MODEL_CONFIG = resolveModelProviderConfig({
-  fileConfig,
-  models,
-  role: "moduleAgent",
-});
-const MODEL_CONFIGS = {
-  moduleAgent: MODULE_AGENT_MODEL_CONFIG,
-  text: TEXT_MODEL_CONFIG,
-  vision: VISION_MODEL_CONFIG,
-} as const;
-
-const resolveModelConfigForRole = (role: ModelConfigRole) =>
-  MODEL_CONFIGS[role];
-
-export { TEXT_MODEL_CONFIG };
 export { resolveModelConfigForRole };
 export type {
   ModelConfigRole,

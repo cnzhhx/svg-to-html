@@ -1,4 +1,4 @@
-import { DIFF_RATIO_THRESHOLD } from "../../../config/index.js";
+import { getDiffRatioThreshold } from "../../../config/index.js";
 
 import type { VerifyResult } from "../../verify.js";
 
@@ -17,7 +17,7 @@ const buildQualityAssessment = (
   verifyResult: VerifyResult,
   options: { diffRatioThreshold?: number } = {},
 ): QualityAssessment => {
-  const diffRatioThreshold = options.diffRatioThreshold ?? DIFF_RATIO_THRESHOLD;
+  const diffRatioThreshold = options.diffRatioThreshold ?? getDiffRatioThreshold();
   const blockingIssues: string[] = [];
   const softIssues: string[] = [];
   const globalDiffPassed = verifyResult.diffRatio <= diffRatioThreshold;
