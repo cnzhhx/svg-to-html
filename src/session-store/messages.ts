@@ -1,10 +1,10 @@
 import type { Session, SessionMessage } from './types.js'
 import {
-  AGENT_MESSAGE_SAMPLE_CHARS,
-  AGENT_REASONING_MESSAGE_CHARS,
+  getAgentMessageSampleChars,
+  getAgentReasoningMessageChars,
 } from '../config/index.js'
 
-const sampleText = (value: string, maxChars = AGENT_MESSAGE_SAMPLE_CHARS) => {
+const sampleText = (value: string, maxChars = getAgentMessageSampleChars()) => {
   if (maxChars <= 0) return ''
   return value.length <= maxChars ? value : value.slice(0, maxChars)
 }
@@ -110,7 +110,7 @@ const sessionMessageFromAgentEvent = (
           : ''
         : itemType === 'reasoning'
           ? typeof itemRecord['text'] === 'string'
-            ? sampleText(itemRecord['text'], AGENT_REASONING_MESSAGE_CHARS)
+            ? sampleText(itemRecord['text'], getAgentReasoningMessageChars())
             : ''
           : itemType === 'command_execution'
             ? sampleEventText([

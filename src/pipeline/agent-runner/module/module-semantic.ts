@@ -2,7 +2,7 @@ import { open, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { PNG_RASTER_SCALE_MULTIPLIER } from "../../../config/index.js";
+import { getPngRasterScaleMultiplier } from "../../../config/index.js";
 import { capturePage, launchEdge } from "../../../core/cdp.js";
 import type { Box } from "../../../core/geometry.js";
 import { isRecord } from "../../../core/type-guards.js";
@@ -769,7 +769,7 @@ const ensureModuleReferenceImage = async ({
   const browser = await launchEdge();
   try {
     await capturePage({
-      deviceScaleFactor: PNG_RASTER_SCALE_MULTIPLIER,
+      deviceScaleFactor: getPngRasterScaleMultiplier(),
       outputPath: sourceImagePath,
       port: browser.port,
       transparentBackground: true,
@@ -875,7 +875,7 @@ const ensureModuleContextImages = async ({
     // shows up as several images stacked together in composite.png. Opaque
     // background forces a surface clear per capture as an extra safeguard.
     await capturePage({
-      deviceScaleFactor: PNG_RASTER_SCALE_MULTIPLIER,
+      deviceScaleFactor: getPngRasterScaleMultiplier(),
       opaqueBackground: true,
       outputPath: sharedUnderlayOutputPath,
       port: browser.port,
@@ -884,7 +884,7 @@ const ensureModuleContextImages = async ({
       viewportWidth: moduleWidth,
     });
     await capturePage({
-      deviceScaleFactor: PNG_RASTER_SCALE_MULTIPLIER,
+      deviceScaleFactor: getPngRasterScaleMultiplier(),
       opaqueBackground: true,
       outputPath: compositeOutputPath,
       port: browser.port,

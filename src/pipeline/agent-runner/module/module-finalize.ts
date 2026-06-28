@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { MODULE_DIFF_RATIO_THRESHOLD } from "../../../config/index.js";
+import { getModuleDiffRatioThreshold } from "../../../config/index.js";
 import type { OutputFormat } from "../../../core/output-target.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import { writeJsonFile } from "../../../core/file-io.js";
@@ -195,7 +195,7 @@ const runModulePipelineFinalization = async ({
     moduleStats: [],
     round: 2,
     scope: "merged-page",
-    threshold: MODULE_DIFF_RATIO_THRESHOLD,
+    threshold: getModuleDiffRatioThreshold(),
   });
 
   // Framework pages can compile yet render blank if the bundle throws at mount.
@@ -241,7 +241,7 @@ const runModulePipelineFinalization = async ({
       failedModuleKinds: Object.fromEntries(failedModuleKinds),
       maxIterations: 1,
       rounds: completedAgentLocalRounds,
-      threshold: MODULE_DIFF_RATIO_THRESHOLD,
+      threshold: getModuleDiffRatioThreshold(),
     },
     validationRuns: moduleValidationRuns,
   });

@@ -41,9 +41,6 @@ const createThreadOptions = (
 const getThreadOptions = (modelRole: ModelConfigRole = "text") =>
   createThreadOptions(resolveModelConfigForRole(modelRole));
 
-const threadOptions = getThreadOptions("text");
-const visionThreadOptions = getThreadOptions("vision");
-
 const applyThreadOptionDefaults = (
   modelConfig: ModelProviderConfig,
   options: ThreadOptions,
@@ -166,7 +163,9 @@ const resumeAgentThread = (
 
 const runLlm = async (prompt: string): Promise<string> => {
   const thread = startAgentThread(
-    { ...threadOptions, modelReasoningEffort: AGENT_REASONING_EFFORTS.support },
+    {
+      modelReasoningEffort: AGENT_REASONING_EFFORTS.support,
+    },
     { modelRole: "text" },
   );
   const turn = await thread.run(prompt);
@@ -188,7 +187,6 @@ const runVisionLlm = async ({
 }): Promise<string> => {
   const thread = startAgentThread(
     {
-      ...visionThreadOptions,
       modelReasoningEffort: AGENT_REASONING_EFFORTS.support,
       runtimeTraceDir,
       runtimeTraceLabel,
@@ -211,5 +209,4 @@ export {
   runLlm,
   runVisionLlm,
   startAgentThread,
-  threadOptions,
 };

@@ -7,10 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
 import {
-  BROWSER_POOL_DISABLED,
-  BROWSER_POOL_IDLE_MS,
-  CDP_READY_TIMEOUT_MS,
-  CDP_SEND_TIMEOUT_MS,
+  getBrowserPoolDisabled,
+  getBrowserPoolIdleMs,
+  getCdpReadyTimeoutMs,
+  getCdpSendTimeoutMs,
+  getBackendConfig,
 } from "../config/index.js";
 
 type ServerWithEvents = Server & {
@@ -24,9 +25,9 @@ type ChildProcessWithEvents = ChildProcess & {
 
 const resolveBrowserBinary = () => {
   const envCandidates = [
-    process.env["CHROMIUM_PATH"],
-    process.env["CHROME_PATH"],
-    process.env["BROWSER_PATH"],
+    getBackendConfig().browser.chromiumPath,
+    getBackendConfig().browser.chromePath,
+    getBackendConfig().browser.browserPath,
   ].filter((value): value is string => Boolean(value));
 
   const platformCandidates =
@@ -172,7 +173,7 @@ class CdpClient {
   send = <T = unknown>(
     method: string,
     params: Record<string, unknown> = {},
-    timeoutMs = CDP_SEND_TIMEOUT_MS,
+    timeoutMs = getCdpSendTimeoutMs(),
   ) => {
     if (this.closed) {
       return Promise.reject(new Error(`CDP socket is closed: ${method}`));
@@ -305,7 +306,7 @@ const closeTarget = async (port: number, targetId: string) => {
 const waitForCondition = async (
   cdp: CdpClient,
   expression: string,
-  timeoutMs = CDP_READY_TIMEOUT_MS,
+  timeoutMs = getCdpReadyTimeoutMs(),
 ) => {
   const startedAt = Date.now();
 
@@ -494,7 +495,8 @@ const releasePooledBrowser = async (browser: BrowserProcess) => {
   if (pooledBrowserRefCount > 0 || pooledBrowser !== browser) return;
   clearPooledBrowserIdleTimer();
 
-  if (BROWSER_POOL_IDLE_MS === 0) {
+  const browserPoolIdleMs = getBrowserPoolIdleMs();
+  if (browserPoolIdleMs === 0) {
     pooledBrowser = null;
     await browser.close();
     return;
@@ -505,7 +507,7 @@ const releasePooledBrowser = async (browser: BrowserProcess) => {
     if (pooledBrowserRefCount > 0 || pooledBrowser !== browser) return;
     pooledBrowser = null;
     void browser.close();
-  }, BROWSER_POOL_IDLE_MS);
+  }, browserPoolIdleMs);
 };
 
 const shutdownBrowserPool = async () => {
@@ -525,7 +527,7 @@ const shutdownBrowserPool = async () => {
 };
 
 const launchEdge = async (preferredPort?: number): Promise<LaunchResult> => {
-  if (preferredPort || BROWSER_POOL_DISABLED) {
+  if (preferredPort || getBrowserPoolDisabled()) {
     const browser = await launchBrowserProcess(preferredPort);
     return {
       close: browser.close,
@@ -560,7 +562,7 @@ const capturePage = async ({
   outputPath,
   port,
   readyExpression = 'document.readyState === "complete" && window.__RENDER_READY__ === true',
-  readyTimeoutMs = CDP_READY_TIMEOUT_MS,
+  readyTimeoutMs = getCdpReadyTimeoutMs(),
   transparentBackground = false,
   url,
   viewportHeight,
@@ -652,10 +654,10 @@ const capturePage = async ({
 const evaluatePage = async <T>({
   deviceScaleFactor = 1,
   expression,
-  evaluateTimeoutMs = CDP_SEND_TIMEOUT_MS,
+  evaluateTimeoutMs = getCdpSendTimeoutMs(),
   port,
   readyExpression = 'document.readyState === "complete" && window.__RENDER_READY__ === true',
-  readyTimeoutMs = CDP_READY_TIMEOUT_MS,
+  readyTimeoutMs = getCdpReadyTimeoutMs(),
   url,
   viewportHeight,
   viewportWidth,

@@ -11,6 +11,7 @@ import eventsRouter from './routes/events.js'
 import jobRouter from './routes/job.js'
 import uploadRouter from './routes/upload.js'
 import { sessionStore } from './session-store.js'
+import { getBackendConfig } from './config/index.js'
 
 const isExpectedConnectionCloseError = (error: unknown) =>
   typeof error === 'object' &&
@@ -29,8 +30,8 @@ process.on('uncaughtException', (error) => {
   process.exit(1)
 })
 
-const PORT = Number(process.env['PORT'] ?? 80)
-const WORKSPACE = path.resolve(process.env['WORKSPACE'] ?? path.join(process.cwd(), 'workspace'))
+const PORT = getBackendConfig().server.port
+const WORKSPACE = getBackendConfig().server.workspace
 const BASE_PATH = '/transformer'
 const BUILD_TIME = new Date().toISOString()
 const INDEX_HTML_PATH = path.resolve(process.cwd(), 'public/index.html')

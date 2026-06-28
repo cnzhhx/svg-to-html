@@ -1,10 +1,10 @@
-import { TEXT_MODEL_CONFIG } from "../../config/model-provider.js";
+import { resolveModelConfigForRole } from "../../config/model-provider.js";
 import type { ModelProviderConfig } from "../../config/model-provider.js";
 import { createOpencodeRuntime } from "./opencode-runtime.js";
 import type { AgentRuntime } from "./types.js";
 
 const createAgentRuntime = (
-  modelConfig: ModelProviderConfig = TEXT_MODEL_CONFIG,
+  modelConfig: ModelProviderConfig = resolveModelConfigForRole("text"),
 ): AgentRuntime => {
   if (modelConfig.runtime !== "opencode") {
     throw new Error(
@@ -21,6 +21,7 @@ const getRuntimeCacheKey = (modelConfig: ModelProviderConfig) =>
     modelConfig.id,
     modelConfig.runtime,
     modelConfig.wireApi,
+    modelConfig.apiKey,
     modelConfig.provider ?? "",
     modelConfig.providerLabel,
     modelConfig.model,
@@ -37,7 +38,7 @@ const getRuntimeCacheKey = (modelConfig: ModelProviderConfig) =>
   ].join("::");
 
 const getAgentRuntime = (
-  modelConfig: ModelProviderConfig = TEXT_MODEL_CONFIG,
+  modelConfig: ModelProviderConfig = resolveModelConfigForRole("text"),
 ) => {
   const cacheKey = getRuntimeCacheKey(modelConfig);
   const cached = runtimeCache.get(cacheKey);

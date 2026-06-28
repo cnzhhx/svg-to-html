@@ -1,5 +1,5 @@
 import { truncate } from '../../../core/string-utils.js'
-import { ARCHIVE_COMMAND_OUTPUT_MAX_CHARS } from '../../../config/index.js'
+import { getArchiveCommandOutputMaxChars } from '../../../config/index.js'
 import { sessionStore } from '../../../session-store.js'
 import type { WorkflowArchiveMaterial } from '../../workflow-archive.js'
 import { archiveSessionCheckpoint } from '../archive/checkpoint.js'
@@ -92,10 +92,11 @@ const getAgentCommandStatus = ({
 }
 
 const truncateArchiveOutput = (output: string): string => {
-  if (ARCHIVE_COMMAND_OUTPUT_MAX_CHARS <= 0) return output
+  const archiveCommandOutputMaxChars = getArchiveCommandOutputMaxChars()
+  if (archiveCommandOutputMaxChars <= 0) return output
   return truncate(
     output,
-    ARCHIVE_COMMAND_OUTPUT_MAX_CHARS,
+    archiveCommandOutputMaxChars,
     (value) => `\n\n[truncated: ${value.length} chars total]`,
   )
 }

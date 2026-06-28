@@ -3,8 +3,8 @@ import http from 'node:http'
 import path from 'node:path'
 
 import {
-  STATIC_SERVER_POOL_DISABLED,
-  STATIC_SERVER_POOL_IDLE_MS,
+  getStaticServerPoolDisabled,
+  getStaticServerPoolIdleMs,
 } from '../config/index.js'
 import { getWorkspaceRoot, isInsidePath } from './paths.js';
 
@@ -161,7 +161,8 @@ const releasePooledStaticServer = async (server: StaticServerProcess) => {
   if (pooledServerRefCount > 0 || pooledServer !== server) return
   clearPooledServerIdleTimer()
 
-  if (STATIC_SERVER_POOL_IDLE_MS === 0) {
+  const staticServerPoolIdleMs = getStaticServerPoolIdleMs()
+  if (staticServerPoolIdleMs === 0) {
     pooledServer = null
     await server.close()
     return
@@ -172,7 +173,7 @@ const releasePooledStaticServer = async (server: StaticServerProcess) => {
     if (pooledServerRefCount > 0 || pooledServer !== server) return
     pooledServer = null
     void server.close()
-  }, STATIC_SERVER_POOL_IDLE_MS)
+  }, staticServerPoolIdleMs)
 }
 
 const shutdownStaticServerPool = async () => {
@@ -193,7 +194,7 @@ const shutdownStaticServerPool = async () => {
 
 const startStaticServer = async (): Promise<StaticServer> => {
   const rootDir = path.resolve(process.cwd())
-  if (STATIC_SERVER_POOL_DISABLED) {
+  if (getStaticServerPoolDisabled()) {
     const server = await startStaticServerProcess(rootDir)
     return {
       close: server.close,

@@ -1,11 +1,14 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import { DIFF_RATIO_THRESHOLD } from "../../../config/index.js";
+import {
+  getDiffRatioThreshold,
+  withSessionRuntimeSettings,
+} from "../../../config/index.js";
 import { resolveDesignTarget } from "../../../core/design-resolve.js";
 import { sessionStore, type SessionResult } from "../../../session-store.js";
 import { withModelUsageContext } from "../../model-usage.js";
-import { MAX_PARALLEL_MODULE_AGENTS } from "../../../config/index.js";
+import { getMaxParallelModuleAgents } from "../../../config/index.js";
 import {
   runModulePipelineV2,
   runModuleUserRevision,
@@ -100,16 +103,17 @@ const dequeueAllPendingUserMessages = (sessionId: string) => {
 };
 
 const runSession = (sessionId: string, controller: AbortController) =>
-  withModelUsageContext({ sessionId, source: "session" }, async () => {
-  const session = sessionStore.get(sessionId);
-  if (!session) return;
+  withSessionRuntimeSettings(sessionId, () =>
+    withModelUsageContext({ sessionId, source: "session" }, async () => {
+      const session = sessionStore.get(sessionId);
+      if (!session) return;
 
-  sessionStore.markExecutionStarted(sessionId);
-  sessionStore.setWorkflowMeta(sessionId, {
-    detail: "任务已开始，准备执行统一模块流水线",
-    iteration: 1,
-    maxIterations: 1,
-  });
+      sessionStore.markExecutionStarted(sessionId);
+      sessionStore.setWorkflowMeta(sessionId, {
+        detail: "任务已开始，准备执行统一模块流水线",
+        iteration: 1,
+        maxIterations: 1,
+      });
 
   try {
     const pendingUserMessages = dequeueAllPendingUserMessages(sessionId);
@@ -164,14 +168,15 @@ const runSession = (sessionId: string, controller: AbortController) =>
       1,
       Number(currentAfterPreflight?.result.moduleCount ?? 1),
     );
+    const maxParallelModuleAgents = getMaxParallelModuleAgents();
     if (currentAfterPreflight) {
       sessionStore.update(sessionId, {
         result: {
           ...currentAfterPreflight.result,
-          moduleConcurrencyLimit: MAX_PARALLEL_MODULE_AGENTS,
+          moduleConcurrencyLimit: maxParallelModuleAgents,
           moduleCount,
           moduleCountExceedsConcurrency:
-            moduleCount > MAX_PARALLEL_MODULE_AGENTS,
+            moduleCount > maxParallelModuleAgents,
         },
       });
     }
@@ -182,8 +187,8 @@ const runSession = (sessionId: string, controller: AbortController) =>
       ? `用户补充要求将由模块 ${selectedModuleId} agent 直接处理`
       : hasUserInstructions
         ? `用户补充要求将在模块合并后交给模块 ${selectedModuleId} agent`
-        : moduleCount > MAX_PARALLEL_MODULE_AGENTS
-          ? `统一模块流水线已启用：模块数 ${moduleCount} 超过并发 ${MAX_PARALLEL_MODULE_AGENTS}，会分批执行`
+        : moduleCount > maxParallelModuleAgents
+          ? `统一模块流水线已启用：模块数 ${moduleCount} 超过并发 ${maxParallelModuleAgents}，会分批执行`
           : `统一模块流水线已启用：模块数 ${moduleCount}`;
 
     sessionStore.setWorkflowMeta(sessionId, {
@@ -205,7 +210,7 @@ const runSession = (sessionId: string, controller: AbortController) =>
       : await runModulePipelineV2({
           controller,
           design,
-          maxParallelModuleAgents: MAX_PARALLEL_MODULE_AGENTS,
+          maxParallelModuleAgents,
           sessionId,
         });
 
@@ -227,7 +232,7 @@ const runSession = (sessionId: string, controller: AbortController) =>
     let failedModuleIds = pipelineResult.failedModuleIds;
 
     const qualityAssessment = buildQualityAssessment(verifyResult, {
-      diffRatioThreshold: DIFF_RATIO_THRESHOLD,
+      diffRatioThreshold: getDiffRatioThreshold(),
     });
     const currentSessionBeforeComplete = sessionStore.get(sessionId);
     if (currentSessionBeforeComplete) {
@@ -271,7 +276,8 @@ const runSession = (sessionId: string, controller: AbortController) =>
       );
     }
     sessionStore.failPipeline(sessionId, message);
-  }
-  });
+      }
+    }),
+  );
 
 export { runSession };

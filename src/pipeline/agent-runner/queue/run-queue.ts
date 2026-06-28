@@ -5,11 +5,13 @@ type RunSession = (
   controller: AbortController,
 ) => Promise<void>
 
+type MaxConcurrentAgentsInput = number | (() => number)
+
 const createAgentRunQueue = ({
   maxConcurrentAgents,
   runSession,
 }: {
-  maxConcurrentAgents: number
+  maxConcurrentAgents: MaxConcurrentAgentsInput
   runSession: RunSession
 }) => {
   const queue: string[] = []
@@ -35,6 +37,16 @@ const createAgentRunQueue = ({
     activeRuns.set(sessionId, runState)
     return runState
   }
+
+  const getMaxConcurrentAgents = () =>
+    Math.max(
+      1,
+      Math.floor(
+        typeof maxConcurrentAgents === 'function'
+          ? maxConcurrentAgents()
+          : maxConcurrentAgents,
+      ),
+    )
 
   const broadcastQueuePositions = () => {
     for (let i = 0; i < queue.length; i++) {
@@ -68,7 +80,7 @@ const createAgentRunQueue = ({
 
   const processQueue = () => {
     refillQueueFromStore()
-    while (activeRuns.size < maxConcurrentAgents && queue.length > 0) {
+    while (activeRuns.size < getMaxConcurrentAgents() && queue.length > 0) {
       const sessionId = queue.shift()!
       queued.delete(sessionId)
       const activeRun = reserveRunSlot(sessionId)

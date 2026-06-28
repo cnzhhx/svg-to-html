@@ -2,7 +2,10 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 
 import { AGENT_REASONING_EFFORTS } from "../../../config/agent-reasoning.js";
-import { MODULE_DIFF_RATIO_THRESHOLD, SEMANTIC_VISION_CONCURRENCY } from "../../../config/index.js";
+import {
+  getModuleDiffRatioThreshold,
+  getSemanticVisionConcurrency,
+} from "../../../config/index.js";
 import { normalizeOutputFormat } from "../../../core/output-target.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import { writeJsonFile } from "../../../core/file-io.js";
@@ -168,7 +171,7 @@ async function runModuleUserRevision(
     moduleDir,
     moduleSvgPath,
     sessionId,
-    visionSemaphore: new Semaphore(SEMANTIC_VISION_CONCURRENCY),
+    visionSemaphore: new Semaphore(getSemanticVisionConcurrency()),
   });
   throwIfRunAborted(controller);
 
@@ -369,7 +372,7 @@ async function runModuleUserRevision(
       moduleStats: [],
       round,
       scope: "merged-page" as const,
-      threshold: MODULE_DIFF_RATIO_THRESHOLD,
+      threshold: getModuleDiffRatioThreshold(),
     },
   ];
   await writeJsonFile(moduleAgentManifestPath, {
@@ -384,7 +387,7 @@ async function runModuleUserRevision(
       failedModuleIds,
       failedModuleKinds: moduleFailureKinds,
       maxIterations: round,
-      threshold: MODULE_DIFF_RATIO_THRESHOLD,
+      threshold: getModuleDiffRatioThreshold(),
     },
     validationRuns: moduleValidationRuns,
   });

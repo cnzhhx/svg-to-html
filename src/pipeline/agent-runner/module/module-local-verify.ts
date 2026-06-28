@@ -1,7 +1,7 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 
-import { MODULE_DIFF_RATIO_THRESHOLD } from "../../../config/index.js";
+import { getModuleDiffRatioThreshold } from "../../../config/index.js";
 import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types.js";
 import type { Region } from "../../../core/geometry.js";
 import { toUrlPath } from "../../../core/paths.js";
@@ -466,7 +466,7 @@ const verifyModuleLocal = async ({
     diffPngPath: result.diffPngPath,
     diffRatio: result.diffRatio,
     moduleId: module.id,
-    passed: result.diffRatio <= MODULE_DIFF_RATIO_THRESHOLD,
+    passed: result.diffRatio <= getModuleDiffRatioThreshold(),
     previewHtmlPath,
     renderPngPath: result.renderPngPath,
     sourceBasis: target.sourceBasis,

@@ -6,8 +6,8 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import {
-  PNG_RASTER_SCALE_MULTIPLIER,
-  VISION_TEXT_TIMEOUT_MS,
+  getPngRasterScaleMultiplier,
+  getVisionTextTimeoutMs,
 } from "../../../config/index.js";
 import { capturePage, launchEdge } from "../../../core/cdp.js";
 import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types.js";
@@ -402,14 +402,15 @@ const withVisionTimeout = ({
   const controller = new AbortController();
   return new Promise<string>((resolve, reject) => {
     const relayAbort = () => controller.abort(signal?.reason ?? "aborted");
+    const visionTextTimeoutMs = getVisionTextTimeoutMs();
     const timer = setTimeout(() => {
       controller.abort("module-semantic-vision-timeout");
       reject(
         new Error(
-          `module semantic vision timed out after ${VISION_TEXT_TIMEOUT_MS}ms`,
+          `module semantic vision timed out after ${visionTextTimeoutMs}ms`,
         ),
       );
-    }, VISION_TEXT_TIMEOUT_MS);
+    }, visionTextTimeoutMs);
     signal?.addEventListener("abort", relayAbort, { once: true });
     if (signal?.aborted) relayAbort();
     runVisionLlm({
@@ -593,7 +594,7 @@ const renderAnalysisSheet = async ({
   const browser = await launchEdge();
   try {
     await capturePage({
-      deviceScaleFactor: PNG_RASTER_SCALE_MULTIPLIER,
+      deviceScaleFactor: getPngRasterScaleMultiplier(),
       outputPath,
       port: browser.port,
       transparentBackground: true,

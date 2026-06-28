@@ -5,11 +5,17 @@ import path from "node:path";
 import archiver from "archiver";
 
 import {
-  DIFF_RATIO_THRESHOLD,
-  MAX_CONCURRENT_AGENTS,
-  SESSION_CHAT_DISABLED,
-  SESSION_DELETE_DISABLED,
-  SESSION_LOCAL_STORAGE_ENABLED,
+  getDiffRatioThreshold,
+  getFrontendSettingsResponse,
+  clearSessionRuntimeSettings,
+  getSessionRuntimeSettings,
+  getMaxConcurrentAgents,
+  getSessionChatDisabled,
+  getSessionDeleteDisabled,
+  getSessionLocalStorageEnabled,
+  parseFrontendRuntimeSettings,
+  sanitizeFrontendRuntimeSettingsForApi,
+  setSessionRuntimeSettings,
 } from "../config/index.js";
 import { detectBrowserBinary } from "../core/cdp.js";
 import { truncate } from "../core/string-utils.js";
@@ -186,12 +192,15 @@ const safeResultForApi = (
 const sessionForApi = (
   session: Session,
   { summary = false }: { summary?: boolean } = {},
-): Session & { __summary?: boolean } => ({
+): Session & { __summary?: boolean; runtimeSettings?: unknown } => ({
   ...session,
   __summary: summary || undefined,
   logs: safeLogsForApi(session.logs, { includeLogs: !summary }),
   messages: safeMessagesForApi(session.messages, { includeMessages: !summary }),
   pendingUserMessages: [],
+  runtimeSettings: sanitizeFrontendRuntimeSettingsForApi(
+    getSessionRuntimeSettings(session.id),
+  ),
   result: safeResultForApi(session, {
     summary,
   }),
@@ -271,12 +280,29 @@ router.post("/sessions/:id/start", async (req, res) => {
       .json({ error: `Cannot start session from status ${session.status}` });
     return;
   }
+  if (
+    req.body &&
+    typeof req.body === "object" &&
+    !Array.isArray(req.body) &&
+    Object.hasOwn(req.body, "settings")
+  ) {
+    try {
+      setSessionRuntimeSettings(
+        session.id,
+        parseFrontendRuntimeSettings(req.body.settings),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: message });
+      return;
+    }
+  }
   enqueueSession(session.id);
   res.json({ sessionId: session.id, status: "queued" });
 });
 
 router.post("/sessions/:id/messages", async (req, res) => {
-  if (SESSION_CHAT_DISABLED) {
+  if (getSessionChatDisabled()) {
     res.status(403).json({ error: "Session chat is disabled" });
     return;
   }
@@ -318,7 +344,7 @@ router.post("/sessions/:id/messages", async (req, res) => {
 });
 
 router.delete("/sessions/:id", async (req, res) => {
-  if (SESSION_DELETE_DISABLED) {
+  if (getSessionDeleteDisabled()) {
     res.status(403).json({ error: "Session deletion is disabled" });
     return;
   }
@@ -337,6 +363,7 @@ router.delete("/sessions/:id", async (req, res) => {
     const deletedSession = canceledRun?.active
       ? sessionStore.detachSession(session.id)
       : await sessionStore.deleteSession(session.id);
+    clearSessionRuntimeSettings(session.id);
     if (canceledRun?.active && deletedSession) {
       scheduleForceDeleteSessionFiles(deletedSession, "initial");
       void canceledRun.finished.then(() => {
@@ -354,17 +381,20 @@ router.delete("/sessions/:id", async (req, res) => {
 });
 
 router.get("/runtime", (_req, res) => {
+  const settings = getFrontendSettingsResponse();
   res.json({
     browserPath: detectBrowserBinary() ?? null,
-    maxConcurrentAgents: MAX_CONCURRENT_AGENTS,
+    maxConcurrentAgents: getMaxConcurrentAgents(),
     nodeVersion: process.version,
     platform: process.platform,
     release: os.release(),
-    diffRatioThreshold: DIFF_RATIO_THRESHOLD,
+    diffRatioThreshold: getDiffRatioThreshold(),
     workspaceRoot: getWorkspaceRoot(),
-    enableSessionLocalStorage: SESSION_LOCAL_STORAGE_ENABLED,
-    sessionDeleteDisabled: SESSION_DELETE_DISABLED,
-    sessionChatDisabled: SESSION_CHAT_DISABLED,
+    enableSessionLocalStorage: getSessionLocalStorageEnabled(),
+    frontendSettingsEnabled: settings.enabled,
+    frontendSettingsFields: settings.fields,
+    sessionDeleteDisabled: getSessionDeleteDisabled(),
+    sessionChatDisabled: getSessionChatDisabled(),
   });
 });
 

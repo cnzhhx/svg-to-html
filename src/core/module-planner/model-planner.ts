@@ -2,14 +2,11 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import type { AgentThread } from "../../pipeline/agent-runtime/index.js";
-import {
-  getThreadOptions,
-  startAgentThread,
-} from "../../pipeline/llm-client.js";
+import { startAgentThread } from "../../pipeline/llm-client.js";
 import { AGENT_REASONING_EFFORTS } from "../../config/agent-reasoning.js";
 import {
-  MODEL_PLANNER_MOCK_RESPONSE,
-  MODEL_PLANNER_TURN_TIMEOUT_MS,
+  getModelPlannerMockResponse,
+  getModelPlannerTurnTimeoutMs,
 } from "../../config/index.js";
 import { writeJsonFile, writeTextFile } from '../file-io.js';
 import { normalizeModelPlan } from "./normalize-plan.js";
@@ -29,7 +26,7 @@ import {
 import type { PlannedModules } from "../svg-vertical-modules/types.js";
 import { buildInitialPrompt, buildRetryPrompt } from "../../prompts/planner.js";
 
-const getPlannerTurnTimeoutMs = () => MODEL_PLANNER_TURN_TIMEOUT_MS;
+const getPlannerTurnTimeoutMs = () => getModelPlannerTurnTimeoutMs();
 
 type ModelPlannerSuccess = {
   attemptCount: number;
@@ -173,7 +170,7 @@ const runPlannerTurn = async ({
     ),
     prompt,
   );
-  const mockResponse = MODEL_PLANNER_MOCK_RESPONSE;
+  const mockResponse = getModelPlannerMockResponse();
   if (mockResponse !== undefined) return mockResponse;
 
   const timeoutMs = getPlannerTurnTimeoutMs();
@@ -218,7 +215,6 @@ const runModelPlanner = async (
 
   const thread = startAgentThread(
     {
-      ...getThreadOptions("vision"),
       additionalDirectories: [
         input.artifactDir,
         path.dirname(input.design.sourceSvgPath),

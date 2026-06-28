@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { MODULE_DIFF_RATIO_THRESHOLD } from "../../../config/index.js";
+import { getModuleDiffRatioThreshold } from "../../../config/index.js";
 import type { OutputFormat } from "../../../core/output-target.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types.js";
@@ -170,7 +170,7 @@ const collectAgentLocalValidation = async ({
         !mergeError &&
         hasOutput &&
         Boolean(localVerify) &&
-        diffRatio <= MODULE_DIFF_RATIO_THRESHOLD;
+        diffRatio <= getModuleDiffRatioThreshold();
       if (!passed && !failureKind) {
         failureKind = "module_visual_failed";
       }
@@ -317,7 +317,7 @@ const collectAgentLocalValidation = async ({
     moduleStats,
     round: 1,
     scope: "agent-local",
-    threshold: MODULE_DIFF_RATIO_THRESHOLD,
+    threshold: getModuleDiffRatioThreshold(),
   });
   sessionStore.completeWorkflowNode(
     sessionId,

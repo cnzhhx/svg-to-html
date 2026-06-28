@@ -1,7 +1,7 @@
 import { sessionStore } from '../../../session-store.js'
 import type { AgentInput, AgentThread } from '../../agent-runtime/index.js'
 import {
-  AGENT_VERIFY_ROLLBACK_THRESHOLD,
+  getAgentVerifyRollbackThreshold,
 } from '../../../config/index.js'
 import {
   archiveAgentCommandCheckpoint,
@@ -284,7 +284,8 @@ export async function runAgentTurnCore(
               await writeStopLossState()
               const degraded =
                 bestVerifyDiffRatio !== undefined &&
-                diffRatio > bestVerifyDiffRatio + AGENT_VERIFY_ROLLBACK_THRESHOLD
+                diffRatio >
+                  bestVerifyDiffRatio + getAgentVerifyRollbackThreshold()
 
               if (degraded && input.rollbackFiles && input.rollbackFiles.length > 0) {
                 const session = sessionStore.get(sessionId)

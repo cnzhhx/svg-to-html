@@ -1,10 +1,9 @@
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 
-const defaultWorkspaceRoot = () =>
-  path.resolve(
-    process.env["WORKSPACE"] ?? path.join(process.cwd(), "workspace"),
-  );
+import { getBackendConfig } from "../config/index.js";
+
+const defaultWorkspaceRoot = () => getBackendConfig().server.workspace;
 
 let workspaceRoot = defaultWorkspaceRoot();
 

@@ -3,8 +3,8 @@ import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 
 import {
-  WORKFLOW_ARCHIVE_FULL_EVERY_N,
-  WORKFLOW_ARCHIVE_TEXT_MAX_CHARS,
+  getWorkflowArchiveFullEveryN,
+  getWorkflowArchiveTextMaxChars,
 } from "../config/index.js";
 import { truncate } from "../core/string-utils.js";
 import { writeJsonFile, writeTextFile } from "../core/file-io.js";
@@ -117,7 +117,7 @@ const withManifestWriteLock = async <T>(
 const truncateArchiveText = (value: string) =>
   truncate(
     value,
-    WORKFLOW_ARCHIVE_TEXT_MAX_CHARS,
+    getWorkflowArchiveTextMaxChars(),
     (v, m) => `\n[archive text truncated ${v.length - m} chars]`,
   );
 
@@ -130,8 +130,9 @@ const shouldWriteFullMaterials = ({
 }) => {
   if (stage === "analysis" || stage === "agent") return true;
   if (round <= 1) return true;
-  if (WORKFLOW_ARCHIVE_FULL_EVERY_N <= 0) return false;
-  return round % WORKFLOW_ARCHIVE_FULL_EVERY_N === 0;
+  const archiveFullEveryN = getWorkflowArchiveFullEveryN();
+  if (archiveFullEveryN <= 0) return false;
+  return round % archiveFullEveryN === 0;
 };
 
 const filterArchiveMaterials = ({
