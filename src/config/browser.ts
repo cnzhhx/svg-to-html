@@ -9,6 +9,10 @@ export const CDP_SEND_TIMEOUT_MS = getCdpSendTimeoutMs()
 export const getCdpReadyTimeoutMs = () =>
   getBackendConfig().browser.cdpReadyTimeoutMs
 export const CDP_READY_TIMEOUT_MS = getCdpReadyTimeoutMs()
+// 浏览器截图 / 页面 evaluate 的并发闸门
+export const getCdpOperationConcurrency = () =>
+  getBackendConfig().browser.cdpOperationConcurrency
+export const CDP_OPERATION_CONCURRENCY = getCdpOperationConcurrency()
 // 浏览器池空闲回收时间（毫秒）
 export const getBrowserPoolIdleMs = () =>
   getBackendConfig().browser.browserPoolIdleMs

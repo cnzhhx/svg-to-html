@@ -1,7 +1,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +18,7 @@ import {
   getBrowserPoolDisabled,
   getBrowserPoolIdleMs,
   getCdpReadyTimeoutMs,
+  getCdpOperationConcurrency,
   getCdpSendTimeoutMs,
   getBackendConfig,
 } from "../config/index.js";
@@ -240,6 +249,56 @@ const sleep = (delay: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, delay);
   });
+
+const CDP_OPERATION_LOCK_STALE_MS = 5 * 60_000;
+const CDP_OPERATION_LOCK_RETRY_MS = 100;
+const CDP_OPERATION_LOCK_DIR = path.join(os.tmpdir(), "svg-to-html-cdp-locks");
+
+const normalizeCdpOperationConcurrency = (value: number) =>
+  Math.max(1, Math.floor(Number.isFinite(value) ? value : 1));
+
+const acquireCdpOperationSlot = async () => {
+  const limit = normalizeCdpOperationConcurrency(getCdpOperationConcurrency());
+  await mkdir(CDP_OPERATION_LOCK_DIR, { recursive: true });
+  const startedAt = Date.now();
+  const token = `${process.pid}\n${startedAt}\n`;
+
+  for (;;) {
+    for (let slot = 0; slot < limit; slot++) {
+      const lockPath = path.join(CDP_OPERATION_LOCK_DIR, `slot-${slot}.lock`);
+      try {
+        const handle = await open(lockPath, "wx");
+        await handle.writeFile(token);
+        await handle.close();
+        return async () => {
+          await unlink(lockPath).catch(() => {});
+        };
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "EEXIST") throw error;
+        try {
+          const lockStat = await stat(lockPath);
+          if (Date.now() - lockStat.mtimeMs > CDP_OPERATION_LOCK_STALE_MS) {
+            await unlink(lockPath).catch(() => {});
+          }
+        } catch {
+          // Lock disappeared between open and stat. Try again shortly.
+        }
+      }
+    }
+
+    await sleep(CDP_OPERATION_LOCK_RETRY_MS);
+  }
+};
+
+const withCdpOperationSlot = async <T>(operation: () => Promise<T>) => {
+  const release = await acquireCdpOperationSlot();
+  try {
+    return await operation();
+  } finally {
+    await release();
+  }
+};
 
 const getAvailablePort = async () =>
   new Promise<number>((resolve, reject) => {
@@ -550,7 +609,7 @@ const launchEdge = async (preferredPort?: number): Promise<LaunchResult> => {
   };
 };
 
-const capturePage = async ({
+const capturePageUnlocked = async ({
   clip,
   deviceScaleFactor = 1,
   // Default to an opaque base. The browser process is pooled and reused
@@ -651,7 +710,10 @@ const capturePage = async ({
   }
 };
 
-const evaluatePage = async <T>({
+const capturePage: typeof capturePageUnlocked = async (options) =>
+  withCdpOperationSlot(() => capturePageUnlocked(options));
+
+const evaluatePageUnlocked = async <T>({
   deviceScaleFactor = 1,
   expression,
   evaluateTimeoutMs = getCdpSendTimeoutMs(),
@@ -725,6 +787,18 @@ const evaluatePage = async <T>({
   }
 };
 
+const evaluatePage: typeof evaluatePageUnlocked = async <T>(options: {
+  deviceScaleFactor?: number;
+  expression: string;
+  evaluateTimeoutMs?: number;
+  port: number;
+  readyExpression?: string;
+  readyTimeoutMs?: number;
+  url: string;
+  viewportHeight: number;
+  viewportWidth: number;
+}) => withCdpOperationSlot(() => evaluatePageUnlocked<T>(options));
+
 export {
   capturePage,
   CdpClient,
@@ -734,5 +808,6 @@ export {
   evaluatePage,
   launchEdge,
   shutdownBrowserPool,
+  withCdpOperationSlot,
   waitForCondition,
 };

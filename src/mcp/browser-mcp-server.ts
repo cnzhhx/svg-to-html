@@ -114,6 +114,7 @@ class McpServer {
   private session: BrowserSession | null = null;
   private sessionPromise: Promise<BrowserSession> | null = null;
   private closed = false;
+  private shutdownPromise: Promise<void> | null = null;
   private moduleFileMtimes = new Map<string, number>();
   private moduleIds = new Map<string, string>();
 
@@ -121,10 +122,16 @@ class McpServer {
 
   async start() {
     process.stdin.on("data", (chunk) => this.onStdinData(chunk));
-    process.stdin.on("end", () => this.shutdown());
+    process.stdin.on("end", () => {
+      void this.shutdownAndExit(0);
+    });
 
-    process.on("SIGINT", () => this.shutdown());
-    process.on("SIGTERM", () => this.shutdown());
+    process.on("SIGINT", () => {
+      void this.shutdownAndExit(0);
+    });
+    process.on("SIGTERM", () => {
+      void this.shutdownAndExit(0);
+    });
     process.on("exit", () => this.shutdownSync());
 
     await new Promise<void>((resolve) => {
@@ -420,15 +427,26 @@ class McpServer {
     process.stdout.write(makeMcpMessage(message));
   }
 
-  private shutdown() {
-    if (this.closed) return;
+  private async shutdown() {
+    if (this.shutdownPromise) return this.shutdownPromise;
     this.closed = true;
-    const session = this.session;
-    if (session) {
+    this.shutdownPromise = (async () => {
+      const session =
+        this.session ??
+        (this.sessionPromise ? await this.sessionPromise.catch(() => null) : null);
       this.session = null;
-      session.destroy().catch(() => {});
-    }
-    process.exit(0);
+      this.sessionPromise = null;
+      if (session) await session.destroy().catch(() => {});
+    })();
+    return this.shutdownPromise;
+  }
+
+  private async shutdownAndExit(code: number) {
+    await Promise.race([
+      this.shutdown(),
+      new Promise((resolve) => setTimeout(resolve, 5_000)),
+    ]);
+    process.exit(code);
   }
 
   private shutdownSync() {
