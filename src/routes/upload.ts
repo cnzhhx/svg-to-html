@@ -179,7 +179,7 @@ router.post("/upload", async (req, res) => {
               role: "system",
               kind: "chat",
               text:
-                `已创建 session ${sessionId}，设计文件为 ${originalName}，SVG 渲染缩放为 ${scale}x，输出格式为 ${getOutputFormatLabel(outputFormat)}。上传完成后将直接进入结构解析、模块生成、合并与 verify。可读文本必须保留为真实 DOM，复杂无文本视觉元素可在模块内按需导出为局部资产。`,
+                `已创建 session ${sessionId}，设计文件为 ${originalName}，SVG 渲染缩放为 ${scale}x，输出格式为 ${getOutputFormatLabel(outputFormat)}。上传完成后将直接进入结构解析、模块生成、合并与还原度评估。可读文本必须保留为真实 DOM，复杂无文本视觉元素可在模块内按需导出为局部资产。`,
               createdAt: Date.now(),
             },
           ],

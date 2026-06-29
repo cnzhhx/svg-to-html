@@ -506,7 +506,7 @@ const BACKEND_CONFIG_FIELDS: BackendConfigFieldDefinition[] = [
   {
     configKey: "agent.verifyRollbackThreshold",
     defaultValue: 0.005,
-    description: "diffRatio 反弹超过此值时触发回滚逻辑。",
+    description: "视觉差异反弹超过此值时触发回滚逻辑。",
     envName: "AGENT_VERIFY_ROLLBACK_THRESHOLD",
     section: "agent",
     type: "number",
@@ -541,7 +541,7 @@ const BACKEND_CONFIG_FIELDS: BackendConfigFieldDefinition[] = [
   {
     configKey: "diff.diffRatioThreshold",
     defaultValue: 0.05,
-    description: "整页 verify 通过的 diffRatio 阈值。",
+    description: "整页还原度评估通过的视觉差异阈值。",
     envName: "DIFF_RATIO_THRESHOLD",
     section: "diff",
     type: "number",
@@ -549,7 +549,7 @@ const BACKEND_CONFIG_FIELDS: BackendConfigFieldDefinition[] = [
   {
     configKey: "diff.moduleDiffRatioThreshold",
     defaultValue: 0.05,
-    description: "单模块 verify 通过的 diffRatio 阈值。",
+    description: "单模块还原度评估通过的视觉差异阈值。",
     envName: "MODULE_DIFF_RATIO_THRESHOLD",
     section: "diff",
     type: "number",

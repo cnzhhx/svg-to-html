@@ -47,16 +47,16 @@ const runVerify = async (
     sessionStore.startWorkflowNode(sessionId, "verify", {
       detail:
         iteration && iteration > 1
-          ? `正在执行第 ${iteration} 轮${mode === "fast" ? "快速" : "完整"}视觉校验`
-          : `正在执行首轮${mode === "fast" ? "快速" : "完整"}视觉校验`,
+          ? `正在执行第 ${iteration} 轮${mode === "fast" ? "快速" : "完整"}还原度评估`
+          : `正在执行首轮${mode === "fast" ? "快速" : "完整"}还原度评估`,
       iteration: iteration ?? 1,
     });
   } else {
     sessionStore.setWorkflowMeta(sessionId, {
       detail:
         iteration && iteration > 1
-          ? `后续修复中：第 ${iteration} 轮${mode === "fast" ? "快速" : "完整"}视觉校验`
-          : `正在执行${mode === "fast" ? "快速" : "完整"}视觉校验`,
+          ? `后续修复中：第 ${iteration} 轮${mode === "fast" ? "快速" : "完整"}还原度评估`
+          : `正在执行${mode === "fast" ? "快速" : "完整"}还原度评估`,
       iteration: iteration ?? 1,
     });
   }
@@ -146,11 +146,11 @@ const runVerify = async (
     sessionStore.completeWorkflowNode(
       sessionId,
       "verify",
-      `${mode === "fast" ? "快速" : "完整"}视觉校验完成，当前 diff ${(verifyResult.diffRatio * 100).toFixed(2)}%`,
+      `${mode === "fast" ? "快速" : "完整"}还原度评估完成，视觉差异 ${(verifyResult.diffRatio * 100).toFixed(2)}%`,
     );
   } else {
     sessionStore.setWorkflowMeta(sessionId, {
-      detail: `后续修复中：第 ${iteration ?? 1} 轮${mode === "fast" ? "快速" : "完整"}校验完成，diff ${(verifyResult.diffRatio * 100).toFixed(2)}%`,
+      detail: `后续修复中：第 ${iteration ?? 1} 轮${mode === "fast" ? "快速" : "完整"}还原度评估完成，视觉差异 ${(verifyResult.diffRatio * 100).toFixed(2)}%`,
       iteration: iteration ?? 1,
     });
   }

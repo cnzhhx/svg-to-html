@@ -2,30 +2,30 @@
 
 [简体中文](README.md) | English
 
-Pixel-level restoration from design SVGs to real, maintainable HTML/CSS (with Vue / React support).
+High-fidelity design-to-code for enterprise frontend teams. Convert design SVGs into real, maintainable HTML/CSS (with Vue / React support) and produce a measurable fidelity report.
 
 ## Preview
 
-Below is a comparison between the original SVG render and the generated HTML render. The pixel diff for this run is **4.33%**.
+Below is a visual comparison between the original design render and the generated page render. This run has a **4.33% visual difference**, or roughly **95.67% fidelity**.
 
 ![SVG vs HTML comparison](example/comparison-4.33.png)
 
-| Original SVG | Generated HTML | Pixel Diff |
+| Original Design Render | Generated Page Render | Visual Difference |
 | --- | --- | --- |
-| ![Original SVG](example/assets/comparison-4.33-source.png) | ![Generated HTML](example/assets/comparison-4.33-html.png) | ![Pixel diff](example/assets/comparison-4.33-diff.png) |
+| ![Original design render](example/assets/comparison-4.33-source.png) | ![Generated page render](example/assets/comparison-4.33-html.png) | ![Visual difference map](example/assets/comparison-4.33-diff.png) |
 
 > Full interactive comparison page: [`example/comparison-4.33.html`](example/comparison-4.33.html)
 
 ## Features
 
-- **Pixel-level restoration** — Drives repairs using pixel diff between SVG and HTML renders
+- **High-fidelity output** — Quantifies visual differences between the original design and generated page, then uses that report to drive auto-repair
 - **Real HTML/CSS output** — Produces semantic DOM structure, not embedded SVGs
 - **Multiple output formats** — HTML, Vue, and React component output
 - **DOM text preservation** — Keeps visible text as real DOM text nodes
 - **Modular generation** — Splits large designs into semantic modules for parallel generation
 - **Smart preprocessing** — Pre-extracts text (OCR), layout boxes, colors, icons, backgrounds
-- **Verification loop** — Module-level and full-page pixel diff feedback with auto-repair
-- **Auto rollback** — Automatically rolls back to the best verified snapshot when diff degrades
+- **Fidelity loop** — Module-level and full-page visual comparison feedback with auto-repair
+- **Auto rollback** — Automatically rolls back to the best snapshot when fidelity degrades
 - **Web UI + CLI** — Browser interface for uploads and a full set of CLI tools
 
 ## Quick Start
@@ -118,7 +118,7 @@ All settings can be configured via the `.env` file. Key variables:
 | `MAX_CONCURRENT_AGENTS` | `2` | Concurrent session limit |
 | `MAX_PARALLEL_MODULE_AGENTS` | `5` | Parallel modules per session |
 | `CDP_OPERATION_CONCURRENCY` | `1` | Browser screenshot / page evaluate concurrency limit |
-| `DIFF_RATIO_THRESHOLD` | `0.05` | Full-page diff pass threshold (5%) |
+| `DIFF_RATIO_THRESHOLD` | `0.05` | Full-page visual-difference pass threshold (5%; lower means higher fidelity) |
 | `CHROMIUM_PATH` | auto-detect | Browser binary path |
 | `SESSION_CHAT_DISABLED` | `1` | Disable the chat repair UI and backend message endpoint |
 | `SESSION_DELETE_DISABLED` | `0` | Disable session deletion |
@@ -131,10 +131,10 @@ See `.env` for the full list.
 # Generate (preflight: layout analysis + scaffold + module plan)
 pnpm run task:generate -- <svg-path> --format html|vue|react
 
-# Verify page-level pixel diff
+# Generate a page-level fidelity report
 pnpm run task:verify -- <svg-path>
 
-# Verify module-level
+# Generate a module-level fidelity report
 pnpm run task:verify-module -- --module-dir <dir> --module-id <id> ...
 
 # Split design into modules
@@ -155,9 +155,9 @@ flowchart TD
   B --> C[Module Planning]
   C --> D[Module SVG Cropping + Semantic Analysis]
   D --> E[Parallel Module Agent Restoration]
-  E --> F[Module-level Verification + Rollback]
+  E --> F[Module-level Fidelity Evaluation + Rollback]
   F --> G[Merge All Modules]
-  G --> H[Full-page Verification]
+  G --> H[Full-page Fidelity Evaluation]
   H --> I[Final HTML/CSS/Vue/React Output]
 ```
 
@@ -166,16 +166,16 @@ flowchart TD
 ```
 src/
   cli/                    CLI entry points
-  config/                 Runtime, model, and verification settings
-  core/                   SVG parsing, rendering, diff, OCR, layout, policy
-  pipeline/               Agent orchestration, module generation, merge, verify
+  config/                 Runtime, model, and fidelity evaluation settings
+  core/                   SVG parsing, rendering, visual comparison, OCR, layout, policy
+  pipeline/               Agent orchestration, module generation, merge, fidelity evaluation
   routes/                 Express HTTP API
   session-store/          Session state, persistence, events
   prompts/                Agent prompt templates
 public/                   Web UI frontend
 config/                   Model provider configuration
 scripts/                  Install, deploy, and diagnostic scripts
-example/                  Publishable comparison examples
+example/                  Publishable fidelity comparison examples
 workspace/                Generated sessions and artifacts (git-ignored)
 ```
 
