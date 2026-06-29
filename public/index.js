@@ -50,7 +50,6 @@ const composer = $('#composer')
 const messageInput = $('#messageInput')
 const composerHint = $('#composerHint')
 const runtimeInfo = $('#runtimeInfo')
-const downloadBtn = $('#downloadBtn')
 const settingsBtn = $('#settingsBtn')
 const settingsDialog = $('#settingsDialog')
 const settingsDialogClose = $('#settingsDialogClose')
@@ -79,6 +78,8 @@ const localArtifactCacheMetaBySession = new Map()
 let autoArtifactCacheSweepPromise = null
 let runtimeInfoLoaded = false
 let syncingResultPreviewScroll = false
+let resultImageRenderToken = 0
+let resultImageObjectUrls = []
 
 const LOCAL_STORAGE_KEY = 'svg2html:sessions'
 const LOCAL_SESSION_SNAPSHOT_KEY = 'svg2html:sessionSnapshots'
@@ -1404,11 +1405,6 @@ resultGrid.addEventListener('scroll', handleResultPreviewScroll, true)
 resultGrid.addEventListener('pointerdown', handleResultComparePointerDown)
 resultGrid.addEventListener('keydown', handleResultCompareKeydown)
 
-downloadBtn.addEventListener('click', (event) => {
-  event.preventDefault()
-  void downloadCurrentSessionZip()
-})
-
 deleteSessionBtn.addEventListener('click', async () => {
   await deleteCurrentSession()
 })
@@ -2158,9 +2154,6 @@ function selectSession(sessionId) {
   if (cached) currentSession = cached
   if (isLocalOnlySession(currentSession)) {
     closeSSE()
-    downloadBtn.removeAttribute('href')
-  } else {
-    downloadBtn.href = `${basePath}/api/sessions/${sessionId}/download`
   }
   const url = new URL(location)
   url.searchParams.set('session', sessionId)
@@ -2745,6 +2738,9 @@ function renderResults(result) {
   renderResultCacheStatus(showResults ? { busy: localCacheBusy, meta: localCacheMeta } : null)
 
   if (!showResults) {
+    resultImageRenderToken += 1
+    releaseResultImageObjectUrls()
+    resultGrid.classList.remove('is-slider')
     resultGrid.innerHTML = ''
     resultUrls.innerHTML = ''
     resultActions.innerHTML = ''
@@ -2753,7 +2749,7 @@ function renderResults(result) {
   }
 
   syncResultViewToggle()
-  renderResultImages({ localFilesAvailable, renderPngPath, result })
+  renderResultImages({ localCacheReady, localFilesAvailable, renderPngPath, result })
   renderModuleOverlays()
 
   const urlBlocks = []
@@ -2807,25 +2803,63 @@ function renderResults(result) {
   resultActions.innerHTML = links.join('')
 }
 
-function getResultImageCards({ localFilesAvailable, renderPngPath, result }) {
-  return [
-    ['SVG 渲染', result?.svgPngPath, 'svg'],
-    ['渲染预览', renderPngPath, 'render'],
-  ].filter(([, value]) => localFilesAvailable && value)
+function releaseResultImageObjectUrls() {
+  resultImageObjectUrls.forEach((url) => {
+    try {
+      URL.revokeObjectURL(url)
+    } catch {
+      // Ignore browser-specific revoke failures.
+    }
+  })
+  resultImageObjectUrls = []
 }
 
-function renderResultImages({ localFilesAvailable, renderPngPath, result }) {
-  const cards = getResultImageCards({ localFilesAvailable, renderPngPath, result })
-  const svgCard = cards.find(([, , kind]) => kind === 'svg')
-  const renderCard = cards.find(([, , kind]) => kind === 'render')
+function getCachedRootArtifactPath(session, fileName) {
+  const meta = getLocalArtifactCacheMetaForSession(session)
+  const paths = Array.isArray(meta?.paths) ? meta.paths.map(normalizeFsPath) : []
+  if (!paths.length) return ''
+  const pathSet = new Set(paths)
+  const artifactDir = normalizeFsPath(session?.artifactDir || session?.result?.artifactDir || '')
+  const sessionDir = normalizeFsPath(session?.sessionDir || '')
+  const candidates = [
+    artifactDir ? `${artifactDir}/${fileName}` : '',
+    sessionDir ? `${sessionDir}/artifacts/${fileName}` : '',
+  ]
+    .filter(Boolean)
+    .map(normalizeFsPath)
+  const exact = candidates.find((candidate) => pathSet.has(candidate))
+  if (exact) return exact
+  return paths.find((item) => item.endsWith(`/artifacts/${fileName}`) && !item.includes('/modules/')) || ''
+}
+
+function getSessionSvgPngPath(session = currentSession) {
+  return session?.result?.svgPngPath || getCachedRootArtifactPath(session, 'svg.png')
+}
+
+function getResultImageCards({ localCacheReady, localFilesAvailable, renderPngPath, result }) {
+  const canReadImages = localFilesAvailable || localCacheReady
+  const svgPngPath = result?.svgPngPath || getSessionSvgPngPath(currentSession)
+  const effectiveRenderPngPath =
+    renderPngPath ||
+    getSessionRenderPngPath(currentSession) ||
+    getCachedRootArtifactPath(currentSession, 'render.png')
+  return [
+    { kind: 'svg', path: svgPngPath, title: 'SVG 渲染' },
+    { kind: 'render', path: effectiveRenderPngPath, title: '渲染预览' },
+  ].filter((card) => canReadImages && card.path)
+}
+
+function renderResultImageCards(cards) {
+  const svgCard = cards.find((card) => card.kind === 'svg')
+  const renderCard = cards.find((card) => card.kind === 'render')
   const canRenderSlider = Boolean(svgCard && renderCard)
   const effectiveMode = resultViewMode === 'slider' && canRenderSlider ? 'slider' : 'split'
   resultGrid.classList.toggle('is-slider', effectiveMode === 'slider')
 
   if (effectiveMode === 'slider') {
     resultGrid.innerHTML = renderResultComparisonHtml({
-      renderPath: renderCard[1],
-      svgPath: svgCard[1],
+      renderUrl: renderCard.url,
+      svgUrl: svgCard.url,
     })
     updateResultComparePosition()
     return
@@ -2833,12 +2867,12 @@ function renderResultImages({ localFilesAvailable, renderPngPath, result }) {
 
   resultGrid.innerHTML = cards
     .map(
-      ([title, filePath, kind]) => `
+      ({ title, url, kind }) => `
         <div class="result-card">
-          <div class="result-card-title">${title}</div>
+          <div class="result-card-title">${escapeHtml(title)}</div>
           <div class="result-card-frame" data-result-scroll-frame>
             <div class="result-card-preview">
-              <img src="${workspaceFileUrl(filePath)}" alt="${title}" data-result-kind="${kind}" onclick="openLightbox(this.src)" />
+              <img src="${escapeHtml(url)}" alt="${escapeHtml(title)}" data-result-kind="${escapeHtml(kind)}" onclick="openLightbox(this.src)" />
               ${kind === 'render' ? '<div class="module-overlay" data-module-overlay></div>' : ''}
             </div>
           </div>
@@ -2848,9 +2882,66 @@ function renderResultImages({ localFilesAvailable, renderPngPath, result }) {
     .join('')
 }
 
-function renderResultComparisonHtml({ renderPath, svgPath }) {
-  const svgUrl = workspaceFileUrl(svgPath)
-  const renderUrl = workspaceFileUrl(renderPath)
+function renderResultImages({ localCacheReady, localFilesAvailable, renderPngPath, result }) {
+  const token = ++resultImageRenderToken
+  releaseResultImageObjectUrls()
+
+  const cards = getResultImageCards({ localCacheReady, localFilesAvailable, renderPngPath, result })
+  if (!cards.length) {
+    resultGrid.classList.remove('is-slider')
+    resultGrid.innerHTML = ''
+    return
+  }
+
+  if (localFilesAvailable) {
+    renderResultImageCards(
+      cards.map((card) => ({
+        ...card,
+        url: workspaceFileUrl(card.path, currentSession),
+      })),
+    )
+    return
+  }
+
+  if (!localCacheReady || !currentSession?.id) {
+    resultGrid.classList.remove('is-slider')
+    resultGrid.innerHTML = ''
+    return
+  }
+
+  resultGrid.classList.remove('is-slider')
+  resultGrid.innerHTML = '<div class="empty-state">正在读取浏览器本地预览…</div>'
+  void renderCachedResultImages({ cards, session: currentSession, token })
+}
+
+async function renderCachedResultImages({ cards, session, token }) {
+  try {
+    const records = await getCachedArtifactFiles(session.id)
+    const resolvedCards = []
+    for (const card of cards) {
+      const url = await createCachedArtifactObjectUrl(card.path, records)
+      resolvedCards.push({ ...card, url })
+    }
+    if (token !== resultImageRenderToken || currentSession?.id !== session.id) {
+      resolvedCards.forEach((card) => {
+        if (card.url?.startsWith('blob:')) URL.revokeObjectURL(card.url)
+      })
+      return
+    }
+    resultImageObjectUrls = resolvedCards
+      .map((card) => card.url)
+      .filter((url) => typeof url === 'string' && url.startsWith('blob:'))
+    renderResultImageCards(resolvedCards)
+    renderModuleOverlays()
+  } catch (error) {
+    if (token !== resultImageRenderToken || currentSession?.id !== session.id) return
+    const message = error instanceof Error ? error.message : String(error)
+    resultGrid.classList.remove('is-slider')
+    resultGrid.innerHTML = `<div class="empty-state">本地预览读取失败：${escapeHtml(message)}</div>`
+  }
+}
+
+function renderResultComparisonHtml({ renderUrl, svgUrl }) {
   return `
     <div class="result-card comparison-card">
       <div class="result-card-title comparison-card-title">
@@ -2864,10 +2955,10 @@ function renderResultComparisonHtml({ renderPath, svgPath }) {
       <div class="comparison-frame" data-result-scroll-frame>
         <div class="comparison-stage" data-comparison-stage style="--comparison-position: ${resultComparePosition}%;">
           <div class="comparison-layer render">
-            <img src="${renderUrl}" alt="渲染预览" data-result-kind="render" />
+            <img src="${escapeHtml(renderUrl)}" alt="渲染预览" data-result-kind="render" />
           </div>
           <div class="comparison-layer svg">
-            <img src="${svgUrl}" alt="SVG 渲染" data-result-kind="svg" />
+            <img src="${escapeHtml(svgUrl)}" alt="SVG 渲染" data-result-kind="svg" />
           </div>
           <button class="comparison-handle" type="button" data-comparison-handle aria-label="拖动切换 SVG 和 Render 对比" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(resultComparePosition)}">
             <span class="comparison-handle-knob" aria-hidden="true"></span>
