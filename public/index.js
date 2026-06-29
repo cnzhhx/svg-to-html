@@ -864,16 +864,16 @@ const FIELD_TEXT = {
     label: '模块推理强度',
   },
   'agent.verifyRollbackThreshold': {
-    description: 'diffRatio 反弹超过此值时触发回滚。',
-    label: '回滚阈值',
+    description: '视觉差异反弹超过此值时触发回滚。',
+    label: '还原度回滚阈值',
   },
   'diff.diffRatioThreshold': {
-    description: '整页对比通过阈值，0.05 表示 5%。',
-    label: '整页 Diff 阈值',
+    description: '整页视觉差异通过阈值，0.05 表示 5%。数值越低，还原度要求越高。',
+    label: '整页视觉差异阈值',
   },
   'diff.moduleDiffRatioThreshold': {
-    description: '单模块对比通过阈值。',
-    label: '模块 Diff 阈值',
+    description: '单模块视觉差异通过阈值。',
+    label: '模块视觉差异阈值',
   },
   'diff.pngRasterScaleMultiplier': {
     description: '导出 PNG 局部资产时额外放大的倍率。',
@@ -912,7 +912,7 @@ const FIELD_TEXT = {
 const SETTINGS_SECTIONS = [
   { id: 'model', label: '大模型配置' },
   { id: 'agent', label: 'Agent' },
-  { id: 'diff', label: 'Diff 对比' },
+  { id: 'diff', label: '还原度评估' },
   { id: 'workflow', label: '工作流' },
   { id: 'session', label: 'Session' },
   { id: 'browser', label: '浏览器' },
@@ -2945,7 +2945,7 @@ function renderResultComparisonHtml({ renderUrl, svgUrl }) {
   return `
     <div class="result-card comparison-card">
       <div class="result-card-title comparison-card-title">
-        <span>滑块对比</span>
+        <span>视觉对比</span>
         <span class="comparison-title-labels" aria-hidden="true">
           <span class="comparison-title-label svg">SVG</span>
           <span class="comparison-title-separator">:</span>
@@ -3067,11 +3067,13 @@ function renderResultDiffGap(result) {
 
   const remainingRatio = Math.max(0, diffRatio - diffRatioThreshold)
   const passed = remainingRatio <= 0
-  const currentPercent = `${(diffRatio * 100).toFixed(2)}%`
+  const differencePercent = `${(diffRatio * 100).toFixed(2)}%`
+  const fidelityPercent = `${(Math.max(0, 1 - diffRatio) * 100).toFixed(2)}%`
 
   resultDiffGap.hidden = false
   resultDiffGap.classList.toggle('is-passed', passed)
-  resultDiffGap.textContent = currentPercent
+  resultDiffGap.textContent = `还原度 ${fidelityPercent}`
+  resultDiffGap.title = `视觉差异 ${differencePercent}，通过阈值 ${(diffRatioThreshold * 100).toFixed(2)}%`
 }
 
 function renderResultCacheStatus(state) {
@@ -4519,7 +4521,7 @@ function labelForWorkflowNode(node) {
     upload: '已上传',
     analysis: '结构解析',
     agent: '大模型生成',
-    verify: '视觉校验',
+    verify: '还原度评估',
     done: '完成',
   }
   return map[node] || node
