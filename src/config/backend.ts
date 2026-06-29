@@ -155,6 +155,10 @@ const buildBackendConfig = () => {
     },
     browser: {
       browserPath: readBackendEnvString("BROWSER_PATH"),
+      cdpOperationConcurrency: readPositiveNumber(
+        "CDP_OPERATION_CONCURRENCY",
+        1,
+      ),
       browserPoolDisabled: readTruthyFlag("BROWSER_POOL_DISABLED"),
       browserPoolIdleMs: readNumber("BROWSER_POOL_IDLE_MS", 1000),
       cdpReadyTimeoutMs: readNumber("CDP_READY_TIMEOUT_MS", 60_000),
@@ -766,6 +770,15 @@ const BACKEND_CONFIG_FIELDS: BackendConfigFieldDefinition[] = [
     defaultValue: 60_000,
     description: "等待浏览器调试端口 ready 的最长时间。",
     envName: "CDP_READY_TIMEOUT_MS",
+    section: "browser",
+    type: "number",
+  },
+  {
+    configKey: "browser.cdpOperationConcurrency",
+    defaultValue: 1,
+    description:
+      "跨进程浏览器截图/页面 evaluate 的并发上限；服务器资源紧张时建议保持 1。",
+    envName: "CDP_OPERATION_CONCURRENCY",
     section: "browser",
     type: "number",
   },

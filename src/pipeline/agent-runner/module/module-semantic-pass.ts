@@ -778,49 +778,47 @@ const runSuspiciousTextRecheck = async ({
     });
   }
 
-  await Promise.all(
-    recheckBatches.map(async ({ probes, sheetNumber }) => {
-      const sheetId = `sheet-recheck-${String(sheetNumber).padStart(3, "0")}`;
-      const sheetPath = path.join(analysisSheetsDir, `${sheetId}.png`);
-      const layout = await renderAnalysisSheet({
-        outputPath: sheetPath,
-        probes,
-        sheetId,
-        variant: "recheck",
-      });
-      try {
-        const recheckedSemantics = await visionSemaphore.run(() =>
-          classifySheetWithVision({
-            cells: layout.cellPlacements,
-            moduleDir,
-            moduleId: module.id,
-            moduleRegion: module.region,
-            probes,
-            signal,
-            sessionId,
-            sheetId,
-            sheetPath,
-          }),
-        );
-        recheckedSemantics.forEach((semantic, id) => {
-          if (
-            shouldAdoptRecheckSemantic({
-              current: nextSemantics.get(id),
-              next: semantic,
-            })
-          ) {
-            nextSemantics.set(id, semantic);
-          }
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        sessionStore.addLog(
+  for (const { probes, sheetNumber } of recheckBatches) {
+    const sheetId = `sheet-recheck-${String(sheetNumber).padStart(3, "0")}`;
+    const sheetPath = path.join(analysisSheetsDir, `${sheetId}.png`);
+    const layout = await renderAnalysisSheet({
+      outputPath: sheetPath,
+      probes,
+      sheetId,
+      variant: "recheck",
+    });
+    try {
+      const recheckedSemantics = await visionSemaphore.run(() =>
+        classifySheetWithVision({
+          cells: layout.cellPlacements,
+          moduleDir,
+          moduleId: module.id,
+          moduleRegion: module.region,
+          probes,
+          signal,
           sessionId,
-          `[module-semantic] ${module.id}: ${sheetId} recheck failed: ${message}; keeping primary classifications`,
-        );
-      }
-    }),
-  );
+          sheetId,
+          sheetPath,
+        }),
+      );
+      recheckedSemantics.forEach((semantic, id) => {
+        if (
+          shouldAdoptRecheckSemantic({
+            current: nextSemantics.get(id),
+            next: semantic,
+          })
+        ) {
+          nextSemantics.set(id, semantic);
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sessionStore.addLog(
+        sessionId,
+        `[module-semantic] ${module.id}: ${sheetId} recheck failed: ${message}; keeping primary classifications`,
+      );
+    }
+  }
 
   return nextSemantics;
 };
@@ -936,9 +934,9 @@ const runSemanticVisionPass = async ({
         ) {
           retryBatches.push(probes.slice(batchStart, batchStart + nextBatchSize));
         }
-        await Promise.all(
-          retryBatches.map((batch) => classifyBatch(batch, batchSizeIndex + 1)),
-        );
+        for (const batch of retryBatches) {
+          await classifyBatch(batch, batchSizeIndex + 1);
+        }
         return;
       }
       sessionStore.addLog(
@@ -981,7 +979,9 @@ const runSemanticVisionPass = async ({
       probeArtifacts.slice(batchStart, batchStart + initialBatchSize),
     );
   }
-  await Promise.all(primaryBatches.map((batch) => classifyBatch(batch, 0)));
+  for (const batch of primaryBatches) {
+    await classifyBatch(batch, 0);
+  }
 
   const recheckedSemanticsById = await runSuspiciousTextRecheck({
     module,

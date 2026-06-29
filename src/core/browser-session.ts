@@ -18,6 +18,7 @@ import {
   createTarget,
   closeTarget,
   launchEdge,
+  withCdpOperationSlot,
   waitForCondition,
 } from "./cdp.js";
 
@@ -187,53 +188,59 @@ export class BrowserSession {
 
   /** 为一个模块打开常驻 tab，返回 moduleId */
   async openModule(moduleDir: string): Promise<string> {
-    if (this.closed) throw new Error("BrowserSession is closed");
-    const metadata = await readModuleMetadata(moduleDir);
-    const { moduleId, width, height } = metadata;
+    return withCdpOperationSlot(async () => {
+      if (this.closed) throw new Error("BrowserSession is closed");
+      const metadata = await readModuleMetadata(moduleDir);
+      const { moduleId, width, height } = metadata;
 
-    // 如果已经开了就先关闭旧 tab
-    if (this.tabs.has(moduleId)) {
-      await this.closeModule(moduleId);
-    }
+      // 如果已经开了就先关闭旧 tab
+      if (this.tabs.has(moduleId)) {
+        await this.closeModule(moduleId);
+      }
 
-    const { filePath, tempDir } = await buildModulePreviewHtml({
-      moduleDir,
-      moduleId,
-      width,
-      height,
+      const { filePath, tempDir } = await buildModulePreviewHtml({
+        moduleDir,
+        moduleId,
+        width,
+        height,
+      });
+
+      const target = await createTarget(this.port);
+      const cdp = await CdpClient.connect(target.webSocketDebuggerUrl);
+      await cdp.send("Page.enable");
+      await cdp.send("Runtime.enable");
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        deviceScaleFactor: this.deviceScaleFactor,
+        height,
+        mobile: false,
+        screenHeight: height,
+        screenWidth: width,
+        width,
+      });
+      await cdp.send("Page.navigate", { url: pathToFileURL(filePath).href });
+      await waitForCondition(cdp, READY_EXPRESSION, 10_000);
+
+      this.tabs.set(moduleId, {
+        moduleId,
+        moduleDir,
+        targetId: target.id,
+        cdp,
+        htmlPath: filePath,
+        tempDir,
+        width,
+        height,
+      });
+
+      return moduleId;
     });
-
-    const target = await createTarget(this.port);
-    const cdp = await CdpClient.connect(target.webSocketDebuggerUrl);
-    await cdp.send("Page.enable");
-    await cdp.send("Runtime.enable");
-    await cdp.send("Emulation.setDeviceMetricsOverride", {
-      deviceScaleFactor: this.deviceScaleFactor,
-      height,
-      mobile: false,
-      screenHeight: height,
-      screenWidth: width,
-      width,
-    });
-    await cdp.send("Page.navigate", { url: pathToFileURL(filePath).href });
-    await waitForCondition(cdp, READY_EXPRESSION, 10_000);
-
-    this.tabs.set(moduleId, {
-      moduleId,
-      moduleDir,
-      targetId: target.id,
-      cdp,
-      htmlPath: filePath,
-      tempDir,
-      width,
-      height,
-    });
-
-    return moduleId;
   }
 
   /** 重新生成预览页面并 reload tab（文件变更后调用） */
   async reloadModule(moduleId: string): Promise<void> {
+    return withCdpOperationSlot(() => this.reloadModuleUnlocked(moduleId));
+  }
+
+  private async reloadModuleUnlocked(moduleId: string): Promise<void> {
     if (this.closed) throw new Error("BrowserSession is closed");
     const tab = this.tabs.get(moduleId);
     if (!tab) throw new Error(`Module tab not found: ${moduleId}`);
@@ -269,37 +276,39 @@ export class BrowserSession {
     script: string,
     options?: { skipReload?: boolean },
   ): Promise<T> {
-    if (this.closed) throw new Error("BrowserSession is closed");
-    const tab = this.tabs.get(moduleId);
-    if (!tab) throw new Error(`Module tab not found: ${moduleId}`);
+    return withCdpOperationSlot(async () => {
+      if (this.closed) throw new Error("BrowserSession is closed");
+      const tab = this.tabs.get(moduleId);
+      if (!tab) throw new Error(`Module tab not found: ${moduleId}`);
 
-    // 每次 evaluate 前 reload，确保是最新文件内容
-    if (!options?.skipReload) {
-      await this.reloadModule(moduleId);
-    }
+      // 每次 evaluate 前 reload，确保是最新文件内容
+      if (!options?.skipReload) {
+        await this.reloadModuleUnlocked(moduleId);
+      }
 
-    const result = await tab.cdp.send<{
-      exceptionDetails?: {
-        exception?: { description?: string; value?: string };
-        text?: string;
-      };
-      result?: { value?: T };
-    }>("Runtime.evaluate", {
-      awaitPromise: true,
-      expression: buildEvalExpression(script),
-      returnByValue: true,
+      const result = await tab.cdp.send<{
+        exceptionDetails?: {
+          exception?: { description?: string; value?: string };
+          text?: string;
+        };
+        result?: { value?: T };
+      }>("Runtime.evaluate", {
+        awaitPromise: true,
+        expression: buildEvalExpression(script),
+        returnByValue: true,
+      });
+
+      if (result.exceptionDetails) {
+        const detail =
+          result.exceptionDetails.exception?.description ??
+          result.exceptionDetails.exception?.value ??
+          result.exceptionDetails.text ??
+          "Unknown page evaluation error";
+        throw new Error(`Page evaluation failed: ${detail}`);
+      }
+
+      return result.result?.value as T;
     });
-
-    if (result.exceptionDetails) {
-      const detail =
-        result.exceptionDetails.exception?.description ??
-        result.exceptionDetails.exception?.value ??
-        result.exceptionDetails.text ??
-        "Unknown page evaluation error";
-      throw new Error(`Page evaluation failed: ${detail}`);
-    }
-
-    return result.result?.value as T;
   }
 
   /**
