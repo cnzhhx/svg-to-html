@@ -2151,16 +2151,18 @@ function selectSession(sessionId) {
   selectedModuleId = null
   chatFilterModuleId = null
   const cached = sessions.find((item) => item.id === sessionId)
-  if (cached) currentSession = cached
-  if (isLocalOnlySession(currentSession)) {
+  currentSession = cached || null
+  const localOnly = isLocalOnlySession(currentSession)
+  if (localOnly) {
     closeSSE()
   }
   const url = new URL(location)
   url.searchParams.set('session', sessionId)
   history.replaceState(null, '', url)
-  if (!isLocalOnlySession(currentSession)) connectSSE(sessionId)
+  renderSessionList()
+  if (!localOnly) connectSSE(sessionId)
   renderCurrentSession()
-  if (!isLocalOnlySession(currentSession)) {
+  if (!localOnly) {
     void fetchSessionDetails(sessionId)
   }
 }
