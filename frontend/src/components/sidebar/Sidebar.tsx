@@ -3,12 +3,14 @@ import { SessionList } from './SessionList'
 
 export function Sidebar({
   currentSessionId,
+  onCollapse,
   onOpenUpload,
   onUploadFile,
   onSelectSession,
   sessions,
 }: {
   currentSessionId: string | null
+  onCollapse: () => void
   onOpenUpload: () => void
   onUploadFile: (file: File) => void
   onSelectSession: (id: string) => void
@@ -23,17 +25,26 @@ export function Sidebar({
   return (
     <aside className="sidebar" id="sidebar">
       <div className="brand">
-        <div className="brand-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-            <polyline points="14 2 14 8 20 8" />
-            <path d="m10 13-2 2 2 2" />
-            <path d="m14 17 2-2-2-2" />
+        <div className="brand-main">
+          <div className="brand-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+              <polyline points="14 2 14 8 20 8" />
+              <path d="m10 13-2 2 2 2" />
+              <path d="m14 17 2-2-2-2" />
+            </svg>
+          </div>
+          <div className="brand-text">
+            <span className="brand-name">SVG → Code</span>
+          </div>
+        </div>
+        <button className="sidebar-collapse-btn" onClick={onCollapse} type="button" aria-label="收起侧边栏" title="收起侧边栏">
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 4h16v16H4z" />
+            <path d="M9 4v16" />
+            <path d="m16 9-3 3 3 3" />
           </svg>
-        </div>
-        <div className="brand-text">
-          <span className="brand-name">SVG → Code</span>
-        </div>
+        </button>
       </div>
 
       <button

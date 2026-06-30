@@ -15,21 +15,30 @@ export function ModulePicker({
     <div className={`module-picker${modules.length ? '' : ' is-empty'}`}>
       <div className="module-picker-header">
         <span>选择模块</span>
-        <strong>{selectedModuleId || (modules.length ? '请选择' : '暂无模块')}</strong>
+        <strong>{selectedModuleId || (modules.length ? '全部' : '暂无模块')}</strong>
       </div>
       <div className="module-picker-list">
         {modules.length ? (
-          modules.map((module, index) => (
+          <>
             <button
-              className={`module-picker-option${module.id === selectedModuleId ? ' is-selected' : ''}`}
-              data-module-id={module.id}
-              key={module.id}
-              onClick={() => onSelectModule(module.id)}
+              className={`module-picker-option${!selectedModuleId ? ' is-selected' : ''}`}
+              onClick={() => onSelectModule(null)}
               type="button"
             >
-              {index + 1}. {module.id}
+              全部
             </button>
-          ))
+            {modules.map((module, index) => (
+              <button
+                className={`module-picker-option${module.id === selectedModuleId ? ' is-selected' : ''}`}
+                data-module-id={module.id}
+                key={module.id}
+                onClick={() => onSelectModule(module.id)}
+                type="button"
+              >
+                {index + 1}. {module.id}
+              </button>
+            ))}
+          </>
         ) : (
           <span className="chat-drawer-meta">生成完成后可选择模块</span>
         )}

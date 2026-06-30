@@ -32,6 +32,7 @@ import { AppShell } from './components/app-shell/AppShell'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { Toolbar } from './components/toolbar/Toolbar'
 import { WorkflowPanel } from './components/workflow/WorkflowPanel'
+import { RunningWorkspace } from './components/workflow/RunningWorkspace'
 import { ResultPanel } from './components/result/ResultPanel'
 import { ChatDrawer } from './components/chat/ChatDrawer'
 import { UploadDialog } from './components/upload/UploadDialog'
@@ -76,6 +77,7 @@ const autoCacheKeyForSession = (session: Session) =>
 export default function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const currentSessionRef = useRef(state.currentSession)
   const currentSessionIdRef = useRef(state.currentSessionId)
@@ -358,8 +360,18 @@ export default function App() {
     else document.documentElement.removeAttribute('data-theme')
   }, [])
 
+  const selectModule = useCallback((moduleId: string | null) => {
+    dispatch({ type: 'module/select', moduleId })
+    dispatch({ type: 'chat/filter', moduleId })
+  }, [])
+
   const cacheStatus = artifactCache.statusFor(state.currentSession)
   const showResults = hasPrimaryResults(state.currentSession)
+  const showRunningWorkspace = Boolean(
+    state.currentSession &&
+      !showResults &&
+      (state.currentSession.status === 'running' || state.currentSession.status === 'queued'),
+  )
 
   const main = (
     <>
@@ -368,10 +380,13 @@ export default function App() {
         chatOpen={state.chatOpen}
         deleteDisabled={Boolean(state.runtime?.sessionDeleteDisabled)}
         onDelete={deleteCurrentSession}
+        onExpandSidebar={() => setSidebarCollapsed(false)}
         onOpenSettings={() => dispatch({ type: 'settings/open', open: true })}
         onToggleChat={() => dispatch({ type: 'chat/toggle' })}
         onToggleTheme={toggleTheme}
         session={state.currentSession}
+        showChatToggle={!showRunningWorkspace}
+        sidebarCollapsed={sidebarCollapsed}
         settingsEnabled={Boolean(state.runtime?.frontendSettingsEnabled)}
       />
       <div className="content-area">
@@ -381,7 +396,19 @@ export default function App() {
             <button className="upload-dialog-submit" onClick={startCurrentSession} type="button">开始生成</button>
           </div>
         ) : null}
-        <WorkflowPanel session={state.currentSession} visible={!showResults} />
+        {showRunningWorkspace ? (
+          <RunningWorkspace
+            agentEvents={state.agentEvents}
+            chatDisabled={Boolean(state.runtime?.sessionChatDisabled)}
+            chatFilterModuleId={state.chatFilterModuleId}
+            onFilterModule={(moduleId) => dispatch({ type: 'chat/filter', moduleId })}
+            onSelectModule={selectModule}
+            selectedModuleId={state.selectedModuleId}
+            session={state.currentSession}
+          />
+        ) : (
+          <WorkflowPanel session={state.currentSession} visible={!showResults} />
+        )}
         <ResultPanel
           cacheBusy={cacheStatus.busy}
           cacheError={cacheStatus.error}
@@ -393,7 +420,7 @@ export default function App() {
           onOpenArtifact={(kind) => artifactCache.openSessionArtifact(state.currentSession, kind)}
           onOpenLightbox={setLightboxSrc}
           onPreviewWidthChange={(value) => dispatch({ type: 'result/preview-width', value })}
-          onSelectModule={(moduleId) => dispatch({ type: 'module/select', moduleId })}
+          onSelectModule={selectModule}
           onViewModeChange={(value) => dispatch({ type: 'result/view-mode', value })}
           previewWidth={state.resultPreviewWidth}
           selectedModuleId={state.selectedModuleId}
@@ -408,22 +435,25 @@ export default function App() {
     <>
       <AppShell
         chat={
-          <ChatDrawer
-            agentEvents={state.agentEvents}
-            chatFilterModuleId={state.chatFilterModuleId}
-            disabled={Boolean(state.runtime?.sessionChatDisabled)}
-            onClose={() => dispatch({ type: 'chat/toggle', open: false })}
-            onFilterModule={(moduleId) => dispatch({ type: 'chat/filter', moduleId })}
-            onSelectModule={(moduleId) => dispatch({ type: 'module/select', moduleId })}
-            open={state.chatOpen}
-            selectedModuleId={state.selectedModuleId}
-            session={state.currentSession}
-          />
+          showRunningWorkspace ? null : (
+            <ChatDrawer
+              agentEvents={state.agentEvents}
+              chatFilterModuleId={state.chatFilterModuleId}
+              disabled={Boolean(state.runtime?.sessionChatDisabled)}
+              onClose={() => dispatch({ type: 'chat/toggle', open: false })}
+              onFilterModule={(moduleId) => dispatch({ type: 'chat/filter', moduleId })}
+              onSelectModule={selectModule}
+              open={state.chatOpen}
+              selectedModuleId={state.selectedModuleId}
+              session={state.currentSession}
+            />
+          )
         }
         main={main}
         sidebar={
           <Sidebar
             currentSessionId={state.currentSessionId}
+            onCollapse={() => setSidebarCollapsed(true)}
             onOpenUpload={() => {
               setUploadFile(null)
               dispatch({ type: 'upload/open', open: true })
@@ -436,6 +466,7 @@ export default function App() {
             sessions={state.sessions}
           />
         }
+        sidebarCollapsed={sidebarCollapsed}
       />
       <UploadDialog
         initialFile={uploadFile}

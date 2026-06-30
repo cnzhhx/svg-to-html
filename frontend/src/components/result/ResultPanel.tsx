@@ -5,6 +5,25 @@ import type { ResultViewMode } from '../../state/app-state'
 import { ResultImageComparison } from './ResultImageComparison'
 import type { ArtifactCacheMeta } from '../../utils/artifact-cache'
 
+const readPositiveNumber = (value: unknown) => {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : 0
+}
+
+const tokenBadgesForResult = (result: Session['result'] | undefined) => {
+  const outputTokens = readPositiveNumber(result?.outputTokens)
+  const cachedInputTokens = readPositiveNumber(result?.cachedInputTokens)
+  const uncachedInputTokens = readPositiveNumber(result?.uncachedInputTokens)
+  return [
+    { label: '输出', value: outputTokens },
+    { label: '缓存输入', value: cachedInputTokens },
+    { label: '非缓存输入', value: uncachedInputTokens },
+  ].flatMap((item) => {
+    const text = formatTokenCount(item.value)
+    return text ? [{ ...item, text }] : []
+  })
+}
+
 export function ResultPanel({
   cacheBusy,
   cacheError,
@@ -45,7 +64,7 @@ export function ResultPanel({
   const sourceEntryPath = getSessionSourceEntryPath(session)
   const renderEntryPath = getSessionRenderEntryPath(session)
   const compareEntryPath = getSessionCompareEntryPath(session)
-  const tokenText = formatTokenCount(result?.tokensUsed || (Number(result?.inputTokens || 0) + Number(result?.outputTokens || 0)))
+  const tokenBadges = tokenBadgesForResult(result)
 
   return (
     <section className={`result-panel${show ? ' visible' : ''}`} id="resultPanel">
@@ -54,7 +73,16 @@ export function ResultPanel({
           {result?.diffRatio !== undefined ? (
             <span className="result-diff-gap is-passed">还原度 {toPercent(Math.max(0, 1 - Number(result.diffRatio)))}</span>
           ) : null}
-          {tokenText ? <span className="result-token-badge">Tokens {tokenText}</span> : null}
+          {tokenBadges.length ? (
+            <span className="result-token-group">
+              {tokenBadges.map((badge) => (
+                <span className="result-token-badge" key={badge.label}>
+                  <span>{badge.label}</span>
+                  <strong>{badge.text}</strong>
+                </span>
+              ))}
+            </span>
+          ) : null}
         </div>
         <div className="result-panel-controls">
           <div className="result-view-toggle" role="group" aria-label="对比视图">

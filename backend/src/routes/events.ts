@@ -53,6 +53,7 @@ const isFrontendAgentEvent = (event: Record<string, unknown>) => {
 }
 
 const shouldPushEventToFrontend = (event: SessionEvent) => {
+  if (event.type === 'user-message:queued') return false
   if (event.type === 'agent:event') return isFrontendAgentEvent(event.event)
   if (event.type === 'message') return isFrontendMessage(event.message)
   return true

@@ -52,6 +52,7 @@ import {
   readPersistedModuleAgentThreadIds,
 } from "./module-thread-ids.js";
 import { publishMergeReadiness } from "./module-finalize.js";
+import { publishLivePreview } from "./live-preview.js";
 
 type ModuleUserRevisionInput = {
   artifactDir: string;
@@ -60,15 +61,30 @@ type ModuleUserRevisionInput = {
   moduleId: string;
   moduleMergeManifestPath: string;
   modulePlanPath: string;
+  publishFinalMerge?: boolean;
   round: number;
   scaffoldHtmlPath: string;
   sessionId: string;
   userInstructions: string;
 };
 
-async function runModuleUserRevision(
-  input: ModuleUserRevisionInput,
-): Promise<ModulePipelineV2Result> {
+type ModuleUserRevisionTurnInput = ModuleUserRevisionInput;
+
+type ModuleUserRevisionTurnResult = {
+  failedModuleIds: string[];
+  moduleAgentManifestPath: string;
+  moduleAgentRuns: ModuleAgentRunRecord[];
+  moduleFailureKinds: Record<string, string>;
+  moduleFailures: Record<string, string>;
+  moduleMergeManifestPath: string;
+  modulePlanPath: string;
+  moduleValidationRuns: ModuleValidationRun[];
+  scaffoldHtmlPath: string;
+};
+
+async function runModuleUserRevisionTurn(
+  input: ModuleUserRevisionTurnInput,
+): Promise<ModuleUserRevisionTurnResult> {
   const {
     artifactDir,
     controller,
@@ -76,6 +92,7 @@ async function runModuleUserRevision(
     moduleId,
     moduleMergeManifestPath,
     modulePlanPath,
+    publishFinalMerge = true,
     round,
     scaffoldHtmlPath,
     sessionId,
@@ -284,18 +301,30 @@ async function runModuleUserRevision(
       `[module-user-revision:${module.id}] incomplete module output after user revision`,
     );
   }
-  const mergeResult = await mergeModulesIntoHtml({
+  let mergeSkippedModuleIds: string[] = [];
+  let mergeSkippedModules: Array<{ error: string; id: string }> = [];
+  if (publishFinalMerge) {
+    const mergeResult = await mergeModulesIntoHtml({
+      design,
+      modulePlanPath,
+      outputTarget: design.outputTarget,
+      renderEntryPath,
+      scaffoldRenderPath: scaffoldHtmlPath,
+      skipInvalidModules: true,
+    });
+    mergeSkippedModuleIds = mergeResult.skippedModuleIds;
+    mergeSkippedModules = mergeResult.skippedModules;
+    await writeJsonFile(moduleMergeManifestPath, mergeResult);
+    await publishMergeReadiness({
+      mergeResult,
+      moduleMergeManifestPath,
+      sessionId,
+    });
+  }
+  await publishLivePreview({
     design,
     modulePlanPath,
-    outputTarget: design.outputTarget,
-    renderEntryPath,
-    scaffoldRenderPath: scaffoldHtmlPath,
-    skipInvalidModules: true,
-  });
-  await writeJsonFile(moduleMergeManifestPath, mergeResult);
-  await publishMergeReadiness({
-    mergeResult,
-    moduleMergeManifestPath,
+    scaffoldHtmlPath,
     sessionId,
   });
   throwIfRunAborted(controller);
@@ -325,7 +354,7 @@ async function runModuleUserRevision(
       selectedModuleOutputFailureKind ?? "merge_failed",
     );
   }
-  mergeResult.skippedModules.forEach((skipped) => {
+  mergeSkippedModules.forEach((skipped) => {
     mergedModuleFailures.set(skipped.id, skipped.error);
     mergedModuleFailureKinds.set(
       skipped.id,
@@ -338,7 +367,7 @@ async function runModuleUserRevision(
         (id) => id !== module.id,
       ),
       ...(selectedModuleOutputError ? [module.id] : []),
-      ...mergeResult.skippedModuleIds,
+      ...mergeSkippedModuleIds,
     ]),
   ].sort();
   const moduleFailureKinds = Object.fromEntries(
@@ -354,26 +383,9 @@ async function runModuleUserRevision(
     ]),
   );
 
-  const finalVerifyResult = await runVerify(
-    sessionId,
-    design.svgPath,
-    artifactDir,
-    round,
-    true,
-    { mode: "full", signal: controller.signal },
-  );
-  throwIfRunAborted(controller);
   const moduleValidationRuns = [
     ...((previousSession?.result.moduleValidationRuns ??
       []) as ModuleValidationRun[]),
-    {
-      diffRatio: finalVerifyResult.diffRatio,
-      failedModuleIds,
-      moduleStats: [],
-      round,
-      scope: "merged-page" as const,
-      threshold: getModuleDiffRatioThreshold(),
-    },
   ];
   await writeJsonFile(moduleAgentManifestPath, {
     moduleCount: modules.length,
@@ -412,15 +424,61 @@ async function runModuleUserRevision(
   return {
     failedModuleIds,
     moduleFailureKinds,
+    moduleFailures,
     moduleAgentManifestPath,
     moduleAgentRuns,
     moduleValidationRuns,
     moduleMergeManifestPath,
     modulePlanPath,
     scaffoldHtmlPath,
+  };
+}
+
+async function runModuleUserRevision(
+  input: ModuleUserRevisionInput,
+): Promise<ModulePipelineV2Result> {
+  const revision = await runModuleUserRevisionTurn(input);
+  const finalVerifyResult = await runVerify(
+    input.sessionId,
+    input.design.svgPath,
+    input.artifactDir,
+    input.round,
+    true,
+    { mode: "full", signal: input.controller.signal },
+  );
+  throwIfRunAborted(input.controller);
+  const moduleValidationRuns = [
+    ...revision.moduleValidationRuns,
+    {
+      diffRatio: finalVerifyResult.diffRatio,
+      failedModuleIds: revision.failedModuleIds,
+      moduleStats: [],
+      round: input.round,
+      scope: "merged-page" as const,
+      threshold: getModuleDiffRatioThreshold(),
+    },
+  ];
+  const latestSession = sessionStore.get(input.sessionId);
+  if (latestSession) {
+    sessionStore.update(input.sessionId, {
+      result: {
+        ...latestSession.result,
+        moduleValidationRuns,
+      },
+    });
+  }
+  return {
+    failedModuleIds: revision.failedModuleIds,
+    moduleFailureKinds: revision.moduleFailureKinds,
+    moduleAgentManifestPath: revision.moduleAgentManifestPath,
+    moduleAgentRuns: revision.moduleAgentRuns,
+    moduleValidationRuns,
+    moduleMergeManifestPath: revision.moduleMergeManifestPath,
+    modulePlanPath: revision.modulePlanPath,
+    scaffoldHtmlPath: revision.scaffoldHtmlPath,
     verifyResult: finalVerifyResult,
   };
 }
 
-export { runModuleUserRevision };
+export { runModuleUserRevision, runModuleUserRevisionTurn };
 export type { ModuleUserRevisionInput };

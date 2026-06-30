@@ -1,4 +1,4 @@
-import type { ModuleAgentRun, Region, Session } from '../types/session'
+import type { ModuleAgentRun, ModulePlanModule, Region, Session } from '../types/session'
 
 export type SelectableModule = {
   id: string
@@ -18,10 +18,23 @@ export function sortModuleIds(ids: Iterable<string>) {
 }
 
 export function collectSelectableModules(session?: Session | null): SelectableModule[] {
+  const planned = Array.isArray(session?.result?.modulePlanModules)
+    ? (session?.result?.modulePlanModules as ModulePlanModule[])
+    : []
   const runs = Array.isArray(session?.result?.moduleAgentRuns)
     ? (session?.result?.moduleAgentRuns as ModuleAgentRun[])
     : []
   const byId = new Map<string, SelectableModule>()
+  planned.forEach((module) => {
+    const id = String(module?.id || '').trim()
+    const region = module?.region
+    if (!id || !region) return
+    byId.set(id, {
+      id,
+      region,
+      status: '',
+    })
+  })
   runs.forEach((run) => {
     const id = String(run?.id || '').trim()
     const region = run?.region

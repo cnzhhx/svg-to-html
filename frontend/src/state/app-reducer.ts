@@ -33,7 +33,7 @@ const syncSelectedModule = (state: AppState, session: Session | null): string | 
   if (state.selectedModuleId && modules.some((module) => module.id === state.selectedModuleId)) {
     return state.selectedModuleId
   }
-  return modules[0]?.id || null
+  return null
 }
 
 export function appReducer(state: AppState, action: AppAction): AppState {

@@ -9,20 +9,26 @@ export function Toolbar({
   chatOpen,
   deleteDisabled,
   onDelete,
+  onExpandSidebar,
   onOpenSettings,
   onToggleChat,
   onToggleTheme,
   session,
+  showChatToggle = true,
+  sidebarCollapsed = false,
   settingsEnabled,
 }: {
   chatDisabled: boolean
   chatOpen: boolean
   deleteDisabled: boolean
   onDelete: () => void
+  onExpandSidebar?: () => void
   onOpenSettings: () => void
   onToggleChat: () => void
   onToggleTheme: () => void
   session: Session | null
+  showChatToggle?: boolean
+  sidebarCollapsed?: boolean
   settingsEnabled: boolean
 }) {
   const progress = getWorkflowProgress(session)
@@ -34,13 +40,22 @@ export function Toolbar({
   return (
     <header className="toolbar">
       <div className="toolbar-leading">
+        {sidebarCollapsed && onExpandSidebar ? (
+          <IconButton className="sidebar-restore-btn" onClick={onExpandSidebar} title="展开侧边栏" aria-label="展开侧边栏">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 4h16v16H4z" />
+              <path d="M9 4v16" />
+              <path d="m14 9 3 3-3 3" />
+            </svg>
+          </IconButton>
+        ) : null}
         <div className="toolbar-left">
           <h2 className="toolbar-title">{title}</h2>
           <p className="toolbar-meta">{meta}</p>
         </div>
       </div>
       <div className="toolbar-actions">
-        {session && !chatDisabled ? (
+        {session && !chatDisabled && showChatToggle ? (
           <button className={`link-btn toolbar-link-btn${chatOpen ? ' active' : ''}`} type="button" onClick={onToggleChat}>
             {chatOpen ? '收起聊天' : '打开聊天'}
           </button>

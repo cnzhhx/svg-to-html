@@ -88,6 +88,12 @@ type PendingUserMessage = {
   text: string
 }
 
+type SessionResultModule = {
+  id: string
+  kind?: string
+  region?: Record<string, unknown>
+}
+
 type UploadResultFields = {
   sourceEntryPath?: string
   sourceStylePath?: string
@@ -111,7 +117,11 @@ type AnalysisResultFields = {
 }
 
 type AgentResultFields = {
+  livePreviewEntryPath?: string
+  livePreviewUpdatedAt?: number
+  livePreviewVersion?: number
   renderEntryPath?: string
+  modulePlanModules?: SessionResultModule[]
   moduleAgentManifestPath?: string
   moduleAgentRuns?: Array<Record<string, unknown>>
   moduleAgentThreadIds?: Record<string, string>
@@ -243,6 +253,12 @@ type SessionEvent =
       message?: string
       timestamp: number
     }
+  | {
+      type: 'user-message:queued'
+      sessionId: string
+      moduleId?: string
+      timestamp: number
+    }
 
 export type {
   AgentResultFields,
@@ -252,6 +268,7 @@ export type {
   SessionEvent,
   SessionMessage,
   SessionMessageRole,
+  SessionResultModule,
   PendingUserMessage,
   SessionPersistenceState,
   SessionResult,

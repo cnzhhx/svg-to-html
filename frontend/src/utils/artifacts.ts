@@ -72,6 +72,20 @@ export function getSessionSvgPngPath(session?: Session | null) {
   return String(session?.result?.svgPngPath || '')
 }
 
+export function getSessionLivePreviewEntryPath(session?: Session | null) {
+  return String(session?.result?.livePreviewEntryPath || '')
+}
+
+export function livePreviewUrl(session?: Session | null, selectedModuleId?: string | null) {
+  const path = getSessionLivePreviewEntryPath(session)
+  if (!path) return ''
+  const relative = workspaceRelativePath(path)
+  const version = String(session?.result?.livePreviewVersion || session?.result?.livePreviewUpdatedAt || workspaceFileVersion(session))
+  const params = new URLSearchParams({ v: version })
+  if (selectedModuleId) params.set('module', selectedModuleId)
+  return `${basePath}/files/${relative.split('/').map(encodeURIComponent).join('/')}?${params.toString()}`
+}
+
 export function hasPrimaryResults(session?: Session | null) {
   const result = session?.result
   const renderPngPath = result?.renderPngPath || getSessionRenderPngPath(session)

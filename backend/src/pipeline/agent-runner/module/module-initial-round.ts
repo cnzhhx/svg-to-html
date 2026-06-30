@@ -16,6 +16,7 @@ import {
   ModuleOutputIncompleteError,
   runAgentUnit,
 } from "./agent-unit.js";
+import { buildUserModuleRevisionPrompt } from "../../../prompts/module-agent.js";
 import {
   ensureModuleContextImages,
   ensureModuleReferenceImage,
@@ -41,9 +42,11 @@ import {
   readAgentGeneratedAssetCount,
 } from "./module-semantic-preprocess.js";
 import { persistModuleAgentThreadId } from "./module-thread-ids.js";
+import { publishLivePreview } from "./live-preview.js";
 
 type RunInitialModuleRoundInput = {
   artifactDir: string;
+  completedInitialModules?: Set<string>;
   controller: AbortController;
   design: ResolvedDesignTarget;
   failedModuleKinds: Map<string, ModuleValidationFailureKind>;
@@ -54,14 +57,18 @@ type RunInitialModuleRoundInput = {
   moduleThreads: Map<string, AgentThread>;
   modulesRootDir: string;
   modulesToRun: SvgVerticalModule[];
+  onModuleInitialCompleted?: (moduleId: string) => Promise<void>;
+  modulePlanPath: string;
   outputFormat: OutputFormat;
   persistedModuleThreadIds: Record<string, string>;
+  scaffoldHtmlPath: string;
   sessionId: string;
   visionSemaphore: Semaphore;
 };
 
 const runInitialModuleRound = async ({
   artifactDir,
+  completedInitialModules,
   controller,
   design,
   failedModuleKinds,
@@ -72,8 +79,11 @@ const runInitialModuleRound = async ({
   moduleThreads,
   modulesRootDir,
   modulesToRun,
+  onModuleInitialCompleted,
+  modulePlanPath,
   outputFormat,
   persistedModuleThreadIds,
+  scaffoldHtmlPath,
   sessionId,
   visionSemaphore,
 }: RunInitialModuleRoundInput) => {
@@ -161,6 +171,19 @@ const runInitialModuleRound = async ({
 
       const startedAt = Date.now();
       try {
+        const initialUserMessages = sessionStore.dequeuePendingMessagesForModule(
+          sessionId,
+          module.id,
+        );
+        const initialUserInstructions = initialUserMessages
+          .map((message, index) => `用户补充 ${index + 1}: ${message.text}`)
+          .join("\n");
+        if (initialUserInstructions) {
+          sessionStore.addLog(
+            sessionId,
+            `[module-pipeline-v2:${module.id}] applying ${initialUserMessages.length} queued user instruction(s) to initial prompt`,
+          );
+        }
         assertModuleSemanticHasUsableInput({
           module,
           moduleSemantic: await readModuleSemanticDocument(moduleDir).then(
@@ -194,6 +217,13 @@ const runInitialModuleRound = async ({
               threadId,
             });
           },
+          extraPrompt: initialUserInstructions
+            ? buildUserModuleRevisionPrompt({
+                module,
+                outputFormat,
+                userInstructions: initialUserInstructions,
+              })
+            : undefined,
           round: 1,
           thread,
         });
@@ -231,6 +261,15 @@ const runInitialModuleRound = async ({
           turnSummary: result.turnSummary,
           uncachedInputTokens: getUncachedInputTokens(result.usage),
         });
+        const currentAfterRun = sessionStore.get(sessionId);
+        if (currentAfterRun) {
+          sessionStore.update(sessionId, {
+            result: {
+              ...currentAfterRun.result,
+              moduleAgentRuns: [...moduleAgentRuns],
+            },
+          });
+        }
         if (result.success) {
           failedModules.delete(module.id);
           failedModuleKinds.delete(module.id);
@@ -243,6 +282,14 @@ const runInitialModuleRound = async ({
             );
           }
         }
+        completedInitialModules?.add(module.id);
+        await publishLivePreview({
+          design,
+          modulePlanPath,
+          scaffoldHtmlPath,
+          sessionId,
+        });
+        await onModuleInitialCompleted?.(module.id);
       } catch (error) {
         if (controller.signal.aborted || isAbortError(error)) {
           throw error;
@@ -328,6 +375,23 @@ const runInitialModuleRound = async ({
           sessionId,
           `[module-pipeline-v2:${module.id}] initial generation failed (${failureKind}); continuing with placeholder: ${message}`,
         );
+        const currentAfterFailure = sessionStore.get(sessionId);
+        if (currentAfterFailure) {
+          sessionStore.update(sessionId, {
+            result: {
+              ...currentAfterFailure.result,
+              moduleAgentRuns: [...moduleAgentRuns],
+            },
+          });
+        }
+        completedInitialModules?.add(module.id);
+        await publishLivePreview({
+          design,
+          modulePlanPath,
+          scaffoldHtmlPath,
+          sessionId,
+        });
+        await onModuleInitialCompleted?.(module.id);
       }
     },
   });

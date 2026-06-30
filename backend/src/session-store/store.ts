@@ -189,6 +189,16 @@ class SessionStore extends EventEmitter {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     this.upsertMessageRecord(session, message, options);
+    if (options?.enqueueForAgent && message.role === "user") {
+      const event: SessionEvent = {
+        type: "user-message:queued",
+        sessionId,
+        moduleId: message.moduleId,
+        timestamp: Date.now(),
+      };
+      this.emit(`session:${sessionId}`, event);
+      this.emit("session:*", event);
+    }
   }
 
   addBehavior(
@@ -246,6 +256,32 @@ class SessionStore extends EventEmitter {
     session.updatedAt = Date.now();
     this.persistence.persistSnapshot(session);
     return next;
+  }
+
+  dequeuePendingMessagesForModule(
+    sessionId: string,
+    moduleId: string,
+  ): PendingUserMessage[] {
+    const session = this.sessions.get(sessionId);
+    if (!session) return [];
+    ensureWorkflowProgress(session);
+    const targetModuleId = moduleId.trim();
+    const matched: PendingUserMessage[] = [];
+    const remaining: Array<string | PendingUserMessage> = [];
+    for (const message of session.pendingUserMessages) {
+      const normalized =
+        typeof message === "string" ? { text: message } : message;
+      if (normalized.moduleId?.trim() === targetModuleId) {
+        matched.push(normalized);
+      } else {
+        remaining.push(message);
+      }
+    }
+    if (!matched.length) return [];
+    session.pendingUserMessages = remaining;
+    session.updatedAt = Date.now();
+    this.persistence.persistSnapshot(session);
+    return matched;
   }
 
   setWorkflowMeta(
