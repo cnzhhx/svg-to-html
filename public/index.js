@@ -3067,15 +3067,15 @@ function renderResultDiffGap(result) {
     return
   }
 
-  const remainingRatio = Math.max(0, diffRatio - diffRatioThreshold)
-  const passed = remainingRatio <= 0
   const differencePercent = `${(diffRatio * 100).toFixed(2)}%`
-  const fidelityPercent = `${(Math.max(0, 1 - diffRatio) * 100).toFixed(2)}%`
+  const fidelityRatio = Math.max(0, 1 - diffRatio)
+  const fidelityPercent = `${(fidelityRatio * 100).toFixed(2)}%`
+  const passed = fidelityRatio >= 0.9
 
   resultDiffGap.hidden = false
   resultDiffGap.classList.toggle('is-passed', passed)
   resultDiffGap.textContent = `还原度 ${fidelityPercent}`
-  resultDiffGap.title = `视觉差异 ${differencePercent}，通过阈值 ${(diffRatioThreshold * 100).toFixed(2)}%`
+  resultDiffGap.title = `视觉差异 ${differencePercent}，还原度 ${fidelityPercent}`
 }
 
 function renderResultCacheStatus(state) {

@@ -1,5 +1,5 @@
 const EXPORT_SVG_NODE_TOOL_TEMPLATE =
-  'export_svg_node({ moduleDir: "<module-dir>", nodeIds: ["<node-id>"], output: "assets/<name>.png", padding: 0 })';
+  'browser-session_export_svg_node({ moduleDir: "<module-dir>", nodeIds: ["<node-id>"], output: "assets/<name>.png", padding: 0 })';
 
 const SEMANTIC_READ_POLICY = [
   "按 inputContract.focusOrder 阅读。",

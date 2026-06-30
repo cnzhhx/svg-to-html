@@ -1,15 +1,14 @@
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 
 import {
   getPngRasterScaleMultiplier,
   getVisionTextTimeoutMs,
 } from "../../../config/index.js";
 import { capturePage, launchEdge } from "../../../core/cdp.js";
+import { exportSvgNodeAsset } from "../../../cli/export-svg-node-asset.js";
 import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types.js";
 import type { Box } from "../../../core/geometry.js";
 import { runVisionLlm } from "../../llm-client.js";
@@ -53,8 +52,6 @@ import {
   type PngAlphaStats,
 } from "./module-semantic-png.js";
 import { buildDeterministicSemantic } from "./module-semantic-deterministic.js";
-
-const execFileAsync = promisify(execFile);
 
 type ElementClassification =
   | "atomic-visual-text"
@@ -524,28 +521,22 @@ const createProbeImages = async ({
   const transparentNodeIds: string[] = [];
   for (const node of visibleNodes) {
     const outputPath = path.join(probeDir, `${node.id}.png`);
-    await execFileAsync(
-      "pnpm",
-      [
-        "--dir",
-        process.cwd(),
-        "exec",
-        "tsx",
-        path.join(process.cwd(), "src/cli/export-svg-node-asset.ts"),
-        "--module-dir",
-        moduleDir,
-        "--index",
-        String(node.inspectIndex),
-        "--allow-text",
-        "--output",
-        outputPath,
-        "--padding",
-        String(PROBE_PADDING),
-        "--scale",
-        String(scale * SEMANTIC_PROBE_SCALE_MULTIPLIER),
-      ],
-      { timeout: 60_000 },
-    ).catch((error) => {
+    await exportSvgNodeAsset({
+      allowText: true,
+      assetRole: undefined,
+      elementIndex: undefined,
+      help: false,
+      moduleDir,
+      moduleSvg: "module.svg",
+      nodeIds: [node.id],
+      noRegisterSemantic: true,
+      output: outputPath,
+      padding: PROBE_PADDING,
+      registerSemantic: false,
+      scale: scale * SEMANTIC_PROBE_SCALE_MULTIPLIER,
+      selector: undefined,
+      textTreatment: undefined,
+    }).catch((error) => {
       throw new Error(
         `failed to render semantic probe for ${node.id}: ${
           error instanceof Error ? error.message : String(error)

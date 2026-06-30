@@ -4,7 +4,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { getPngRasterScaleMultiplier } from "../config/index.js";
-import { capturePage, evaluatePage, launchEdge } from "../core/cdp.js";
+import {
+  capturePage,
+  evaluatePage,
+  launchEdge,
+  shutdownBrowserPool,
+} from "../core/cdp.js";
 import { readSvgDimensions } from "../core/svg-parse.js";
 import {
   nodePathToSelector,
@@ -975,7 +980,8 @@ const exportSvgNodeAsset = async (
     }
   }
   const shouldRegisterSemantic =
-    args.registerSemantic || selectedNodes.length > 0;
+    !args.noRegisterSemantic &&
+    (args.registerSemantic || selectedNodes.length > 0);
 
   const wrapperElementIndices =
     selectedNodes.length > 0
@@ -1122,10 +1128,14 @@ const main = async () => {
 };
 
 if (isDirectRun()) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+  void main()
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await shutdownBrowserPool();
+    });
 }
 
 export { exportSvgNodeAsset };
