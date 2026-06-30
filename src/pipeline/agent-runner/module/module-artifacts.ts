@@ -2,10 +2,8 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   copyFile,
-  cp,
   mkdir,
   readFile,
-  rm,
   writeFile,
 } from "node:fs/promises";
 
@@ -21,133 +19,10 @@ import {
 import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 
-type ModuleSnapshot = {
-  assetsSnapshotDir?: string;
-  manifest: string;
-  moduleCss: string;
-  moduleSemantic?: string;
-  previewFragmentHtml: string;
-  sourceData?: string;
-  sourceFragment?: string;
-  sourceFragmentFileName?: string;
-  diffRatio: number;
-};
-
 const getSourceFragmentPath = (
   moduleDir: string,
   outputFormat: OutputFormat,
 ) => path.join(moduleDir, getSourceFragmentFileName(outputFormat));
-
-const readModuleSnapshot = async (
-  moduleDir: string,
-  diffRatio: number,
-  outputFormat: OutputFormat,
-): Promise<ModuleSnapshot> => {
-  const sourceFragmentPath =
-    outputFormat === "html"
-      ? undefined
-      : getSourceFragmentPath(moduleDir, outputFormat);
-  const sourceDataPath =
-    outputFormat === "html" ? undefined : path.join(moduleDir, "source-data.json");
-  const [
-    previewFragmentHtml,
-    moduleCss,
-    sourceFragment,
-    sourceData,
-    manifest,
-    moduleSemantic,
-  ] = await Promise.all([
-    readFile(path.join(moduleDir, "preview.fragment.html"), "utf8"),
-    readFile(path.join(moduleDir, "module.css"), "utf8"),
-    sourceFragmentPath
-      ? readFile(sourceFragmentPath, "utf8")
-      : Promise.resolve(undefined),
-    sourceDataPath
-      ? readFile(sourceDataPath, "utf8").catch(() => undefined)
-      : Promise.resolve(undefined),
-    readFile(path.join(moduleDir, "manifest.json"), "utf8"),
-    readFile(path.join(moduleDir, "module-semantic.json"), "utf8").catch(
-      () => undefined,
-    ),
-  ]);
-
-  const assetsDir = path.join(moduleDir, "assets");
-  const assetsSnapshotDir = existsSync(assetsDir)
-    ? path.join(
-        moduleDir,
-        ".module-snapshots",
-        `assets-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      )
-    : undefined;
-  if (assetsSnapshotDir) {
-    await mkdir(path.dirname(assetsSnapshotDir), { recursive: true });
-    await cp(assetsDir, assetsSnapshotDir, { recursive: true });
-  }
-
-  return {
-    assetsSnapshotDir,
-    diffRatio,
-    manifest,
-    moduleCss,
-    moduleSemantic,
-    previewFragmentHtml,
-    sourceData,
-    sourceFragment,
-    sourceFragmentFileName: sourceFragmentPath
-      ? path.basename(sourceFragmentPath)
-      : undefined,
-  };
-};
-
-const restoreModuleSnapshot = async (
-  moduleDir: string,
-  snapshot: ModuleSnapshot,
-) => {
-  const assetsDir = path.join(moduleDir, "assets");
-  await Promise.all([
-    writeFile(
-      path.join(moduleDir, "preview.fragment.html"),
-      snapshot.previewFragmentHtml,
-      "utf8",
-    ),
-    writeFile(path.join(moduleDir, "module.css"), snapshot.moduleCss, "utf8"),
-    ...(snapshot.moduleSemantic !== undefined
-      ? [
-          writeFile(
-            path.join(moduleDir, "module-semantic.json"),
-            snapshot.moduleSemantic,
-            "utf8",
-          ),
-        ]
-      : [rm(path.join(moduleDir, "module-semantic.json"), { force: true })]),
-    ...(snapshot.sourceFragment !== undefined && snapshot.sourceFragmentFileName
-      ? [
-          writeFile(
-            path.join(moduleDir, snapshot.sourceFragmentFileName),
-            snapshot.sourceFragment,
-            "utf8",
-          ),
-        ]
-      : []),
-    ...(snapshot.sourceData !== undefined
-      ? [
-          writeFile(
-            path.join(moduleDir, "source-data.json"),
-            snapshot.sourceData,
-            "utf8",
-          ),
-        ]
-      : [rm(path.join(moduleDir, "source-data.json"), { force: true })]),
-    writeFile(path.join(moduleDir, "manifest.json"), snapshot.manifest, "utf8"),
-  ]);
-  await rm(assetsDir, { force: true, recursive: true });
-  if (snapshot.assetsSnapshotDir) {
-    await cp(snapshot.assetsSnapshotDir, assetsDir, {
-      force: true,
-      recursive: true,
-    });
-  }
-};
 
 const hasCompleteModuleOutput = (
   moduleDir: string,
@@ -279,9 +154,6 @@ export {
   getModuleDir,
   getSourceFragmentPath,
   hasCompleteModuleOutput,
-  readModuleSnapshot,
   restoreHostModuleArtifacts,
-  restoreModuleSnapshot,
   writeFailedModulePlaceholder,
 };
-export type { ModuleSnapshot };

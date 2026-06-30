@@ -13,9 +13,7 @@ import {
   ensureModuleSvg,
   getModuleDir,
   hasCompleteModuleOutput,
-  readModuleSnapshot,
   restoreHostModuleArtifacts,
-  type ModuleSnapshot,
 } from "./module-artifacts.js";
 import {
   type ModuleValidationFailureKind,
@@ -26,7 +24,6 @@ import { verifyModuleFrameworkLocal } from "./module-framework-local-verify.js";
 import { verifyModuleLocal } from "./module-local-verify.js";
 
 type CollectAgentLocalValidationInput = {
-  bestSnapshots: Map<string, ModuleSnapshot>;
   controller: AbortController;
   design: ResolvedDesignTarget;
   failedModuleKinds: Map<string, ModuleValidationFailureKind>;
@@ -43,7 +40,6 @@ type CollectAgentLocalValidationInput = {
 };
 
 const collectAgentLocalValidation = async ({
-  bestSnapshots,
   controller,
   design,
   failedModuleKinds,
@@ -69,7 +65,6 @@ const collectAgentLocalValidation = async ({
     `[module-pipeline-v2] collect agent local module diff for ${modules.length} module(s)`,
   );
 
-  const candidateSnapshots = new Map<string, ModuleSnapshot>();
   const validatedStats = await runWithLimit({
     items: modules,
     limit: maxParallelModuleAgents,
@@ -175,13 +170,6 @@ const collectAgentLocalValidation = async ({
         failureKind = "module_visual_failed";
       }
 
-      if (!mergeError && hasOutput && localVerify) {
-        candidateSnapshots.set(
-          module.id,
-          await readModuleSnapshot(moduleDir, diffRatio, outputFormat),
-        );
-      }
-
       if (!hasOutput) {
         sessionStore.addLog(
           sessionId,
@@ -273,19 +261,6 @@ const collectAgentLocalValidation = async ({
       passed: false,
     } satisfies ModuleValidationStat;
   });
-  for (const [moduleId, snapshot] of candidateSnapshots) {
-    const stat = moduleStats.find((candidate) => candidate.id === moduleId);
-    if (!stat || stat.mergeError || failedModules.has(moduleId)) continue;
-    const best = bestSnapshots.get(moduleId);
-    if (!best || snapshot.diffRatio < best.diffRatio) {
-      bestSnapshots.set(moduleId, snapshot);
-      sessionStore.addLog(
-        sessionId,
-        `[module-pipeline-v2:${moduleId}] best mergeable agent-local snapshot: ${(snapshot.diffRatio * 100).toFixed(2)}%`,
-      );
-    }
-  }
-
   // 清除已通过当前轮次验证的模块的旧错误
   modules.forEach((module) => {
     const stat = moduleStats.find((candidate) => candidate.id === module.id);
