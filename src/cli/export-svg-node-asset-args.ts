@@ -8,6 +8,7 @@ type ExportSvgNodeAssetArgs = {
   moduleDir: string;
   moduleSvg: string;
   nodeIds: string[];
+  noRegisterSemantic: boolean;
   output?: string;
   padding: number;
   registerSemantic: boolean;
@@ -28,7 +29,11 @@ const VALUE_FLAGS = new Set([
   "--text-treatment",
 ]);
 const MULTI_VALUE_FLAGS = new Set(["--node-id"]);
-const BOOLEAN_FLAGS = new Set(["--allow-text", "--register-semantic"]);
+const BOOLEAN_FLAGS = new Set([
+  "--allow-text",
+  "--no-register-semantic",
+  "--register-semantic",
+]);
 const INLINE_PREFIXES = [
   ...VALUE_FLAGS,
   ...MULTI_VALUE_FLAGS,
@@ -133,6 +138,14 @@ const parseExportSvgNodeAssetArgs = (args: string[]): ExportSvgNodeAssetArgs => 
       "Provide exactly one of --index <inspect-index>, --selector <css-selector>, or --node-id <semantic-node-id>",
     );
   }
+  if (
+    booleans.has("--register-semantic") &&
+    booleans.has("--no-register-semantic")
+  ) {
+    throw new Error(
+      "Provide at most one of --register-semantic or --no-register-semantic",
+    );
+  }
 
   const output = values.get("--output");
   if (!help && !output) {
@@ -147,6 +160,7 @@ const parseExportSvgNodeAssetArgs = (args: string[]): ExportSvgNodeAssetArgs => 
     moduleDir: values.get("--module-dir") ?? ".",
     moduleSvg: values.get("--module-svg") ?? "module.svg",
     nodeIds,
+    noRegisterSemantic: booleans.has("--no-register-semantic"),
     output,
     padding,
     registerSemantic: booleans.has("--register-semantic"),

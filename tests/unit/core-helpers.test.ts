@@ -448,6 +448,7 @@ test("export svg node asset args preserve selection and validation behavior", ()
       moduleDir: "module-a",
       moduleSvg: "module.svg",
       nodeIds: ["n1", "n2", "n3"],
+      noRegisterSemantic: false,
       output: "assets/x.png",
       padding: 2,
       registerSemantic: true,
@@ -467,6 +468,45 @@ test("export svg node asset args preserve selection and validation behavior", ()
         "x.png",
       ]),
     /Provide exactly one/,
+  );
+  assert.deepEqual(
+    parseExportSvgNodeAssetArgs([
+      "--module-dir",
+      "module-a",
+      "--node-id",
+      "n1",
+      "--output",
+      "assets/x.png",
+      "--no-register-semantic",
+    ]),
+    {
+      allowText: false,
+      assetRole: undefined,
+      elementIndex: undefined,
+      help: false,
+      moduleDir: "module-a",
+      moduleSvg: "module.svg",
+      nodeIds: ["n1"],
+      noRegisterSemantic: true,
+      output: "assets/x.png",
+      padding: 0,
+      registerSemantic: false,
+      scale: 1,
+      selector: undefined,
+      textTreatment: undefined,
+    },
+  );
+  assert.throws(
+    () =>
+      parseExportSvgNodeAssetArgs([
+        "--node-id",
+        "n1",
+        "--output",
+        "x.png",
+        "--register-semantic",
+        "--no-register-semantic",
+      ]),
+    /at most one/,
   );
   assert.throws(
     () =>

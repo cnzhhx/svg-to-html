@@ -363,6 +363,7 @@ class McpServer {
         moduleDir,
         moduleSvg: "module.svg",
         nodeIds,
+        noRegisterSemantic: false,
         output,
         padding,
         registerSemantic: true,
