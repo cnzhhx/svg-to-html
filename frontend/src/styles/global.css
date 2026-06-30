@@ -1993,10 +1993,11 @@ body {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 6px;
   color: var(--ink-3);
   cursor: pointer;
-  font-weight: 800;
+  font-size: 10px;
+  font-weight: 700;
   list-style: none;
   user-select: none;
 }
