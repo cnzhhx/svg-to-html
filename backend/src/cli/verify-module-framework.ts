@@ -10,6 +10,7 @@ import {
 import {
   normalizePlanModules,
   parseCliFlags,
+  resolveVerifyRound,
   resolveRequiredPath,
 } from "./cli-utils.js";
 import {
@@ -60,7 +61,7 @@ const parseArgs = (args: string[]) => {
     moduleSvgPath:
       flags.get("--module-svg") ?? flags.get("--moduleSvg") ?? "module.svg",
     outputFormat,
-    round: Number(flags.get("--round") ?? "0"),
+    round: flags.get("--round"),
     scale: flags.get("--scale") ? Number(flags.get("--scale")) : undefined,
     scaffoldHtmlPath:
       flags.get("--scaffold") ??
@@ -136,6 +137,11 @@ const main = async () => {
       `Module region not found in ${modulePlanPath}: ${moduleId}`,
     );
   }
+  const verifyRound = await resolveVerifyRound({
+    explicitRound: args.round,
+    moduleDir,
+    prefix: "framework-round",
+  });
 
   let alignmentMeasurement:
     | ReturnType<typeof measureModuleAlignmentSafely>
@@ -168,7 +174,7 @@ const main = async () => {
       });
     },
     outputFormat: args.outputFormat,
-    round: Number.isFinite(args.round) ? args.round : 0,
+    round: verifyRound.round,
   });
 
   if (!result) {
@@ -214,7 +220,7 @@ const main = async () => {
       ...parseVerifyStopLossHistory(process.env["AGENT_VERIFY_DIFF_HISTORY"]),
       {
         diffRatio: result.diffRatio,
-        round: Number.isFinite(args.round) ? args.round : 0,
+        round: verifyRound.round,
       },
     ],
     turnStartedAt:
@@ -236,9 +242,13 @@ const main = async () => {
       },
       diffRatio: result.diffRatio,
       ...(result.diffPngPath ? { diffPngPath: result.diffPngPath } : {}),
+      latestArtifactsNote:
+        `This verify run used framework round ${verifyRound.round}; read only the artifact paths returned in this JSON for the latest render.`,
       passed: result.passed,
       ...(result.renderEntryPath ? { renderEntryPath: result.renderEntryPath } : {}),
       ...(result.renderPngPath ? { renderPngPath: result.renderPngPath } : {}),
+      round: verifyRound.round,
+      roundAutoAssigned: verifyRound.autoAssigned,
       ...(result.svgPngPath ? { svgPngPath: result.svgPngPath } : {}),
       ...(result.buildError ? { buildError: result.buildError } : {}),
       ...(stopLossRecommendation ? { stopLossRecommendation } : {}),

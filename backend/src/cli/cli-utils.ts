@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 
 import type { ModulePlanModule } from "../pipeline/module-merge/index.js";
@@ -66,4 +67,40 @@ const parseCliFlags = (
   return { flags, positionals };
 };
 
-export { normalizePlanModules, parseCliFlags, parseFlagValue, resolveRequiredPath };
+const resolveVerifyRound = async ({
+  explicitRound,
+  moduleDir,
+  prefix = "round",
+}: {
+  explicitRound?: string;
+  moduleDir: string;
+  prefix?: string;
+}) => {
+  const parsedExplicitRound = Number(explicitRound);
+  if (explicitRound !== undefined) {
+    return {
+      autoAssigned: false,
+      round: Number.isFinite(parsedExplicitRound) ? parsedExplicitRound : 0,
+    };
+  }
+
+  const verifyDir = path.join(moduleDir, "verify");
+  const entries = await readdir(verifyDir, { withFileTypes: true }).catch(
+    () => [],
+  );
+  const marker = `${prefix}-`;
+  const maxRound = entries.reduce((max, entry) => {
+    if (!entry.isDirectory() || !entry.name.startsWith(marker)) return max;
+    const round = Number(entry.name.slice(marker.length));
+    return Number.isInteger(round) && round >= 0 ? Math.max(max, round) : max;
+  }, -1);
+  return { autoAssigned: true, round: maxRound + 1 };
+};
+
+export {
+  normalizePlanModules,
+  parseCliFlags,
+  parseFlagValue,
+  resolveRequiredPath,
+  resolveVerifyRound,
+};

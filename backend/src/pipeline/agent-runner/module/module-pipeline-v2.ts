@@ -122,6 +122,7 @@ export async function runModulePipelineV2(
   );
 
   const completedInitialModules = new Set<string>();
+  const moduleTurnInterrupts = new Map<string, AbortController>();
   const activeLiveRevisions = new Map<string, Promise<void>>();
   let liveRevisionChain = Promise.resolve();
   const runLiveRevisionForModule = async (moduleId: string) => {
@@ -148,6 +149,8 @@ export async function runModulePipelineV2(
           moduleId,
           moduleMergeManifestPath,
           modulePlanPath,
+          moduleTurnInterrupts,
+          promptMode: "guidance",
           publishFinalMerge: false,
           round:
             Math.max(
@@ -188,6 +191,22 @@ export async function runModulePipelineV2(
     if (event.sessionId !== sessionId) return;
     const moduleId = event.moduleId?.trim();
     if (!moduleId) return;
+    const activeTurn = moduleTurnInterrupts.get(moduleId);
+    if (activeTurn && !activeTurn.signal.aborted) {
+      sessionStore.addLog(
+        sessionId,
+        `[module-pipeline-v2:${moduleId}] user guidance received; interrupting current module turn`,
+      );
+      sessionStore.addMessage(sessionId, {
+        id: `system-${Date.now()}-${moduleId}-interrupting`,
+        kind: "event",
+        moduleId,
+        role: "system",
+        text: `已收到 ${moduleId} 的中途引导，正在中断当前执行并切换方向。`,
+      });
+      activeTurn.abort("user-guidance-interrupt");
+      return;
+    }
     void runLiveRevisionForModule(moduleId).catch((error) => {
       sessionStore.addLog(
         sessionId,
@@ -209,6 +228,7 @@ export async function runModulePipelineV2(
       moduleAgentRuns,
       modulePlan,
       modulePlanPath,
+      moduleTurnInterrupts,
       moduleThreads,
       modulesRootDir,
       modulesToRun: modules,
@@ -247,6 +267,8 @@ export async function runModulePipelineV2(
       moduleId: module.id,
       moduleMergeManifestPath,
       modulePlanPath,
+      moduleTurnInterrupts,
+      promptMode: "guidance",
       publishFinalMerge: false,
       round:
         Math.max(

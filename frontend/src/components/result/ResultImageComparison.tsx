@@ -111,11 +111,11 @@ export function ResultImageComparison({
   }
 
   return (
-    <div className="result-grid" onScroll={syncScroll} style={{ ['--result-preview-width' as string]: `${previewWidth}px` }}>
+    <div className="result-grid" style={{ ['--result-preview-width' as string]: `${previewWidth}px` }}>
       {cards.map((card) => (
         <div className="result-card" key={card.kind}>
           <div className="result-card-title">{card.title}</div>
-          <div className="result-card-frame" data-result-scroll-frame>
+          <div className="result-card-frame" data-result-scroll-frame onScroll={syncScroll}>
             <div className="result-card-preview">
               <img alt={card.title} data-result-kind={card.kind} onClick={() => onOpenLightbox(card.url)} src={card.url} />
               {card.kind === 'render' && chatOpen ? (

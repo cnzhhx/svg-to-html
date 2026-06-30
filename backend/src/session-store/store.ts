@@ -58,6 +58,7 @@ class SessionStore extends EventEmitter {
       message: created,
       timestamp: Date.now(),
     });
+    return created;
   }
 
   private persistAgentMessage(
@@ -187,8 +188,8 @@ class SessionStore extends EventEmitter {
     options?: { enqueueForAgent?: boolean },
   ) {
     const session = this.sessions.get(sessionId);
-    if (!session) return;
-    this.upsertMessageRecord(session, message, options);
+    if (!session) return undefined;
+    const created = this.upsertMessageRecord(session, message, options);
     if (options?.enqueueForAgent && message.role === "user") {
       const event: SessionEvent = {
         type: "user-message:queued",
@@ -199,6 +200,7 @@ class SessionStore extends EventEmitter {
       this.emit(`session:${sessionId}`, event);
       this.emit("session:*", event);
     }
+    return created;
   }
 
   addBehavior(

@@ -18,7 +18,7 @@ export function UploadDialog({
   const [file, setFile] = useState<File | null>(null)
   const [format, setFormat] = useState(readStringStorage(STORAGE_KEYS.uploadFormat, 'html') || 'html')
   const [scale, setScale] = useState(readNumberStorage(STORAGE_KEYS.uploadScale, 1))
-  const [sessionCount, setSessionCount] = useState(1)
+  const [sessionCountInput, setSessionCountInput] = useState('1')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -42,6 +42,10 @@ export function UploadDialog({
     setBusy(true)
     setError(null)
     try {
+      const parsedSessionCount = Number(sessionCountInput)
+      const sessionCount = Number.isFinite(parsedSessionCount) && parsedSessionCount > 0
+        ? Math.max(1, Math.min(20, Math.floor(parsedSessionCount)))
+        : 1
       const response = await uploadSvg(file, {
         outputFormat: format,
         scale,
@@ -83,7 +87,15 @@ export function UploadDialog({
           </div>
           <div className="upload-dialog-field">
             <label className="upload-dialog-label" htmlFor="uploadSessionCount">并发 Session 数</label>
-            <input className="upload-dialog-input" id="uploadSessionCount" min={1} max={20} onChange={(event) => setSessionCount(Math.max(1, Math.min(20, Number(event.target.value) || 1)))} type="number" value={sessionCount} />
+            <input
+              className="upload-dialog-input"
+              id="uploadSessionCount"
+              max={20}
+              min={1}
+              onChange={(event) => setSessionCountInput(event.target.value)}
+              type="number"
+              value={sessionCountInput}
+            />
           </div>
           <div className="upload-dialog-field">
             <label className="upload-dialog-label">选择文件</label>

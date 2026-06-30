@@ -37,7 +37,7 @@ export const initialAppState: AppState = {
   error: null,
   loading: true,
   resultComparePosition: Math.min(95, Math.max(5, readNumberStorage(STORAGE_KEYS.resultComparePosition, 50))),
-  resultPreviewWidth: Math.min(1920, Math.max(375, readNumberStorage(STORAGE_KEYS.resultPreviewWidth, 375))),
+  resultPreviewWidth: Math.min(960, Math.max(375, readNumberStorage(STORAGE_KEYS.resultPreviewWidth, 375))),
   resultViewMode: readResultViewMode(),
   runtime: null,
   selectedModuleId: null,

@@ -4,7 +4,7 @@ export function useSyncedScroll() {
   const syncingRef = useRef(false)
   return useCallback((event: React.UIEvent<HTMLElement>) => {
     if (syncingRef.current) return
-    const target = event.target as HTMLElement
+    const target = event.currentTarget
     if (!target?.hasAttribute?.('data-result-scroll-frame')) return
     const parent = target.closest('.result-grid')
     if (!parent) return

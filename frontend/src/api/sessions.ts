@@ -1,4 +1,4 @@
-import type { Session, SessionSummary } from '../types/session'
+import type { Session, SessionMessage, SessionSummary } from '../types/session'
 import { apiJson, apiUrl } from './http'
 
 export const loadSessions = () => apiJson<SessionSummary[]>('/api/sessions')
@@ -12,7 +12,7 @@ export const startSession = (id: string, settings?: unknown) =>
   })
 
 export const sendSessionMessage = (id: string, moduleId: string, text: string) =>
-  apiJson<{ sessionId: string; status: string }>(`/api/sessions/${encodeURIComponent(id)}/messages`, {
+  apiJson<{ guidanceStatus?: string; message?: SessionMessage; sessionId: string; status: string }>(`/api/sessions/${encodeURIComponent(id)}/messages`, {
     method: 'POST',
     body: JSON.stringify({ moduleId, text }),
   })

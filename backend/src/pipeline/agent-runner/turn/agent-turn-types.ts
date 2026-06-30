@@ -17,6 +17,14 @@ type AgentCommandRecord = {
   status: 'completed' | 'failed'
 }
 
+type AgentArtifactUpdateSignal = {
+  command?: string
+  commandKind?: AgentCommandKind | null
+  filePaths?: string[]
+  kind: 'command' | 'file-change' | 'mcp-tool' | 'verify'
+  tool?: string
+}
+
 type AgentMessageRecord = {
   internalRound: number
   text: string
@@ -62,6 +70,7 @@ type AgentTurnSummary = {
 }
 
 export type {
+  AgentArtifactUpdateSignal,
   AgentCommandKind,
   AgentCommandRecord,
   AgentInternalRound,

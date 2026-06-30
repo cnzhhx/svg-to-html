@@ -12,6 +12,7 @@ export function ChatDrawer({
   disabled,
   onClose,
   onFilterModule,
+  onMessageQueued,
   onSelectModule,
   open,
   selectedModuleId,
@@ -23,6 +24,7 @@ export function ChatDrawer({
   disabled: boolean
   onClose: () => void
   onFilterModule: (moduleId: string | null) => void
+  onMessageQueued?: (message: SessionMessage) => void
   onSelectModule: (moduleId: string | null) => void
   open: boolean
   selectedModuleId: string | null
@@ -32,6 +34,7 @@ export function ChatDrawer({
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const conversationRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useAutoResizeTextarea(text)
   const canSend = Boolean(session && selectedModuleId && text.trim() && !busy && !disabled && session.status !== 'queued')
@@ -46,6 +49,23 @@ export function ChatDrawer({
     if (!activeModuleId) return agentEvents
     return agentEvents.filter((event) => getAgentEventModuleId(event) === activeModuleId)
   }, [activeModuleId, agentEvents])
+  const conversationItems = useMemo(() => {
+    const messageItems = messages.map((message) => ({
+      id: `message-${message.id}`,
+      kind: 'message' as const,
+      message,
+      timestamp: Number(message.createdAt || 0),
+    }))
+    const eventItems = filteredAgentEvents.slice(-40).map((event, index) => ({
+      id: `event-${String(event.type)}-${String(event.item?.id || index)}-${index}`,
+      event,
+      kind: 'event' as const,
+      timestamp: Number(event.timestamp || event.item?.createdAt || 0),
+    }))
+    return [...messageItems, ...eventItems]
+      .sort((left, right) => left.timestamp - right.timestamp)
+      .slice(-80)
+  }, [filteredAgentEvents, messages])
 
   const scrollConversationToBottom = useCallback(() => {
     const element = conversationRef.current
@@ -78,8 +98,13 @@ export function ChatDrawer({
     if (!session?.id || !selectedModuleId || !text.trim()) return
     setBusy(true)
     setError(null)
+    setNotice(null)
     try {
-      await sendSessionMessage(session.id, selectedModuleId, text.trim())
+      const result = await sendSessionMessage(session.id, selectedModuleId, text.trim())
+      if (result.message) onMessageQueued?.(result.message)
+      if (result.guidanceStatus === 'queued-for-guidance') {
+        setNotice('已发送引导，正在中断当前模块执行')
+      }
       setText('')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -109,10 +134,13 @@ export function ChatDrawer({
       </div>
       <ModulePicker onSelectModule={selectModule} selectedModuleId={selectedModuleId} session={session} />
       <div className="conversation-stream" ref={conversationRef}>
-        {messages.length || filteredAgentEvents.length ? (
+        {conversationItems.length ? (
           <>
-            {messages.map((message) => <MessageBubble key={message.id} message={message} />)}
-            {filteredAgentEvents.slice(-40).map((event, index) => <AgentEventRow event={event} key={`${String(event.type)}-${index}`} />)}
+            {conversationItems.map((item) => (
+              item.kind === 'message'
+                ? <MessageBubble key={item.id} message={item.message} />
+                : <AgentEventRow event={item.event} key={item.id} />
+            ))}
           </>
         ) : (
           <div className="empty-state">暂无聊天记录</div>
@@ -121,7 +149,7 @@ export function ChatDrawer({
       <form className={`composer${!selectedModuleId ? ' is-disabled' : ''}`} onSubmit={submit}>
         <textarea disabled={disabled || !session || !selectedModuleId} onChange={(event) => setText(event.target.value)} placeholder={selectedModuleId ? '输入调整要求…' : '选择模块后可输入调整要求'} ref={textareaRef} rows={1} value={text} />
         <div className="composer-footer">
-          <span className="composer-hint">{error || (selectedModuleId ? '发送需点击按钮，Enter 不会提交' : '选择全部时仅查看记录')}</span>
+          <span className={`composer-hint${error ? ' is-error' : notice ? ' is-notice' : ''}`}>{error || notice || (selectedModuleId ? '发送需点击按钮，Enter 不会提交' : '选择全部时仅查看记录')}</span>
           <button className="send-btn" disabled={!canSend} type="submit">{busy ? '发送中…' : '发送'}</button>
         </div>
       </form>

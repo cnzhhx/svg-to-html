@@ -54,6 +54,7 @@ export type AgentEvent = Record<string, unknown> & {
   type?: string
   moduleId?: string
   sourceLabel?: string
+  timestamp?: number
   item?: Record<string, unknown> & {
     id?: string
     type?: string

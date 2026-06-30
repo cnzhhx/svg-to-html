@@ -94,7 +94,7 @@ export function ResultPanel({
           {cacheError ? <span className="result-cache-status is-error">{cacheError}</span> : null}
           <label className="result-size-control" htmlFor="previewSizeRange">
             <span>预览宽度</span>
-            <input id="previewSizeRange" max={1920} min={375} onChange={(event) => onPreviewWidthChange(Number(event.target.value))} step={5} type="range" value={previewWidth} />
+            <input id="previewSizeRange" max={960} min={375} onChange={(event) => onPreviewWidthChange(Number(event.target.value))} step={5} type="range" value={previewWidth} />
             <span className="result-size-value">{previewWidth}px</span>
           </label>
         </div>

@@ -2,28 +2,25 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 
 import { AGENT_REASONING_EFFORTS } from "../../../config/agent-reasoning.js";
-import {
-  getModuleDiffRatioThreshold,
-  getSemanticVisionConcurrency,
-} from "../../../config/index.js";
+import { getModuleDiffRatioThreshold } from "../../../config/index.js";
 import { normalizeOutputFormat } from "../../../core/output-target.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import { writeJsonFile } from "../../../core/file-io.js";
 import { sessionStore } from "../../../session-store.js";
-import { buildUserModuleRevisionPrompt } from "../../../prompts/module-agent.js";
+import {
+  buildUserModuleGuidancePrompt,
+  buildUserModuleRevisionPrompt,
+} from "../../../prompts/module-agent.js";
 import { readModulePlan, mergeModulesIntoHtml } from "../../module-merge/index.js";
+import { finalizeModuleManifest } from "../../module-merge/finalize-module-manifest.js";
 import { archiveSessionCheckpoint } from "../archive/checkpoint.js";
-import { Semaphore } from "../queue/concurrency.js";
 import { throwIfRunAborted } from "../session/run-control.js";
 import { runVerify } from "../verify/verify-step.js";
 import {
   createAgentUnitThread,
   runAgentUnit,
 } from "./agent-unit.js";
-import {
-  createModuleSemanticDraft,
-  ensureModuleContextImages,
-} from "./module-semantic.js";
+import { readModuleSemanticDocument } from "./module-semantic.js";
 import {
   ensureModuleSvg,
   getModuleDir,
@@ -44,7 +41,6 @@ import {
   type ModulePipelineV2Result,
 } from "./module-pipeline-shared.js";
 import {
-  preprocessModuleSemantic,
   readAgentGeneratedAssetCount,
 } from "./module-semantic-preprocess.js";
 import {
@@ -52,7 +48,10 @@ import {
   readPersistedModuleAgentThreadIds,
 } from "./module-thread-ids.js";
 import { publishMergeReadiness } from "./module-finalize.js";
-import { publishLivePreview } from "./live-preview.js";
+import {
+  publishLivePreview,
+  requestLivePreviewRefresh,
+} from "./live-preview.js";
 
 type ModuleUserRevisionInput = {
   artifactDir: string;
@@ -61,6 +60,8 @@ type ModuleUserRevisionInput = {
   moduleId: string;
   moduleMergeManifestPath: string;
   modulePlanPath: string;
+  moduleTurnInterrupts?: Map<string, AbortController>;
+  promptMode?: "guidance" | "revision";
   publishFinalMerge?: boolean;
   round: number;
   scaffoldHtmlPath: string;
@@ -92,6 +93,8 @@ async function runModuleUserRevisionTurn(
     moduleId,
     moduleMergeManifestPath,
     modulePlanPath,
+    moduleTurnInterrupts,
+    promptMode = "revision",
     publishFinalMerge = true,
     round,
     scaffoldHtmlPath,
@@ -142,12 +145,13 @@ async function runModuleUserRevisionTurn(
     "module-agent-manifest.json",
   );
   const moduleDir = getModuleDir(modulesRootDir, module);
+  const moduleSemanticJsonPath = path.join(moduleDir, "module-semantic.json");
   const persistedModuleThreadIds = readPersistedModuleAgentThreadIds(sessionId);
   await mkdir(moduleDir, { recursive: true });
   throwIfRunAborted(controller);
 
   sessionStore.startWorkflowNode(sessionId, "agent", {
-    detail: `正在按用户要求修复模块 ${module.id}`,
+    detail: "正在处理聊天调整",
     iteration: round,
     maxIterations: round,
   });
@@ -163,33 +167,14 @@ async function runModuleUserRevisionTurn(
     modulesRootDir,
   });
   throwIfRunAborted(controller);
-  const moduleSemanticDraft = await createModuleSemanticDraft({
-    module,
-    moduleDir,
-    moduleSvgPath,
-    scale: design.scale,
-  });
-  await ensureModuleContextImages({
-    moduleDir,
-    module,
-    moduleSvgPath,
-    sharedLayers: modulePlan.sharedLayers ?? [],
-    scale: design.scale,
-  });
-  throwIfRunAborted(controller);
+  const moduleSemantic = await readModuleSemanticDocument(moduleDir);
+  if (!moduleSemantic) {
+    throw new Error(`module semantic not available for user revision: ${module.id}`);
+  }
   sessionStore.addLog(
     sessionId,
-    `[module-user-revision:${module.id}] semantic draft ready: ${moduleSemanticDraft.jsonPath}`,
+    `[module-user-revision:${module.id}] reusing existing module semantic for fast user revision`,
   );
-  const { moduleSemantic } = await preprocessModuleSemantic({
-    controller,
-    design,
-    module,
-    moduleDir,
-    moduleSvgPath,
-    sessionId,
-    visionSemaphore: new Semaphore(getSemanticVisionConcurrency()),
-  });
   throwIfRunAborted(controller);
 
   const thread = createAgentUnitThread({
@@ -200,27 +185,37 @@ async function runModuleUserRevisionTurn(
     threadId: persistedModuleThreadIds[module.id],
     workingDir: moduleDir,
   });
-  const revisionPrompt = buildUserModuleRevisionPrompt({
-    module,
-    outputFormat,
-    userInstructions,
-  });
+  const revisionPrompt =
+    promptMode === "guidance"
+      ? buildUserModuleGuidancePrompt({
+          module,
+          userInstructions,
+        })
+      : buildUserModuleRevisionPrompt({
+          module,
+          outputFormat,
+          userInstructions,
+        });
   const revisionPath = path.join(moduleDir, `revision-round-${round}.md`);
+  const revisionLabel =
+    promptMode === "guidance" ? "Module User Guidance" : "Module User Revision";
   await writeFile(revisionPath, revisionPrompt, "utf8");
   await archiveSessionCheckpoint({
     sessionId,
     round,
     stage: "agent",
-    note: `Module user revision ${module.id} round ${round}`,
+    note: `${revisionLabel} ${module.id} round ${round}`,
     materials: [
       {
         kind: "file" as const,
-        label: "Module User Revision",
+        label: revisionLabel,
         sourcePath: revisionPath,
       },
     ],
   });
 
+  const moduleTurnInterrupt = new AbortController();
+  moduleTurnInterrupts?.set(module.id, moduleTurnInterrupt);
   const result = await runAgentUnit({
     module,
     moduleSvgPath,
@@ -232,6 +227,9 @@ async function runModuleUserRevisionTurn(
     reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
     sessionId,
     controller,
+    interruptSignal: moduleTurnInterrupt.signal,
+    interruptLabel: "user-guidance-interrupt",
+    prependFollowupBasePrompt: promptMode !== "guidance",
     revisionPrompt,
     onThreadStarted: (threadId) => {
       persistedModuleThreadIds[module.id] = threadId;
@@ -241,11 +239,96 @@ async function runModuleUserRevisionTurn(
         threadId,
       });
     },
+    onArtifactUpdateSignal: () => {
+      requestLivePreviewRefresh({
+        design,
+        modulePlanPath,
+        scaffoldHtmlPath,
+        sessionId,
+      });
+    },
     round,
     thread,
+  }).finally(() => {
+    if (moduleTurnInterrupts?.get(module.id) === moduleTurnInterrupt) {
+      moduleTurnInterrupts.delete(module.id);
+    }
   });
+  if (result.interrupted) {
+    sessionStore.addMessage(sessionId, {
+      id: `system-${Date.now()}-${module.id}-guided-revision`,
+      kind: "event",
+      moduleId: module.id,
+      role: "system",
+      text: `已引导 ${module.id}，正在按新的用户要求继续。`,
+    });
+    const previousSession = sessionStore.get(sessionId);
+    const previousRuns = Array.isArray(previousSession?.result.moduleAgentRuns)
+      ? (previousSession.result.moduleAgentRuns as ModuleAgentRunRecord[])
+      : [];
+    const moduleAgentRuns: ModuleAgentRunRecord[] = [
+      ...previousRuns,
+      {
+        cachedInputTokens: getCachedInputTokens(result.usage),
+        durationMs: result.durationMs,
+        endedAt: result.endedAt,
+        error: result.interruptReason ?? "user guidance interrupted this turn",
+        id: module.id,
+        inputTokens: result.usage?.input_tokens ?? 0,
+        outputPaths: {
+          ...result.outputPaths,
+          moduleSemanticJson: moduleSemanticJsonPath,
+        },
+        outputTokens: result.usage?.output_tokens ?? 0,
+        promptKind: "revision",
+        region: module.region,
+        round,
+        startedAt: result.startedAt,
+        status: "interrupted",
+        threadId: result.threadId,
+        turnSummary: result.turnSummary,
+        uncachedInputTokens: getUncachedInputTokens(result.usage),
+      },
+    ];
+    if (previousSession) {
+      sessionStore.update(sessionId, {
+        result: {
+          ...previousSession.result,
+          moduleAgentRuns,
+        },
+      });
+    }
+    return {
+      failedModuleIds: previousSession?.result.moduleFailedIds ?? [],
+      moduleAgentManifestPath,
+      moduleAgentRuns,
+      moduleFailureKinds:
+        previousSession?.result.moduleFailureKinds &&
+        typeof previousSession.result.moduleFailureKinds === "object"
+          ? (previousSession.result.moduleFailureKinds as Record<string, string>)
+          : {},
+      moduleFailures:
+        previousSession?.result.moduleFailures &&
+        typeof previousSession.result.moduleFailures === "object"
+          ? (previousSession.result.moduleFailures as Record<string, string>)
+          : {},
+      moduleMergeManifestPath,
+      modulePlanPath,
+      moduleValidationRuns: (previousSession?.result.moduleValidationRuns ??
+        []) as ModuleValidationRun[],
+      scaffoldHtmlPath,
+    };
+  }
   const agentGeneratedAssetCount =
     await readAgentGeneratedAssetCount(moduleDir);
+  try {
+    await finalizeModuleManifest({ moduleDir });
+  } catch (finalizeError) {
+    sessionStore.addLog(
+      sessionId,
+      `[module-user-revision:${module.id}] finalize manifest warning: ${finalizeError instanceof Error ? finalizeError.message : String(finalizeError)}`,
+    );
+  }
 
   const previousSession = sessionStore.get(sessionId);
   const previousRuns = Array.isArray(previousSession?.result.moduleAgentRuns)
@@ -264,7 +347,7 @@ async function runModuleUserRevisionTurn(
       agentGeneratedAssetCount,
       outputPaths: {
         ...result.outputPaths,
-        moduleSemanticJson: moduleSemantic.jsonPath,
+        moduleSemanticJson: moduleSemanticJsonPath,
       },
       outputTokens: result.usage?.output_tokens ?? 0,
       promptKind: "revision",

@@ -47,8 +47,12 @@ const safeMessagesForApi = (
   { includeMessages }: { includeMessages: boolean },
 ) => {
   if (!includeMessages) return [];
-  return messages
-    .slice(-100)
+  const visibleMessages = messages.filter((message, index) => {
+    if (message.role === "user" && message.kind === "chat") return true;
+    if (message.role === "system" && message.kind === "event") return true;
+    return index >= messages.length - 100;
+  });
+  return visibleMessages
     .map((message) => ({
       ...message,
       text: truncateApiText(
@@ -334,7 +338,7 @@ router.post("/sessions/:id/messages", async (req, res) => {
       .json({ error: `Cannot enqueue message from status ${session.status}` });
     return;
   }
-  sessionStore.addMessage(
+  const createdMessage = sessionStore.addMessage(
     session.id,
     {
       id: `user-${Date.now()}`,
@@ -345,12 +349,23 @@ router.post("/sessions/:id/messages", async (req, res) => {
     },
     { enqueueForAgent: true },
   );
+  const guidanceStatus = session.status === "running" ? "queued-for-guidance" : "queued";
   if (session.status === "running") {
-    res.json({ sessionId: session.id, status: "running" });
+    res.json({
+      guidanceStatus,
+      message: createdMessage,
+      sessionId: session.id,
+      status: "running",
+    });
     return;
   }
   enqueueSession(session.id);
-  res.json({ sessionId: session.id, status: "queued" });
+  res.json({
+    guidanceStatus,
+    message: createdMessage,
+    sessionId: session.id,
+    status: "queued",
+  });
 });
 
 router.delete("/sessions/:id", async (req, res) => {

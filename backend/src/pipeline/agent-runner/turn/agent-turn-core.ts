@@ -17,6 +17,7 @@ import {
 import type {
   AgentCommandKind,
   AgentCommandRecord,
+  AgentArtifactUpdateSignal,
   AgentInternalRound,
   AgentMessageRecord,
   AgentTokenUsage,
@@ -36,6 +37,11 @@ type RunAgentTurnCoreInput = {
   updateSessionThread?: boolean
   moduleTimeoutMs?: number
   verifyStateDir?: string
+  interruptSignal?: AbortSignal
+  interruptLabel?: string
+  onArtifactUpdateSignal?: (
+    signal: AgentArtifactUpdateSignal,
+  ) => Promise<void> | void
 }
 
 type RunAgentTurnCoreResult = {
@@ -45,7 +51,7 @@ type RunAgentTurnCoreResult = {
   usage: AgentTokenUsage | null
 }
 
-const isVerifyCommandKind = (commandKind: AgentCommandKind) =>
+const isVerifyCommandKind = (commandKind: AgentCommandKind | null) =>
   commandKind === 'verify-design' ||
   commandKind === 'verify-module-design' ||
   commandKind === 'verify-module-framework'
@@ -135,12 +141,30 @@ export async function runAgentTurnCore(
     onThreadStarted,
     updateSessionThread = true,
     moduleTimeoutMs,
+    interruptSignal,
+    interruptLabel = 'interrupted',
+    onArtifactUpdateSignal,
   } = input
 
   const turnController = new AbortController()
+  let earlyStopReason: string | undefined
   const relayRunAbort = () => turnController.abort(controller.signal.reason)
   if (controller.signal.aborted) relayRunAbort()
   controller.signal.addEventListener('abort', relayRunAbort, { once: true })
+  const relayInterruptAbort = () => {
+    if (earlyStopReason || turnController.signal.aborted) return
+    earlyStopReason =
+      typeof interruptSignal?.reason === 'string'
+        ? interruptSignal.reason
+        : interruptLabel
+    sessionStore.addLog(
+      sessionId,
+      `[agent:${eventSourceLabel ?? moduleId ?? 'turn'}] ${earlyStopReason}; stopping this turn and continuing from latest artifacts`,
+    )
+    turnController.abort(earlyStopReason)
+  }
+  if (interruptSignal?.aborted) relayInterruptAbort()
+  interruptSignal?.addEventListener('abort', relayInterruptAbort, { once: true })
 
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null
   if (moduleTimeoutMs && moduleTimeoutMs > 0) {
@@ -172,7 +196,6 @@ export async function runAgentTurnCore(
   let bestVerifyDiffRatio: number | undefined
   let verifyRunCount = 0
   let completedShellCommandCount = 0
-  let earlyStopReason: string | undefined
   let softStopRecommendation: string | undefined
   const verifySamples: VerifyStopLossSample[] = []
 
@@ -191,6 +214,18 @@ export async function runAgentTurnCore(
         `[agent:verify-stop-loss] failed to write state: ${error instanceof Error ? error.message : String(error)}`,
       )
     })
+  }
+
+  const notifyArtifactUpdate = async (signal: AgentArtifactUpdateSignal) => {
+    if (!onArtifactUpdateSignal) return
+    try {
+      await onArtifactUpdateSignal(signal)
+    } catch (callbackError) {
+      sessionStore.addLog(
+        sessionId,
+        `[agent:${eventSourceLabel ?? moduleId ?? 'turn'}] live preview refresh signal failed: ${callbackError instanceof Error ? callbackError.message : String(callbackError)}`,
+      )
+    }
   }
 
   await writeStopLossState()
@@ -222,6 +257,11 @@ export async function runAgentTurnCore(
       ) {
         completedShellCommandCount++
         const commandKind = classifyAgentWorkflowCommand(event.item.command)
+        await notifyArtifactUpdate({
+          command: event.item.command,
+          commandKind,
+          kind: isVerifyCommandKind(commandKind) ? 'verify' : 'command',
+        })
         if (commandKind) {
           const output = event.item.aggregated_output ?? ''
           const exitCode =
@@ -318,6 +358,17 @@ export async function runAgentTurnCore(
 
       if (
         event.type === 'item.completed' &&
+        event.item.type === 'file_change' &&
+        event.item.status === 'completed'
+      ) {
+        await notifyArtifactUpdate({
+          filePaths: event.item.changes.map((change) => change.path),
+          kind: 'file-change',
+        })
+      }
+
+      if (
+        event.type === 'item.completed' &&
         event.item.type === 'mcp_tool_call' &&
         event.item.tool === 'browser_eval'
       ) {
@@ -352,6 +403,19 @@ export async function runAgentTurnCore(
           sessionId,
           `[agent:internal] round ${internalRound} browser-eval ${status} (mcp)`,
         )
+      }
+
+      if (
+        event.type === 'item.completed' &&
+        event.item.type === 'mcp_tool_call' &&
+        event.item.status === 'completed' &&
+        event.item.tool !== 'browser_eval'
+      ) {
+        await notifyArtifactUpdate({
+          filePaths: event.item.filePath ? [event.item.filePath] : [],
+          kind: 'mcp-tool',
+          tool: event.item.tool,
+        })
       }
 
       if (
@@ -395,12 +459,17 @@ export async function runAgentTurnCore(
       }
       throw error
     }
+    if (pendingThreadId && pendingThreadId !== notifiedThreadId) {
+      notifiedThreadId = pendingThreadId
+      onThreadStarted?.(pendingThreadId)
+    }
     finalResponse =
       finalResponse ||
       `Early stopping triggered: ${earlyStopReason}. Host workflow will continue from the latest verified artifacts.`
     hasCompletedAgentMessage = true
   } finally {
     controller.signal.removeEventListener('abort', relayRunAbort)
+    interruptSignal?.removeEventListener('abort', relayInterruptAbort)
     if (timeoutTimer) {
       clearTimeout(timeoutTimer)
       timeoutTimer = null
