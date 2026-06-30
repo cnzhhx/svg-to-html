@@ -145,7 +145,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'result/compare-position':
       return { ...state, resultComparePosition: Math.min(100, Math.max(0, action.value)) }
     case 'result/preview-width':
-      return { ...state, resultPreviewWidth: Math.min(1920, Math.max(375, action.value)) }
+      return { ...state, resultPreviewWidth: Math.min(960, Math.max(375, action.value)) }
     case 'error/set':
       return { ...state, error: action.error }
     default:

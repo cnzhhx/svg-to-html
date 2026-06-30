@@ -9,6 +9,7 @@ import {
 import {
   normalizePlanModules,
   parseCliFlags,
+  resolveVerifyRound,
   resolveRequiredPath,
 } from './cli-utils.js'
 import {
@@ -43,7 +44,7 @@ const parseArgs = (args: string[]) => {
       flags.get('--module-plan') ?? flags.get('--modulePlan') ?? '../module-plan.json',
     moduleSvgPath:
       flags.get('--module-svg') ?? flags.get('--moduleSvg') ?? 'module.svg',
-    round: Number(flags.get('--round') ?? '0'),
+    round: flags.get('--round'),
     scale: flags.get('--scale') ? Number(flags.get('--scale')) : undefined,
     scaffoldHtmlPath:
       flags.get('--scaffold') ??
@@ -112,6 +113,10 @@ const main = async () => {
       `Module region not found in ${modulePlanPath}: ${moduleId}`,
     )
   }
+  const verifyRound = await resolveVerifyRound({
+    explicitRound: args.round,
+    moduleDir,
+  })
 
   let alignmentMeasurement:
     | ReturnType<typeof measureModuleAlignmentSafely>
@@ -140,7 +145,7 @@ const main = async () => {
         scale: args.scale,
       })
     },
-    round: Number.isFinite(args.round) ? args.round : 0,
+    round: verifyRound.round,
     scale: args.scale,
     scaffoldHtmlPath,
   })
@@ -169,7 +174,7 @@ const main = async () => {
     samples: [
       ...(stopLossState?.samples ?? []),
       ...parseVerifyStopLossHistory(process.env['AGENT_VERIFY_DIFF_HISTORY']),
-      { diffRatio: result.diffRatio, round: Number.isFinite(args.round) ? args.round : 0 },
+      { diffRatio: result.diffRatio, round: verifyRound.round },
     ],
     turnStartedAt:
       stopLossState?.turnStartedAt ??
@@ -188,9 +193,13 @@ const main = async () => {
       },
       diffRatio: result.diffRatio,
       diffPngPath: result.diffPngPath,
+      latestArtifactsNote:
+        `This verify run used round ${verifyRound.round}; read only the artifact paths returned in this JSON for the latest render.`,
       passed: result.passed,
       previewHtmlPath: result.previewHtmlPath,
       renderPngPath: result.renderPngPath,
+      round: verifyRound.round,
+      roundAutoAssigned: verifyRound.autoAssigned,
       svgPngPath: result.svgPngPath,
       ...(stopLossRecommendation ? { stopLossRecommendation } : {}),
     }),

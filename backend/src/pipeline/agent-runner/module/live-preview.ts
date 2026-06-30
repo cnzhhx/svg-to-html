@@ -5,6 +5,7 @@ import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import { writeJsonFile } from "../../../core/file-io.js";
 import { sessionStore } from "../../../session-store.js";
 import { mergeModulesIntoHtml, readModulePlan } from "../../module-merge/index.js";
+import { finalizeModuleManifest } from "../../module-merge/finalize-module-manifest.js";
 import type { ModulePlan, ModulePlanModule } from "../../module-merge/types.js";
 
 type PublishLivePreviewInput = {
@@ -15,6 +16,14 @@ type PublishLivePreviewInput = {
 };
 
 const previewLocks = new Map<string, Promise<void>>();
+const requestedPreviewRefreshes = new Map<
+  string,
+  {
+    input: PublishLivePreviewInput;
+    requested: boolean;
+    running: boolean;
+  }
+>();
 
 const toModulePlanModules = (modulePlan: ModulePlan) => {
   const rawModules = modulePlan.modules;
@@ -87,11 +96,18 @@ const buildLivePreviewFitBlock = ({
       }
 
       .design-module.live-preview-selected-module {
-        outline: calc(4px / var(--live-preview-scale)) solid #0ea5e9;
-        outline-offset: calc(3px / var(--live-preview-scale));
-        box-shadow:
-          0 0 0 calc(1px / var(--live-preview-scale)) rgba(255, 255, 255, 0.94),
-          0 0 calc(28px / var(--live-preview-scale)) rgba(14, 165, 233, 0.42);
+        outline: 0 !important;
+        outline-offset: 0 !important;
+        box-shadow: none !important;
+      }
+
+      .live-preview-module-highlight {
+        position: fixed;
+        box-sizing: border-box;
+        pointer-events: none;
+        border: 3px solid #0ea5e9;
+        border-radius: 2px;
+        box-shadow: none;
         z-index: 2147483646 !important;
       }
     </style>
@@ -105,6 +121,34 @@ const buildLivePreviewFitBlock = ({
         let didScrollToModule = false;
         const activeModule = () => Array.from(document.querySelectorAll(".design-module[data-module-id]"))
           .find((element) => element.getAttribute("data-module-id") === activeModuleId);
+        const overlay = () => {
+          let element = document.getElementById("live-preview-module-highlight");
+          if (!element) {
+            element = document.createElement("div");
+            element.id = "live-preview-module-highlight";
+            element.className = "live-preview-module-highlight";
+            document.body.appendChild(element);
+          }
+          return element;
+        };
+        const positionOverlay = (moduleElement) => {
+          const element = overlay();
+          const rect = moduleElement.getBoundingClientRect();
+          const inset = 3;
+          const left = Math.max(inset, rect.left + inset);
+          const top = Math.max(inset, rect.top + inset);
+          const right = Math.min(window.innerWidth - inset, rect.right - inset);
+          const bottom = Math.min(window.innerHeight - inset, rect.bottom - inset);
+          if (right <= left || bottom <= top) {
+            element.style.display = "none";
+            return;
+          }
+          element.style.display = "block";
+          element.style.left = left + "px";
+          element.style.top = top + "px";
+          element.style.width = (right - left) + "px";
+          element.style.height = (bottom - top) + "px";
+        };
         const highlight = () => {
           if (!activeModuleId) return;
           document.querySelectorAll(".design-module.live-preview-selected-module")
@@ -112,11 +156,13 @@ const buildLivePreviewFitBlock = ({
           const moduleElement = activeModule();
           if (!moduleElement) return;
           moduleElement.classList.add("live-preview-selected-module");
+          positionOverlay(moduleElement);
           if (didScrollToModule) return;
           didScrollToModule = true;
           const moduleRect = moduleElement.getBoundingClientRect();
           const targetTop = window.scrollY + moduleRect.top + moduleRect.height / 2 - window.innerHeight / 2;
           window.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+          window.requestAnimationFrame(() => positionOverlay(moduleElement));
         };
         const update = () => {
           const scale = Math.max(0.01, window.innerWidth / designWidth);
@@ -130,6 +176,7 @@ const buildLivePreviewFitBlock = ({
           window.requestAnimationFrame(highlight);
         };
         window.addEventListener("resize", update, { passive: true });
+        window.addEventListener("scroll", () => window.requestAnimationFrame(highlight), { passive: true });
         if (document.readyState === "loading") {
           document.addEventListener("DOMContentLoaded", update, { once: true });
         } else {
@@ -249,6 +296,32 @@ const writeLivePreviewPlaceholder = async ({
   );
 };
 
+const finalizeLivePreviewModuleManifests = async ({
+  modulePlan,
+  modulesRootDir,
+  sessionId,
+}: {
+  modulePlan: ModulePlan;
+  modulesRootDir: string;
+  sessionId: string;
+}) => {
+  const modules = toModulePlanModules(modulePlan);
+  await Promise.all(
+    modules.map(async (module) => {
+      try {
+        await finalizeModuleManifest({
+          moduleDir: path.join(modulesRootDir, module.id),
+        });
+      } catch (error) {
+        sessionStore.addLog(
+          sessionId,
+          `[live-preview:${module.id}] finalize manifest warning: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }),
+  );
+};
+
 const publishLivePreviewNow = async ({
   design,
   modulePlanPath,
@@ -260,6 +333,11 @@ const publishLivePreviewNow = async ({
   const artifactDir = path.dirname(modulesRootDir);
   const livePreviewPath = path.join(artifactDir, "live-preview.html");
   const livePlanPath = path.join(modulesRootDir, "live-preview-plan.json");
+  await finalizeLivePreviewModuleManifests({
+    modulePlan,
+    modulesRootDir,
+    sessionId,
+  });
   await writeLivePreviewPlan({ livePlanPath, modulePlan });
 
   const mergeResult = await mergeModulesIntoHtml({
@@ -311,4 +389,46 @@ const publishLivePreview = async (input: PublishLivePreviewInput) => {
   }
 };
 
-export { publishLivePreview, toModulePlanModules };
+const drainRequestedLivePreviewRefresh = async (sessionId: string) => {
+  const state = requestedPreviewRefreshes.get(sessionId);
+  if (!state || state.running) return;
+  state.running = true;
+  try {
+    while (state.requested) {
+      state.requested = false;
+      await publishLivePreview(state.input);
+    }
+  } finally {
+    state.running = false;
+    if (state.requested) {
+      void drainRequestedLivePreviewRefresh(sessionId);
+    } else {
+      requestedPreviewRefreshes.delete(sessionId);
+    }
+  }
+};
+
+const requestLivePreviewRefresh = (input: PublishLivePreviewInput) => {
+  const existing = requestedPreviewRefreshes.get(input.sessionId);
+  if (existing) {
+    existing.input = input;
+    existing.requested = true;
+    if (!existing.running) {
+      void drainRequestedLivePreviewRefresh(input.sessionId);
+    }
+    return;
+  }
+
+  requestedPreviewRefreshes.set(input.sessionId, {
+    input,
+    requested: true,
+    running: false,
+  });
+  void drainRequestedLivePreviewRefresh(input.sessionId);
+};
+
+export {
+  publishLivePreview,
+  requestLivePreviewRefresh,
+  toModulePlanModules,
+};

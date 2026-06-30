@@ -16,7 +16,7 @@ import {
   ModuleOutputIncompleteError,
   runAgentUnit,
 } from "./agent-unit.js";
-import { buildUserModuleRevisionPrompt } from "../../../prompts/module-agent.js";
+import { buildUserModuleGuidancePrompt } from "../../../prompts/module-agent.js";
 import {
   ensureModuleContextImages,
   ensureModuleReferenceImage,
@@ -42,7 +42,10 @@ import {
   readAgentGeneratedAssetCount,
 } from "./module-semantic-preprocess.js";
 import { persistModuleAgentThreadId } from "./module-thread-ids.js";
-import { publishLivePreview } from "./live-preview.js";
+import {
+  publishLivePreview,
+  requestLivePreviewRefresh,
+} from "./live-preview.js";
 
 type RunInitialModuleRoundInput = {
   artifactDir: string;
@@ -59,6 +62,7 @@ type RunInitialModuleRoundInput = {
   modulesToRun: SvgVerticalModule[];
   onModuleInitialCompleted?: (moduleId: string) => Promise<void>;
   modulePlanPath: string;
+  moduleTurnInterrupts?: Map<string, AbortController>;
   outputFormat: OutputFormat;
   persistedModuleThreadIds: Record<string, string>;
   scaffoldHtmlPath: string;
@@ -81,6 +85,7 @@ const runInitialModuleRound = async ({
   modulesToRun,
   onModuleInitialCompleted,
   modulePlanPath,
+  moduleTurnInterrupts,
   outputFormat,
   persistedModuleThreadIds,
   scaffoldHtmlPath,
@@ -170,6 +175,8 @@ const runInitialModuleRound = async ({
       );
 
       const startedAt = Date.now();
+      const moduleTurnInterrupt = new AbortController();
+      moduleTurnInterrupts?.set(module.id, moduleTurnInterrupt);
       try {
         const initialUserMessages = sessionStore.dequeuePendingMessagesForModule(
           sessionId,
@@ -209,6 +216,8 @@ const runInitialModuleRound = async ({
           reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
           sessionId,
           controller,
+          interruptSignal: moduleTurnInterrupt.signal,
+          interruptLabel: "user-guidance-interrupt",
           onThreadStarted: (threadId) => {
             persistedModuleThreadIds[module.id] = threadId;
             persistModuleAgentThreadId({
@@ -217,16 +226,78 @@ const runInitialModuleRound = async ({
               threadId,
             });
           },
+          onArtifactUpdateSignal: () => {
+            requestLivePreviewRefresh({
+              design,
+              modulePlanPath,
+              scaffoldHtmlPath,
+              sessionId,
+            });
+          },
           extraPrompt: initialUserInstructions
-            ? buildUserModuleRevisionPrompt({
+            ? buildUserModuleGuidancePrompt({
                 module,
-                outputFormat,
                 userInstructions: initialUserInstructions,
               })
             : undefined,
           round: 1,
           thread,
         });
+        if (result.interrupted) {
+          moduleAgentRuns.push({
+            cachedInputTokens: getCachedInputTokens(result.usage),
+            durationMs: result.durationMs,
+            endedAt: result.endedAt,
+            error: result.interruptReason ?? "user guidance interrupted this turn",
+            id: module.id,
+            inputTokens: result.usage?.input_tokens ?? 0,
+            agentGeneratedAssetCount:
+              await readAgentGeneratedAssetCount(moduleDir).catch(
+                () => initialAgentGeneratedAssetCount,
+              ),
+            outputPaths: {
+              manifest: result.outputPaths.manifest,
+              moduleCss: result.outputPaths.moduleCss,
+              moduleSemanticJson: moduleSemantic.jsonPath,
+              moduleSvg: result.outputPaths.moduleSvg,
+              previewFragmentHtml: result.outputPaths.previewFragmentHtml,
+              ...(result.outputPaths.sourceData === undefined
+                ? {}
+                : { sourceData: result.outputPaths.sourceData }),
+              ...(result.outputPaths.sourceFragment === undefined
+                ? {}
+                : { sourceFragment: result.outputPaths.sourceFragment }),
+            },
+            outputTokens: result.usage?.output_tokens ?? 0,
+            promptKind: result.promptKind,
+            region: module.region,
+            round: result.round,
+            startedAt: result.startedAt,
+            status: "interrupted",
+            threadId: result.threadId,
+            turnSummary: result.turnSummary,
+            uncachedInputTokens: getUncachedInputTokens(result.usage),
+          });
+          const currentAfterInterrupt = sessionStore.get(sessionId);
+          if (currentAfterInterrupt) {
+            sessionStore.update(sessionId, {
+              result: {
+                ...currentAfterInterrupt.result,
+                moduleAgentRuns: [...moduleAgentRuns],
+              },
+            });
+          }
+          sessionStore.addMessage(sessionId, {
+            id: `system-${Date.now()}-${module.id}-guided`,
+            kind: "event",
+            moduleId: module.id,
+            role: "system",
+            text: `已引导 ${module.id}，正在按新的用户要求继续。`,
+          });
+          completedInitialModules?.add(module.id);
+          await onModuleInitialCompleted?.(module.id);
+          return;
+        }
         const agentGeneratedAssetCount =
           await readAgentGeneratedAssetCount(moduleDir);
         moduleAgentRuns.push({
@@ -392,6 +463,10 @@ const runInitialModuleRound = async ({
           sessionId,
         });
         await onModuleInitialCompleted?.(module.id);
+      } finally {
+        if (moduleTurnInterrupts?.get(module.id) === moduleTurnInterrupt) {
+          moduleTurnInterrupts.delete(module.id);
+        }
       }
     },
   });

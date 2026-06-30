@@ -31,7 +31,7 @@ type ModuleAgentRunRecord = {
   region: SvgVerticalModule["region"];
   round: number;
   startedAt: number;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "interrupted";
   threadId: string;
   turnSummary?: {
     durationMs: number;

@@ -421,9 +421,33 @@ outputFormat: ${outputFormat}
 `.trim();
 }
 
+function buildUserModuleGuidancePrompt({
+  module,
+  userInstructions,
+}: {
+  module: SvgVerticalModule;
+  userInstructions: string;
+}) {
+  return `
+## 用户实时引导（模块 ${module.id}）
+
+用户在你执行当前模块时插入了一条实时引导。请把它作为当前对话的最新用户消息处理，而不是新的修复任务。
+
+用户原文:
+${userInstructions}
+
+要求：
+- 这是执行过程中的方向调整、提醒、确认或停止信号。
+- 不要默认读取文件、不要默认运行 verify/browser-eval、不要默认修改产物。
+- 只有用户原文明确要求具体改动时，才按当前上下文做最小必要修改。
+- 如果用户表达认可、保持当前、停止继续等意思，就自然停止本模块后续优化，简短回复即可。
+`.trim();
+}
+
 export {
   buildAgentUnitPrompt,
   buildAgentUnitFollowupBasePrompt,
+  buildUserModuleGuidancePrompt,
   buildUserModuleRevisionPrompt,
   resolveModuleOutputFormat,
   getSourceFragmentFileName,

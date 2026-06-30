@@ -39,7 +39,7 @@ import { UploadDialog } from './components/upload/UploadDialog'
 import { SettingsDialog } from './components/settings/SettingsDialog'
 import { Lightbox } from './components/common/Lightbox'
 import type { ArtifactCacheMeta } from './utils/artifact-cache'
-import type { Session } from './types/session'
+import type { Session, SessionMessage } from './types/session'
 import './styles/global.css'
 import './styles/layout.css'
 import './styles/sidebar.css'
@@ -222,7 +222,7 @@ export default function App() {
         dispatch({ type: 'message/upserted', message: event.message, timestamp: event.timestamp })
         break
       case 'agent:event':
-        dispatch({ type: 'agent/event', event: event.event })
+        dispatch({ type: 'agent/event', event: { ...event.event, timestamp: event.timestamp } })
         break
       case 'pipeline:complete':
         dispatch({ type: 'pipeline/completed', sessionId: event.sessionId, timestamp: event.timestamp })
@@ -364,6 +364,9 @@ export default function App() {
     dispatch({ type: 'module/select', moduleId })
     dispatch({ type: 'chat/filter', moduleId })
   }, [])
+  const upsertQueuedMessage = useCallback((message: SessionMessage) => {
+    dispatch({ type: 'message/upserted', message, timestamp: Date.now() })
+  }, [])
 
   const cacheStatus = artifactCache.statusFor(state.currentSession)
   const showResults = hasPrimaryResults(state.currentSession)
@@ -402,6 +405,7 @@ export default function App() {
             chatDisabled={Boolean(state.runtime?.sessionChatDisabled)}
             chatFilterModuleId={state.chatFilterModuleId}
             onFilterModule={(moduleId) => dispatch({ type: 'chat/filter', moduleId })}
+            onMessageQueued={upsertQueuedMessage}
             onSelectModule={selectModule}
             selectedModuleId={state.selectedModuleId}
             session={state.currentSession}
@@ -442,6 +446,7 @@ export default function App() {
               disabled={Boolean(state.runtime?.sessionChatDisabled)}
               onClose={() => dispatch({ type: 'chat/toggle', open: false })}
               onFilterModule={(moduleId) => dispatch({ type: 'chat/filter', moduleId })}
+              onMessageQueued={upsertQueuedMessage}
               onSelectModule={selectModule}
               open={state.chatOpen}
               selectedModuleId={state.selectedModuleId}

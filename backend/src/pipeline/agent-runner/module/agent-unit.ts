@@ -10,7 +10,11 @@ import {
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import { sessionStore } from "../../../session-store.js";
 import type { AgentThread } from "../../agent-runtime/index.js";
-import type { AgentTokenUsage, AgentTurnMetrics } from "../turn/agent-turn-types.js";
+import type {
+  AgentArtifactUpdateSignal,
+  AgentTokenUsage,
+  AgentTurnMetrics,
+} from "../turn/agent-turn-types.js";
 import {
   resumeAgentThread,
   startAgentThread,
@@ -46,9 +50,15 @@ type AgentUnitInput = {
   reasoningEffort: AgentReasoningEffort;
   sessionId: string;
   controller: AbortController;
+  interruptSignal?: AbortSignal;
+  interruptLabel?: string;
   extraPrompt?: string;
+  prependFollowupBasePrompt?: boolean;
   revisionPrompt?: string; // 可选的后续修复 prompt
   onThreadStarted?: (threadId: string) => void;
+  onArtifactUpdateSignal?: (
+    signal: AgentArtifactUpdateSignal,
+  ) => Promise<void> | void;
   round?: number;
   thread?: AgentThread;
 };
@@ -65,6 +75,8 @@ type AgentUnitThreadInput = {
 
 type AgentUnitResult = {
   success: boolean;
+  interrupted?: boolean;
+  interruptReason?: string;
   durationMs: number;
   endedAt: number;
   finalDiffRatio?: number;
@@ -132,6 +144,63 @@ type PostSanitizeVerifySummary = {
   frameworkDiffRatio?: number;
   round: number;
   verifyCount: number;
+};
+
+const statSignature = async (filePath: string) => {
+  try {
+    const stats = await stat(filePath);
+    return `${path.relative(process.cwd(), filePath)}:${stats.size}:${Math.round(stats.mtimeMs)}`;
+  } catch {
+    return `${path.relative(process.cwd(), filePath)}:missing`;
+  }
+};
+
+const listFileSignatures = async (dirPath: string): Promise<string[]> => {
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    const nested = await Promise.all(
+      entries
+        .filter((entry) => !entry.name.startsWith("."))
+        .map(async (entry) => {
+          const entryPath = path.join(dirPath, entry.name);
+          if (entry.isDirectory()) return listFileSignatures(entryPath);
+          if (entry.isFile()) return [await statSignature(entryPath)];
+          return [];
+        }),
+    );
+    return nested.flat().sort();
+  } catch {
+    return [];
+  }
+};
+
+const readModuleOutputFingerprint = async ({
+  manifestPath,
+  moduleCssPath,
+  outputFormat,
+  previewFragmentHtmlPath,
+  sourceDataPath,
+  sourceFragmentPath,
+  workingDir,
+}: {
+  manifestPath: string;
+  moduleCssPath: string;
+  outputFormat: ReturnType<typeof resolveModuleOutputFormat>;
+  previewFragmentHtmlPath: string;
+  sourceDataPath: string;
+  sourceFragmentPath: string;
+  workingDir: string;
+}) => {
+  const signatures = await Promise.all([
+    statSignature(previewFragmentHtmlPath),
+    statSignature(moduleCssPath),
+    statSignature(manifestPath),
+    ...(outputFormat === "html"
+      ? []
+      : [statSignature(sourceFragmentPath), statSignature(sourceDataPath)]),
+    listFileSignatures(path.join(workingDir, "assets")),
+  ]);
+  return signatures.flat().join("|");
 };
 
 class ModuleOutputIncompleteError extends Error {
@@ -535,9 +604,13 @@ export async function runAgentUnit(
     reasoningEffort,
     sessionId,
     controller,
+    interruptSignal,
+    interruptLabel,
     extraPrompt,
+    prependFollowupBasePrompt = true,
     revisionPrompt,
     onThreadStarted,
+    onArtifactUpdateSignal,
     round = 1,
     thread: inputThread,
   } = input;
@@ -578,13 +651,15 @@ export async function runAgentUnit(
   // 构造 prompt（初始或后续修复）
   let prompt: string;
   if (revisionPrompt) {
-    prompt = `${buildAgentUnitFollowupBasePrompt({
-      module,
-      design,
-      modulePlan,
-      workingDir,
-      round,
-    })}\n\n${revisionPrompt}`;
+    prompt = prependFollowupBasePrompt
+      ? `${buildAgentUnitFollowupBasePrompt({
+          module,
+          design,
+          modulePlan,
+          workingDir,
+          round,
+        })}\n\n${revisionPrompt}`
+      : revisionPrompt;
   } else {
     const basePrompt = buildAgentUnitPrompt({
       module,
@@ -615,6 +690,16 @@ export async function runAgentUnit(
     `[agent-unit:${module.id}] starting with thread ${thread.id ?? "unknown"}, workingDir=${path.relative(process.cwd(), workingDir)}, input=prompt-only`,
   );
 
+  let latestOutputFingerprint = await readModuleOutputFingerprint({
+    manifestPath,
+    moduleCssPath,
+    outputFormat,
+    previewFragmentHtmlPath,
+    sourceDataPath,
+    sourceFragmentPath,
+    workingDir,
+  });
+
   const turn = await runAgentTurnCore({
     thread,
     input: prompt,
@@ -627,12 +712,87 @@ export async function runAgentUnit(
     updateSessionThread: false,
     moduleTimeoutMs: getModuleAgentTimeoutMs(),
     verifyStateDir: workingDir,
+    interruptSignal,
+    interruptLabel,
+    onArtifactUpdateSignal: async (signal) => {
+      const nextOutputFingerprint = await readModuleOutputFingerprint({
+        manifestPath,
+        moduleCssPath,
+        outputFormat,
+        previewFragmentHtmlPath,
+        sourceDataPath,
+        sourceFragmentPath,
+        workingDir,
+      });
+      if (nextOutputFingerprint === latestOutputFingerprint) return;
+      latestOutputFingerprint = nextOutputFingerprint;
+      await onArtifactUpdateSignal?.(signal);
+    },
   });
 
   sessionStore.addLog(
     sessionId,
     `[agent-unit:${module.id}] turn completed: ${turn.turnSummary.totalCommands} commands, ${(turn.turnSummary.durationMs / 1000).toFixed(1)}s`,
   );
+
+  if (
+    interruptSignal?.aborted &&
+    turn.turnSummary.earlyStopReason === String(interruptSignal.reason ?? interruptLabel ?? "")
+  ) {
+    const endedAt = Date.now();
+    return {
+      success: false,
+      interrupted: true,
+      interruptReason: turn.turnSummary.earlyStopReason,
+      durationMs: endedAt - startedAt,
+      endedAt,
+      revisionRounds,
+      outputByteSizes: {
+        manifest: 0,
+        moduleCss: 0,
+        previewFragmentHtml: 0,
+      },
+      threadId: thread.id ?? "unknown",
+      promptKind,
+      round,
+      startedAt,
+      turnSummary: {
+        durationMs: turn.turnSummary.durationMs,
+        earlyStopReason: turn.turnSummary.earlyStopReason,
+        internalDiffTimeline: turn.turnSummary.internalRounds
+          .filter((internalRound) => internalRound.diffRatio !== undefined)
+          .map((internalRound) => ({
+            diffRatio: internalRound.diffRatio!,
+            round: internalRound.roundNumber,
+          })),
+        metrics: turn.turnSummary.metrics,
+        totalCommands: turn.turnSummary.totalCommands,
+        totalInternalRounds: turn.turnSummary.totalInternalRounds,
+        totalShellCommands: turn.turnSummary.totalShellCommands,
+        verifyCount: turn.turnSummary.verifyUsage.verifyCount,
+        rollbackCount: turn.turnSummary.verifyUsage.rollbackCount,
+        rollbackReasons: turn.turnSummary.verifyUsage.rollbackReasons,
+        softStopRecommendation:
+          turn.turnSummary.verifyUsage.softStopRecommendation,
+      },
+      usage: turn.usage,
+      outputFiles: {
+        manifest: "",
+        moduleCss: "",
+        previewFragmentHtml: "",
+      },
+      outputPaths: {
+        manifest: manifestPath,
+        moduleCss: moduleCssPath,
+        moduleSvg: moduleSvgPath,
+        previewFragmentHtml: previewFragmentHtmlPath,
+        ...(outputFormat === "html" ? {} : { sourceData: sourceDataPath }),
+        ...(outputFormat === "html"
+          ? {}
+          : { sourceFragment: sourceFragmentPath }),
+      },
+    };
+  }
 
   try {
     await ensureRequiredOutputFiles({
