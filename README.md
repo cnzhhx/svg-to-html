@@ -54,7 +54,10 @@ cp backend/config/model-provider.example.json backend/config/model-provider.json
 # 4. 构建 MCP server（浏览器验证所需）
 pnpm run build:mcp
 
-# 5. 启动服务
+# 5. 构建前端静态资源
+pnpm run build:frontend
+
+# 6. 启动服务
 pnpm start
 # 访问 http://localhost:80/transformer
 ```

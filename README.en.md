@@ -54,7 +54,10 @@ cp backend/config/model-provider.example.json backend/config/model-provider.json
 # 4. Build MCP server (required for browser-based verification)
 pnpm run build:mcp
 
-# 5. Start the service
+# 5. Build frontend static assets
+pnpm run build:frontend
+
+# 6. Start the service
 pnpm start
 # Open http://localhost:80/transformer
 ```
