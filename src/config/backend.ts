@@ -147,10 +147,6 @@ const buildBackendConfig = () => {
         "SEMANTIC_VISION_CONCURRENCY",
         Math.min(readNumber("MAX_PARALLEL_MODULE_AGENTS", 10), 3),
       ),
-      verifyRollbackThreshold: readNumber(
-        "AGENT_VERIFY_ROLLBACK_THRESHOLD",
-        0.005,
-      ),
       moduleTimeoutMs: readNumber("MODULE_AGENT_TIMEOUT_MS", 3_600_000),
     },
     browser: {
@@ -500,14 +496,6 @@ const BACKEND_CONFIG_FIELDS: BackendConfigFieldDefinition[] = [
     defaultValue: 3_600_000,
     description: "单个模块 agent 回合最长执行时间，单位毫秒。",
     envName: "MODULE_AGENT_TIMEOUT_MS",
-    section: "agent",
-    type: "number",
-  },
-  {
-    configKey: "agent.verifyRollbackThreshold",
-    defaultValue: 0.005,
-    description: "视觉差异反弹超过此值时触发回滚逻辑。",
-    envName: "AGENT_VERIFY_ROLLBACK_THRESHOLD",
     section: "agent",
     type: "number",
   },

@@ -863,10 +863,6 @@ const FIELD_TEXT = {
     description: '单个模块 agent 回合使用的推理强度。',
     label: '模块推理强度',
   },
-  'agent.verifyRollbackThreshold': {
-    description: '视觉差异反弹超过此值时触发回滚。',
-    label: '还原度回滚阈值',
-  },
   'diff.diffRatioThreshold': {
     description: '整页视觉差异通过阈值，0.05 表示 5%。数值越低，还原度要求越高。',
     label: '整页视觉差异阈值',

@@ -1,9 +1,6 @@
 import { sessionStore } from '../../../session-store.js'
 import type { AgentInput, AgentThread } from '../../agent-runtime/index.js'
 import {
-  getAgentVerifyRollbackThreshold,
-} from '../../../config/index.js'
-import {
   archiveAgentCommandCheckpoint,
   classifyAgentWorkflowCommand,
   getAgentCommandStatus,
@@ -11,7 +8,6 @@ import {
 } from './agent-turn-command.js'
 import { logThreadEvent } from './agent-turn-events.js'
 import { isAbortError } from '../session/run-control.js'
-import { backupBestFiles, restoreBestFiles } from './rollback-utils.js'
 import {
   buildVerifyStopLossRecommendation,
   type VerifyStopLossSample,
@@ -39,8 +35,7 @@ type RunAgentTurnCoreInput = {
   onThreadStarted?: (threadId: string) => void
   updateSessionThread?: boolean
   moduleTimeoutMs?: number
-  rollbackBackupRoot?: string
-  rollbackFiles?: string[]
+  verifyStateDir?: string
 }
 
 type RunAgentTurnCoreResult = {
@@ -154,7 +149,7 @@ export async function runAgentTurnCore(
       earlyStopReason = `module-timeout (${Math.round(moduleTimeoutMs / 1000)}s)`
       sessionStore.addLog(
         sessionId,
-        `[agent:${eventSourceLabel ?? moduleId ?? 'turn'}] ${earlyStopReason}; stopping this turn and keeping the best verified state`,
+        `[agent:${eventSourceLabel ?? moduleId ?? 'turn'}] ${earlyStopReason}; stopping this turn and keeping latest artifacts`,
       )
       turnController.abort('module-timeout')
     }, moduleTimeoutMs)
@@ -175,44 +170,19 @@ export async function runAgentTurnCore(
   const allMessages: AgentMessageRecord[] = []
   let internalRound = 1
   let bestVerifyDiffRatio: number | undefined
-  let browserEvalBaselineBackedUp = false
   let verifyRunCount = 0
   let completedShellCommandCount = 0
   let earlyStopReason: string | undefined
-  let rollbackCount = 0
-  let rollbackReasons: string[] = []
   let softStopRecommendation: string | undefined
   const verifySamples: VerifyStopLossSample[] = []
 
   const commandStartTimes = new Map<string, number>()
   const turnStartedAt = Date.now()
 
-  const handleBrowserEvalCheckpoint = async () => {
-    if (!input.rollbackFiles || input.rollbackFiles.length === 0) return
-    const session = sessionStore.get(sessionId)
-    if (!session) return
-    await backupBestFiles(
-      input.rollbackBackupRoot ?? session.artifactDir,
-      input.rollbackFiles,
-    )
-    if (!browserEvalBaselineBackedUp) {
-      browserEvalBaselineBackedUp = true
-      sessionStore.addLog(
-        sessionId,
-        `[agent:browser-eval] baseline snapshot saved before verify`,
-      )
-    } else {
-      sessionStore.addLog(
-        sessionId,
-        `[agent:browser-eval] checkpoint snapshot saved after browser-eval`,
-      )
-    }
-  }
-
   const writeStopLossState = async () => {
-    if (!input.rollbackBackupRoot) return
+    if (!input.verifyStateDir) return
     await writeVerifyStopLossState({
-      moduleDir: input.rollbackBackupRoot,
+      moduleDir: input.verifyStateDir,
       samples: verifySamples,
       turnStartedAt,
     }).catch((error) => {
@@ -284,44 +254,19 @@ export async function runAgentTurnCore(
               await writeStopLossState()
               const degraded =
                 bestVerifyDiffRatio !== undefined &&
-                diffRatio >
-                  bestVerifyDiffRatio + getAgentVerifyRollbackThreshold()
+                diffRatio > bestVerifyDiffRatio
 
-              if (degraded && input.rollbackFiles && input.rollbackFiles.length > 0) {
-                const session = sessionStore.get(sessionId)
-                if (session) {
-                  await restoreBestFiles(
-                    input.rollbackBackupRoot ?? session.artifactDir,
-                    input.rollbackFiles,
-                  )
-                }
-                rollbackCount++
-                rollbackReasons.push(
-                  `round ${internalRound}: diff ${(bestVerifyDiffRatio! * 100).toFixed(2)}% → ${(diffRatio * 100).toFixed(2)}%`,
-                )
+              if (degraded) {
                 sessionStore.addLog(
                   sessionId,
-                  `[agent:rollback] #${rollbackCount}: diff degraded from ${(bestVerifyDiffRatio! * 100).toFixed(2)}% to ${(diffRatio * 100).toFixed(2)}%; rolled back`,
+                  `[agent:verify] diff degraded from ${(bestVerifyDiffRatio! * 100).toFixed(2)}% to ${(diffRatio * 100).toFixed(2)}%; keeping latest artifacts`,
                 )
-
-                earlyStopReason = `verify-rollback-${rollbackCount}: diff degraded from ${(bestVerifyDiffRatio! * 100).toFixed(2)}% to ${(diffRatio * 100).toFixed(2)}%`
-                turnController.abort(earlyStopReason)
-              } else {
-                if (
-                  bestVerifyDiffRatio === undefined ||
-                  diffRatio < bestVerifyDiffRatio
-                ) {
-                  bestVerifyDiffRatio = diffRatio
-                  if (input.rollbackFiles && input.rollbackFiles.length > 0) {
-                    const session = sessionStore.get(sessionId)
-                    if (session) {
-                      await backupBestFiles(
-                        input.rollbackBackupRoot ?? session.artifactDir,
-                        input.rollbackFiles,
-                      )
-                    }
-                  }
-                }
+              }
+              if (
+                bestVerifyDiffRatio === undefined ||
+                diffRatio < bestVerifyDiffRatio
+              ) {
+                bestVerifyDiffRatio = diffRatio
               }
 
               if (!softStopRecommendation) {
@@ -340,8 +285,6 @@ export async function runAgentTurnCore(
               }
             }
 
-          } else if (commandKind === 'browser-eval' && status === 'completed') {
-            await handleBrowserEvalCheckpoint()
           }
 
           await archiveAgentCommandCheckpoint({
@@ -391,10 +334,6 @@ export async function runAgentTurnCore(
           startedAt: commandStartTimes.get(event.item.id),
           status,
         })
-
-        if (status === 'completed') {
-          await handleBrowserEvalCheckpoint()
-        }
 
         await archiveAgentCommandCheckpoint({
           command: `[mcp] browser_eval`,
@@ -491,8 +430,8 @@ export async function runAgentTurnCore(
     verifyUsage: {
       bestDiffRatio: bestVerifyDiffRatio,
       verifyCount: verifyRunCount,
-      rollbackCount,
-      rollbackReasons,
+      rollbackCount: 0,
+      rollbackReasons: [],
       softStopRecommendation,
     },
   }

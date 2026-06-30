@@ -12,7 +12,6 @@ import { Semaphore } from "../queue/concurrency.js";
 import { throwIfRunAborted } from "../session/run-control.js";
 import {
   ensureScaffoldSnapshot,
-  type ModuleSnapshot,
 } from "./module-artifacts.js";
 import {
   type ModuleAgentRunRecord,
@@ -107,7 +106,6 @@ export async function runModulePipelineV2(
   const moduleThreads = new Map<string, AgentThread>();
   const moduleAgentRuns: ModuleAgentRunRecord[] = [];
   const moduleValidationRuns: ModuleValidationRun[] = [];
-  const bestSnapshots = new Map<string, ModuleSnapshot>();
   const failedModules = new Map<string, string>();
   const failedModuleKinds = new Map<string, ModuleValidationFailureKind>();
   const persistedModuleThreadIds = readPersistedModuleAgentThreadIds(sessionId);
@@ -140,7 +138,6 @@ export async function runModulePipelineV2(
   throwIfRunAborted(controller);
 
   await collectAgentLocalValidation({
-    bestSnapshots,
     controller,
     design,
     failedModuleKinds,
@@ -159,7 +156,6 @@ export async function runModulePipelineV2(
 
   return runModulePipelineFinalization({
     artifactDir,
-    bestSnapshots,
     controller,
     design,
     failedModuleKinds,

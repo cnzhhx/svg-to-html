@@ -1,5 +1,3 @@
-import path from "node:path";
-
 import { getModuleDiffRatioThreshold } from "../../../config/index.js";
 import type { OutputFormat } from "../../../core/output-target.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
@@ -17,8 +15,6 @@ import {
   getModuleDir,
   hasCompleteModuleOutput,
   restoreHostModuleArtifacts,
-  restoreModuleSnapshot,
-  type ModuleSnapshot,
 } from "./module-artifacts.js";
 import {
   type ModuleAgentRunRecord,
@@ -35,7 +31,6 @@ type PublishMergeReadinessInput = {
 
 type ModulePipelineFinalizationInput = {
   artifactDir: string;
-  bestSnapshots: Map<string, ModuleSnapshot>;
   controller: AbortController;
   design: ResolvedDesignTarget;
   failedModuleKinds: Map<string, ModuleValidationFailureKind>;
@@ -90,7 +85,6 @@ const publishMergeReadiness = async ({
 
 const runModulePipelineFinalization = async ({
   artifactDir,
-  bestSnapshots,
   controller,
   design,
   failedModuleKinds,
@@ -111,11 +105,8 @@ const runModulePipelineFinalization = async ({
 }: ModulePipelineFinalizationInput): Promise<ModulePipelineFinalizationResult> => {
   sessionStore.addLog(
     sessionId,
-    "[module-pipeline-v2] restoring best snapshots",
+    "[module-pipeline-v2] using latest module artifacts without snapshot restore",
   );
-  for (const [moduleId, snapshot] of bestSnapshots) {
-    await restoreModuleSnapshot(path.join(modulesRootDir, moduleId), snapshot);
-  }
 
   await restoreHostModuleArtifacts({
     modules,
@@ -124,7 +115,7 @@ const runModulePipelineFinalization = async ({
   throwIfRunAborted(controller);
   sessionStore.addLog(
     sessionId,
-    "[module-pipeline-v2] validating restored module snapshots",
+    "[module-pipeline-v2] validating latest module artifacts",
   );
   await runWithLimit({
     items: modules,
@@ -133,27 +124,22 @@ const runModulePipelineFinalization = async ({
     worker: async (module) => {
       throwIfRunAborted(controller);
       const moduleDir = getModuleDir(modulesRootDir, module);
-      const restoredSnapshot = bestSnapshots.has(module.id);
       const preserveExistingInputFailure =
-        !restoredSnapshot &&
         failedModuleKinds.get(module.id) === "module_input_failed";
       if (!hasCompleteModuleOutput(moduleDir, outputFormat)) {
-        const message = "incomplete module output after restoring best snapshots";
+        const message = "incomplete module output before final merge";
         if (!preserveExistingInputFailure) {
           failedModules.set(module.id, message);
           failedModuleKinds.set(module.id, "incomplete_output");
         }
         sessionStore.addLog(
           sessionId,
-          `[module-pipeline-v2:${module.id}] restored snapshot preflight failed: ${message}`,
+          `[module-pipeline-v2:${module.id}] latest artifact preflight failed: ${message}`,
         );
         return;
       }
 
-      if (
-        restoredSnapshot &&
-        failedModuleKinds.get(module.id) !== "module_input_failed"
-      ) {
+      if (failedModuleKinds.get(module.id) !== "module_input_failed") {
         failedModules.delete(module.id);
         failedModuleKinds.delete(module.id);
       }

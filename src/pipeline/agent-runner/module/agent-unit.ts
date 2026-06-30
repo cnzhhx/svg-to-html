@@ -545,7 +545,7 @@ export async function runAgentUnit(
   const revisionRounds = revisionPrompt ? 1 : 0;
   const outputFormat = resolveModuleOutputFormat({ design, modulePlan });
 
-  // 输出文件路径（提前声明，用于 rollback 备份）
+  // 输出文件路径（提前声明，用于模板、校验和清理）
   const previewFragmentHtmlPath = path.join(
     workingDir,
     "preview.fragment.html",
@@ -621,13 +621,7 @@ export async function runAgentUnit(
     onThreadStarted,
     updateSessionThread: false,
     moduleTimeoutMs: getModuleAgentTimeoutMs(),
-    rollbackBackupRoot: workingDir,
-    rollbackFiles: [
-      previewFragmentHtmlPath,
-      moduleCssPath,
-      manifestPath,
-      ...(outputFormat === "html" ? [] : [sourceFragmentPath, sourceDataPath]),
-    ],
+    verifyStateDir: workingDir,
   });
 
   sessionStore.addLog(
