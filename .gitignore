@@ -1,7 +1,11 @@
 node_modules/
+**/node_modules/
 workspace/
 docs/
+docs
 dist/
+backend/dist/
+frontend/dist/
 test
 *.tsbuildinfo
 
@@ -11,3 +15,4 @@ test
 
 # Local model provider config may contain API keys.
 config/model-provider.json
+backend/config/model-provider.json

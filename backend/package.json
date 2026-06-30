@@ -1,0 +1,49 @@
+{
+  "name": "@svg-to-html/backend",
+  "version": "0.2.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build:mcp": "node scripts/build-mcp.mjs",
+    "check": "pnpm run lint:types && pnpm test && pnpm run build:mcp",
+    "dev": "tsx src/server.ts",
+    "doctor": "node scripts/doctor.mjs",
+    "lint:types": "tsc --noEmit",
+    "start": "tsx src/server.ts",
+    "test": "tsx --test tests/unit/**/*.test.ts",
+    "task:generate": "tsx src/cli/generate-design.ts",
+    "task:resolve-container-layout": "tsx src/cli/resolve-container-layout.ts",
+    "task:split-svg-modules": "tsx src/cli/split-svg-modules.ts",
+    "task:analyze-session-cost": "tsx src/cli/analyze-session-cost.ts",
+    "task:browser-query": "tsx src/cli/browser-query.ts",
+    "task:diagnose-module-alignment": "tsx src/cli/diagnose-module-alignment.ts",
+    "task:inspect-module-svg": "tsx src/cli/inspect-module-svg.ts",
+    "task:export-svg-node-asset": "tsx src/cli/export-svg-node-asset.ts",
+    "task:extract-module-text": "tsx src/cli/extract-module-text.ts",
+    "task:verify": "tsx src/cli/verify-design.ts",
+    "task:verify-module": "tsx src/cli/verify-module-design.ts",
+    "task:verify-module-framework": "tsx src/cli/verify-module-framework.ts"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "archiver": "^7.0.1",
+    "express": "^5.1.0",
+    "multer": "^1.4.5-lts.2",
+    "nanoid": "^5.1.5",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "vite": "^8.0.16",
+    "vue": "^3.5.38",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/archiver": "^7.0.0",
+    "@types/express": "^5.0.2",
+    "@types/express-serve-static-core": "^5.0.2",
+    "@types/multer": "^1.4.12",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "private": true
+}

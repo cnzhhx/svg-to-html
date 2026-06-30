@@ -33,7 +33,7 @@ Below is a visual comparison between the original design render and the generate
 ### One-click Deploy (Linux / macOS)
 
 ```bash
-bash scripts/deploy.sh
+bash backend/scripts/deploy.sh
 ```
 
 This script handles everything: system dependencies, Node.js, pnpm, browser, project setup, and service startup.
@@ -48,8 +48,8 @@ pnpm install
 pnpm run doctor
 
 # 3. Configure model provider
-cp config/model-provider.example.json config/model-provider.json
-# Edit config/model-provider.json with your provider details
+cp backend/config/model-provider.example.json backend/config/model-provider.json
+# Edit backend/config/model-provider.json with your provider details
 
 # 4. Build MCP server (required for browser-based verification)
 pnpm run build:mcp
@@ -62,12 +62,12 @@ pnpm start
 ### Service Management
 
 ```bash
-bash scripts/start-linux.sh start     # Start in background
-bash scripts/start-linux.sh stop      # Stop
-bash scripts/start-linux.sh restart   # Restart
-bash scripts/start-linux.sh status    # Show status
-bash scripts/start-linux.sh logs      # Follow logs
-bash scripts/start-linux.sh foreground  # Run in foreground with auto-restart
+bash backend/scripts/start-linux.sh start     # Start in background
+bash backend/scripts/start-linux.sh stop      # Stop
+bash backend/scripts/start-linux.sh restart   # Restart
+bash backend/scripts/start-linux.sh status    # Show status
+bash backend/scripts/start-linux.sh logs      # Follow logs
+bash backend/scripts/start-linux.sh foreground  # Run in foreground with auto-restart
 ```
 
 ## Requirements
@@ -79,13 +79,13 @@ bash scripts/start-linux.sh foreground  # Run in foreground with auto-restart
 | Chrome / Chromium / Edge | Latest | For rendering & screenshots |
 | opencode CLI | Optional | For `opencode` runtime |
 
-The install script (`scripts/install-linux.sh`) can automatically install all of the above on Linux and macOS.
+The install script (`backend/scripts/install-linux.sh`) can automatically install all of the above on Linux and macOS.
 
 ## Configuration
 
 ### Model Provider
 
-Edit `config/model-provider.json` (copy from `config/model-provider.example.json`):
+Edit `backend/config/model-provider.json` (copy from `backend/config/model-provider.example.json`):
 
 ```json
 {
@@ -144,7 +144,10 @@ pnpm run task:split-svg-modules -- <svg-path>
 pnpm run doctor
 
 # Type check
-pnpm exec tsc --noEmit
+pnpm run lint:types
+
+# Build the React frontend
+pnpm run build:frontend
 ```
 
 ## How It Works
@@ -164,17 +167,14 @@ flowchart TD
 ## Project Structure
 
 ```
-src/
-  cli/                    CLI entry points
-  config/                 Runtime, model, and fidelity evaluation settings
-  core/                   SVG parsing, rendering, visual comparison, OCR, layout, policy
-  pipeline/               Agent orchestration, module generation, merge, fidelity evaluation
-  routes/                 Express HTTP API
-  session-store/          Session state, persistence, events
-  prompts/                Agent prompt templates
-public/                   Web UI frontend
-config/                   Model provider configuration
-scripts/                  Install, deploy, and diagnostic scripts
+backend/
+  src/                    Express backend, CLI, generation pipeline, and agent orchestration
+  config/                 Model provider configuration
+  scripts/                Install, deploy, and diagnostic scripts
+  tests/                  Backend unit tests
+frontend/
+  src/                    React 18 frontend source
+  public/                 Built static assets served directly by the backend
 example/                  Publishable fidelity comparison examples
 workspace/                Generated sessions and artifacts (git-ignored)
 ```
