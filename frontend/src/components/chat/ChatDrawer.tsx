@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { sendSessionMessage } from '../../api/sessions'
 import { useAutoResizeTextarea } from '../../hooks/useAutoResizeTextarea'
 import type { AgentEvent } from '../../types/events'
@@ -31,6 +31,7 @@ export function ChatDrawer({
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const conversationRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useAutoResizeTextarea(text)
   const moduleIds = collectChatFilterModules(session)
   const canSend = Boolean(session && selectedModuleId && text.trim() && !busy && !disabled && session.status !== 'running' && session.status !== 'queued')
@@ -44,6 +45,27 @@ export function ChatDrawer({
     if (!chatFilterModuleId) return agentEvents
     return agentEvents.filter((event) => getAgentEventModuleId(event) === chatFilterModuleId)
   }, [agentEvents, chatFilterModuleId])
+
+  const scrollConversationToBottom = useCallback(() => {
+    const element = conversationRef.current
+    if (!element) return
+    element.scrollTop = element.scrollHeight
+  }, [])
+
+  useEffect(() => {
+    if (!open) return undefined
+    scrollConversationToBottom()
+    const frame = window.requestAnimationFrame(scrollConversationToBottom)
+    return () => window.cancelAnimationFrame(frame)
+  }, [
+    chatFilterModuleId,
+    filteredAgentEvents,
+    messages,
+    open,
+    scrollConversationToBottom,
+    selectedModuleId,
+    session?.id,
+  ])
 
   const selectChatFilter = (moduleId: string | null) => {
     onFilterModule(moduleId)
@@ -86,7 +108,7 @@ export function ChatDrawer({
           <button className={`chat-filter-tab${chatFilterModuleId === moduleId ? ' is-selected' : ''}`} key={moduleId} onClick={() => selectChatFilter(moduleId)} type="button">{moduleId}</button>
         ))}
       </div>
-      <div className="conversation-stream">
+      <div className="conversation-stream" ref={conversationRef}>
         {messages.length || filteredAgentEvents.length ? (
           <>
             {messages.map((message) => <MessageBubble key={message.id} message={message} />)}
