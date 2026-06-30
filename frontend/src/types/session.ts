@@ -70,11 +70,15 @@ export type SessionResult = Record<string, unknown> & {
   localArtifactCacheFileCount?: number
   localArtifactCachePaths?: string[]
   localArtifactCacheStatus?: 'cached' | 'caching' | 'error'
+  livePreviewEntryPath?: string
+  livePreviewUpdatedAt?: number
+  livePreviewVersion?: number
   moduleAgentRuns?: ModuleAgentRun[]
   moduleAgentThreadIds?: Record<string, string>
   moduleConcurrencyLimit?: number
   moduleCount?: number
   moduleFailedIds?: string[]
+  modulePlanModules?: ModulePlanModule[]
   outputTarget?: SessionOutputTarget
   outputTokens?: number
   renderEntryPath?: string
@@ -103,6 +107,12 @@ export type ModuleAgentRun = {
   error?: string
   threadId?: string
   outputPaths?: Record<string, string | undefined>
+}
+
+export type ModulePlanModule = {
+  id: string
+  kind?: string
+  region?: Region
 }
 
 export type Session = {

@@ -8,6 +8,8 @@ import { createAdaptiveModulePlan } from "../../../core/svg-vertical-modules/ind
 import { cropAllModuleSvgs } from "../../../core/svg-vertical-modules/module-svg-crop.js";
 import { sessionStore } from "../../../session-store.js";
 import { archiveSessionCheckpoint } from "../archive/checkpoint.js";
+import { ensureScaffoldSnapshot } from "../module/module-artifacts.js";
+import { publishLivePreview, toModulePlanModules } from "../module/live-preview.js";
 import { throwIfRunAborted } from "./run-control.js";
 
 const prepareStructuredSessionInputs = async ({
@@ -86,6 +88,11 @@ const prepareStructuredSessionInputs = async ({
   });
   throwIfRunAborted(controller);
 
+  const scaffoldHtmlPath = await ensureScaffoldSnapshot({
+    design,
+    modulesRootDir: modulePlan.moduleDir,
+  });
+
   // Publish all preflight artifacts before the first agent turn so resumed
   // sessions can skip expensive analysis work and still find every report.
   const current = sessionStore.get(sessionId);
@@ -106,11 +113,18 @@ const prepareStructuredSessionInputs = async ({
         modulePlanMode: modulePlan.report.mode,
         modulePlanMarkdownPath: modulePlan.markdownPath,
         modulePlanPath: modulePlan.jsonPath,
+        modulePlanModules: toModulePlanModules(modulePlan.report),
         modulePlanQualityMarkdownPath: modulePlan.qualityMarkdownPath,
         modulePlanQualityPath: modulePlan.qualityJsonPath,
       },
     });
   }
+  await publishLivePreview({
+    design,
+    modulePlanPath: modulePlan.jsonPath,
+    scaffoldHtmlPath,
+    sessionId,
+  });
 
   sessionStore.addLog(
     sessionId,

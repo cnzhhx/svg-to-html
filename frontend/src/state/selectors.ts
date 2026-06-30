@@ -16,8 +16,7 @@ export const selectCanSendMessage = (state: AppState) =>
     state.currentSession &&
       !state.runtime?.sessionChatDisabled &&
       state.selectedModuleId &&
-      state.currentSession.status !== 'queued' &&
-      state.currentSession.status !== 'running',
+      state.currentSession.status !== 'queued',
   )
 
 export const selectResultImageCards = (session?: Session | null) => {

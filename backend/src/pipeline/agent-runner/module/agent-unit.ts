@@ -46,6 +46,7 @@ type AgentUnitInput = {
   reasoningEffort: AgentReasoningEffort;
   sessionId: string;
   controller: AbortController;
+  extraPrompt?: string;
   revisionPrompt?: string; // 可选的后续修复 prompt
   onThreadStarted?: (threadId: string) => void;
   round?: number;
@@ -534,6 +535,7 @@ export async function runAgentUnit(
     reasoningEffort,
     sessionId,
     controller,
+    extraPrompt,
     revisionPrompt,
     onThreadStarted,
     round = 1,
@@ -593,6 +595,9 @@ export async function runAgentUnit(
     // 首次 prompt：注入 compacted semantic + output files，省去 4-8 次 read
     const injectedContext = await buildInjectedModuleContext(workingDir);
     prompt = `${basePrompt}\n${injectedContext}`;
+  }
+  if (extraPrompt?.trim()) {
+    prompt = `${prompt}\n\n${extraPrompt.trim()}`;
   }
   const thread =
     inputThread ??

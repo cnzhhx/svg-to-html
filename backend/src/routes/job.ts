@@ -130,6 +130,9 @@ const safeResultForApi = (
   };
   const summaryKeys: Array<keyof SessionResult> = [
     "diffRatio",
+    "livePreviewEntryPath",
+    "livePreviewUpdatedAt",
+    "livePreviewVersion",
     "moduleCount",
     "verifyMode",
   ];
@@ -142,6 +145,9 @@ const safeResultForApi = (
     "diffRatio",
     "cachedInputTokens",
     "inputTokens",
+    "livePreviewEntryPath",
+    "livePreviewUpdatedAt",
+    "livePreviewVersion",
     "moduleAgentRuns",
     "moduleAgentThreadIds",
     "moduleAgentManifestPath",
@@ -155,6 +161,7 @@ const safeResultForApi = (
     "moduleManifestPath",
     "moduleMergeManifestPath",
     "modulePlanMarkdownPath",
+    "modulePlanModules",
     "modulePlanMode",
     "modulePlanPath",
     "modulePlanQualityMarkdownPath",
@@ -216,8 +223,7 @@ const canStartSession = (status: string) =>
   status === "failed" ||
   isCompletedSessionStatus(status);
 
-const canAcceptUserMessage = (status: string) =>
-  status !== "queued" && status !== "running";
+const canAcceptUserMessage = (status: string) => status !== "queued";
 
 const forceDeleteSessionFilesWithRetry = async (session: Session) => {
   let lastError: unknown;
@@ -339,6 +345,10 @@ router.post("/sessions/:id/messages", async (req, res) => {
     },
     { enqueueForAgent: true },
   );
+  if (session.status === "running") {
+    res.json({ sessionId: session.id, status: "running" });
+    return;
+  }
   enqueueSession(session.id);
   res.json({ sessionId: session.id, status: "queued" });
 });

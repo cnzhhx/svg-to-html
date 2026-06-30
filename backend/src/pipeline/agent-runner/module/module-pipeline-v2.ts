@@ -5,6 +5,7 @@ import { normalizeOutputFormat } from "../../../core/output-target.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import { writeJsonFile } from "../../../core/file-io.js";
 import { sessionStore } from "../../../session-store.js";
+import type { SessionEvent } from "../../../session-store.js";
 import type { AgentThread } from "../../agent-runtime/index.js";
 import { readModulePlan } from "../../module-merge/index.js";
 
@@ -26,6 +27,7 @@ import { collectAgentLocalValidation } from "./module-local-validation.js";
 import {
   runModulePipelineFinalization,
 } from "./module-finalize.js";
+import { runModuleUserRevisionTurn } from "./module-user-revision.js";
 import {
   normalizeModules,
   resolveSessionRenderEntryPath,
@@ -33,6 +35,7 @@ import {
 } from "./module-pipeline-shared.js";
 export {
   runModuleUserRevision,
+  runModuleUserRevisionTurn,
   type ModuleUserRevisionInput,
 } from "./module-user-revision.js";
 
@@ -118,24 +121,160 @@ export async function runModulePipelineV2(
     `[module-pipeline-v2] starting unified module pipeline: modules=${modules.length}, maxParallel=${maxParallelModuleAgents}, visionConcurrency=${semanticVisionConcurrency}`,
   );
 
-  await runInitialModuleRound({
-    artifactDir,
-    controller,
-    design,
-    failedModuleKinds,
-    failedModules,
-    maxParallelModuleAgents,
-    moduleAgentRuns,
-    modulePlan,
-    moduleThreads,
-    modulesRootDir,
-    modulesToRun: modules,
-    outputFormat,
-    persistedModuleThreadIds,
-    sessionId,
-    visionSemaphore,
-  });
+  const completedInitialModules = new Set<string>();
+  const activeLiveRevisions = new Map<string, Promise<void>>();
+  let liveRevisionChain = Promise.resolve();
+  const runLiveRevisionForModule = async (moduleId: string) => {
+    if (!completedInitialModules.has(moduleId)) return;
+    if (activeLiveRevisions.has(moduleId)) return activeLiveRevisions.get(moduleId);
+    const module = modules.find((candidate) => candidate.id === moduleId);
+    if (!module) return;
+    const messages = sessionStore.dequeuePendingMessagesForModule(sessionId, moduleId);
+    if (!messages.length) return;
+    const task = liveRevisionChain.then(async () => {
+      let batch = messages;
+      while (batch.length) {
+        const userInstructions = batch
+          .map((message, index) => `用户补充 ${index + 1}: ${message.text}`)
+          .join("\n");
+        sessionStore.addLog(
+          sessionId,
+          `[module-pipeline-v2:${moduleId}] applying ${batch.length} live user instruction(s) immediately`,
+        );
+        const revision = await runModuleUserRevisionTurn({
+          artifactDir,
+          controller,
+          design,
+          moduleId,
+          moduleMergeManifestPath,
+          modulePlanPath,
+          publishFinalMerge: false,
+          round:
+            Math.max(
+              1,
+              ...moduleAgentRuns
+                .filter((run) => run.id === moduleId)
+                .map((run) => Number(run.round ?? 1)),
+            ) + 1,
+          scaffoldHtmlPath,
+          sessionId,
+          userInstructions,
+        });
+        moduleAgentRuns.splice(0, moduleAgentRuns.length, ...revision.moduleAgentRuns);
+        moduleValidationRuns.splice(
+          0,
+          moduleValidationRuns.length,
+          ...revision.moduleValidationRuns,
+        );
+        failedModules.clear();
+        Object.entries(revision.moduleFailures).forEach(([id, message]) => {
+          failedModules.set(id, message);
+        });
+        failedModuleKinds.clear();
+        Object.entries(revision.moduleFailureKinds).forEach(([id, kind]) => {
+          failedModuleKinds.set(id, kind as ModuleValidationFailureKind);
+        });
+        batch = sessionStore.dequeuePendingMessagesForModule(sessionId, moduleId);
+      }
+    }).finally(() => {
+      activeLiveRevisions.delete(moduleId);
+    });
+    liveRevisionChain = task.catch(() => undefined);
+    activeLiveRevisions.set(moduleId, task);
+    return task;
+  };
+  const liveMessageListener = (event: SessionEvent) => {
+    if (event.type !== "user-message:queued") return;
+    if (event.sessionId !== sessionId) return;
+    const moduleId = event.moduleId?.trim();
+    if (!moduleId) return;
+    void runLiveRevisionForModule(moduleId).catch((error) => {
+      sessionStore.addLog(
+        sessionId,
+        `[module-pipeline-v2:${moduleId}] live user revision failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  };
+  sessionStore.on(`session:${sessionId}`, liveMessageListener);
+
+  try {
+    await runInitialModuleRound({
+      artifactDir,
+      completedInitialModules,
+      controller,
+      design,
+      failedModuleKinds,
+      failedModules,
+      maxParallelModuleAgents,
+      moduleAgentRuns,
+      modulePlan,
+      modulePlanPath,
+      moduleThreads,
+      modulesRootDir,
+      modulesToRun: modules,
+      onModuleInitialCompleted: async (moduleId) => {
+        await runLiveRevisionForModule(moduleId);
+      },
+      outputFormat,
+      persistedModuleThreadIds,
+      scaffoldHtmlPath,
+      sessionId,
+      visionSemaphore,
+    });
+    await Promise.all([...activeLiveRevisions.values()]);
+  } finally {
+    sessionStore.off(`session:${sessionId}`, liveMessageListener);
+  }
   throwIfRunAborted(controller);
+
+  for (const module of modules) {
+    const messages = sessionStore.dequeuePendingMessagesForModule(
+      sessionId,
+      module.id,
+    );
+    if (!messages.length) continue;
+    const userInstructions = messages
+      .map((message, index) => `用户补充 ${index + 1}: ${message.text}`)
+      .join("\n");
+    sessionStore.addLog(
+      sessionId,
+      `[module-pipeline-v2:${module.id}] applying ${messages.length} live user instruction(s) after initial turn`,
+    );
+    const revision = await runModuleUserRevisionTurn({
+      artifactDir,
+      controller,
+      design,
+      moduleId: module.id,
+      moduleMergeManifestPath,
+      modulePlanPath,
+      publishFinalMerge: false,
+      round:
+        Math.max(
+          1,
+          ...moduleAgentRuns
+            .filter((run) => run.id === module.id)
+            .map((run) => Number(run.round ?? 1)),
+        ) + 1,
+      scaffoldHtmlPath,
+      sessionId,
+      userInstructions,
+    });
+    moduleAgentRuns.splice(0, moduleAgentRuns.length, ...revision.moduleAgentRuns);
+    moduleValidationRuns.splice(
+      0,
+      moduleValidationRuns.length,
+      ...revision.moduleValidationRuns,
+    );
+    failedModules.clear();
+    Object.entries(revision.moduleFailures).forEach(([id, message]) => {
+      failedModules.set(id, message);
+    });
+    failedModuleKinds.clear();
+    Object.entries(revision.moduleFailureKinds).forEach(([id, kind]) => {
+      failedModuleKinds.set(id, kind as ModuleValidationFailureKind);
+    });
+    throwIfRunAborted(controller);
+  }
 
   await collectAgentLocalValidation({
     controller,
