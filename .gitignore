@@ -6,6 +6,7 @@ docs
 dist/
 backend/dist/
 frontend/dist/
+frontend/public/
 test
 *.tsbuildinfo
 

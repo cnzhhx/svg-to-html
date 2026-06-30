@@ -93,6 +93,11 @@ prepare_runtime() {
     pnpm -C "$BACKEND_DIR" run build:mcp
   fi
 
+  if [ ! -f "$ROOT_DIR/frontend/public/index.html" ]; then
+    log "frontend/public/index.html is missing; building frontend now"
+    pnpm -C "$ROOT_DIR/frontend" build
+  fi
+
   detect_browser
   if [ -z "${CHROMIUM_PATH:-}" ] && [ -z "${CHROME_PATH:-}" ] && [ -z "${BROWSER_PATH:-}" ]; then
     log "warning: no Chrome/Chromium binary found; visual verification will fail until CHROMIUM_PATH is set"
