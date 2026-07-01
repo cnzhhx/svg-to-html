@@ -20,7 +20,7 @@ import {
   startAgentThread,
 } from "../../llm-client.js";
 import { runAgentTurnCore } from "../turn/agent-turn-core.js";
-import { throwIfRunAborted } from "../session/run-control.js";
+import { isAbortError, throwIfRunAborted } from "../session/run-control.js";
 import { verifyModuleLocal } from "./module-local-verify.js";
 import { verifyModuleFrameworkLocal } from "./module-framework-local-verify.js";
 import {
@@ -144,6 +144,39 @@ type PostSanitizeVerifySummary = {
   frameworkDiffRatio?: number;
   round: number;
   verifyCount: number;
+};
+
+const MODULE_AGENT_RECONNECT_PROMPT =
+  "上一轮因为模型或连接异常中断。请继续完成当前模块任务，保留并复用已有文件和已导出的 assets，检查 preview.fragment.html、module.css、manifest.json 是否完整，不要从头重做无关工作。";
+
+const isRetryableAgentTurnError = (error: unknown) => {
+  if (isAbortError(error)) return false;
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  if (!message) return false;
+  if (
+    message.includes("module-timeout") ||
+    message.includes("user-guidance-interrupt")
+  ) {
+    return false;
+  }
+  return [
+    "opencode cli exited",
+    "failed to start opencode cli",
+    "apierror",
+    "api error",
+    "unprocessable_entity_error",
+    "input new_sensitive",
+    "sensitive",
+    "provider",
+    "fetch failed",
+    "network",
+    "socket",
+    "econnreset",
+    "econnrefused",
+    "etimedout",
+    "http",
+  ].some((needle) => message.includes(needle));
 };
 
 const statSignature = async (filePath: string) => {
@@ -700,35 +733,52 @@ export async function runAgentUnit(
     workingDir,
   });
 
-  const turn = await runAgentTurnCore({
-    thread,
-    input: prompt,
-    round,
-    sessionId,
-    controller,
-    eventSourceLabel: module.id,
-    moduleId: module.id,
-    onThreadStarted,
-    updateSessionThread: false,
-    moduleTimeoutMs: getModuleAgentTimeoutMs(),
-    verifyStateDir: workingDir,
-    interruptSignal,
-    interruptLabel,
-    onArtifactUpdateSignal: async (signal) => {
-      const nextOutputFingerprint = await readModuleOutputFingerprint({
-        manifestPath,
-        moduleCssPath,
-        outputFormat,
-        previewFragmentHtmlPath,
-        sourceDataPath,
-        sourceFragmentPath,
-        workingDir,
-      });
-      if (nextOutputFingerprint === latestOutputFingerprint) return;
-      latestOutputFingerprint = nextOutputFingerprint;
-      await onArtifactUpdateSignal?.(signal);
-    },
-  });
+  const runModuleTurn = (turnInput: string) =>
+    runAgentTurnCore({
+      thread,
+      input: turnInput,
+      round,
+      sessionId,
+      controller,
+      eventSourceLabel: module.id,
+      moduleId: module.id,
+      onThreadStarted,
+      updateSessionThread: false,
+      moduleTimeoutMs: getModuleAgentTimeoutMs(),
+      verifyStateDir: workingDir,
+      interruptSignal,
+      interruptLabel,
+      onArtifactUpdateSignal: async (signal) => {
+        const nextOutputFingerprint = await readModuleOutputFingerprint({
+          manifestPath,
+          moduleCssPath,
+          outputFormat,
+          previewFragmentHtmlPath,
+          sourceDataPath,
+          sourceFragmentPath,
+          workingDir,
+        });
+        if (nextOutputFingerprint === latestOutputFingerprint) return;
+        latestOutputFingerprint = nextOutputFingerprint;
+        await onArtifactUpdateSignal?.(signal);
+      },
+    });
+
+  let turn: Awaited<ReturnType<typeof runModuleTurn>>;
+  try {
+    turn = await runModuleTurn(prompt);
+  } catch (error) {
+    if (controller.signal.aborted || !isRetryableAgentTurnError(error)) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    sessionStore.addLog(
+      sessionId,
+      `[agent-unit:${module.id}] turn failed due to model/runtime error; retrying same thread once: ${message}`,
+    );
+    throwIfRunAborted(controller);
+    turn = await runModuleTurn(MODULE_AGENT_RECONNECT_PROMPT);
+  }
 
   sessionStore.addLog(
     sessionId,

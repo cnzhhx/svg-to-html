@@ -29,6 +29,9 @@ type ModuleTextBlock = {
   textRegion?: Box;
 };
 
+const SEMITRANSPARENT_COLOR_RE =
+  /^rgba\(\s*[^,]+\s*,\s*[^,]+\s*,\s*[^,]+\s*,\s*(0(?:\.\d+)?|1\.0+)\s*\)$/i;
+
 type ModuleTextBlocksFile = {
   blockCount: number;
   blocks: ModuleTextBlock[];
@@ -77,7 +80,7 @@ const readSvgPaintCandidatesFromDom = async (
   svgPath: string,
   scale?: number,
   port?: number,
-): Promise<Array<{ box: Box; color: string }>> => {
+): Promise<Array<{ box: Box; color: string; opacity?: number }>> => {
   const safeScale = scale ?? 1;
   const { height, width } = await parseSvgSize(svgPath, scale);
   const svgMarkup = await readFile(svgPath, "utf8");
@@ -93,7 +96,7 @@ const readSvgPaintCandidatesFromDom = async (
   const activePort = port ?? browser!.port;
   try {
     const candidates = await evaluatePage<
-      Array<{ box: Box; color: string }>
+      Array<{ box: Box; color: string; opacity?: number }>
     >({
       deviceScaleFactor: scale,
       expression: `(() => {
@@ -102,11 +105,58 @@ const readSvgPaintCandidatesFromDom = async (
         const rootRect = svg.getBoundingClientRect();
         const resourceSelector = "defs,mask,clipPath,pattern,linearGradient,radialGradient,filter,marker,symbol,style";
         const candidateSelector = "path,text,tspan,g,rect,circle,ellipse,line,polyline,polygon";
+        const clamp01 = (value) => Math.max(0, Math.min(1, value));
+        const parseOpacity = (value) => {
+          const parsed = Number.parseFloat(String(value ?? ''));
+          return Number.isFinite(parsed) ? clamp01(parsed) : 1;
+        };
+        const cumulativeOpacity = (element) => {
+          let opacity = 1;
+          for (let current = element; current && current !== document; current = current.parentElement) {
+            opacity *= parseOpacity(getComputedStyle(current).opacity);
+            if (current === svg) break;
+          }
+          return opacity;
+        };
+        const normalizePaint = (paint, opacity) => {
+          const token = String(paint ?? '').trim();
+          if (!token || token === 'none' || /^url\\(/i.test(token)) return undefined;
+          if (opacity >= 0.999) return token;
+          if (opacity <= 0.001) return 'rgba(0, 0, 0, 0)';
+          const alpha = Number(opacity.toFixed(3)).toString();
+          const hex = token.match(/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+          if (hex) {
+            const raw = hex[1];
+            const expand = (value) => value.length === 1 ? value + value : value;
+            const r = parseInt(raw.length <= 4 ? expand(raw[0]) : raw.slice(0, 2), 16);
+            const g = parseInt(raw.length <= 4 ? expand(raw[1]) : raw.slice(2, 4), 16);
+            const b = parseInt(raw.length <= 4 ? expand(raw[2]) : raw.slice(4, 6), 16);
+            const embeddedAlpha =
+              raw.length === 4
+                ? parseInt(expand(raw[3]), 16) / 255
+                : raw.length === 8
+                  ? parseInt(raw.slice(6, 8), 16) / 255
+                  : 1;
+            return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + Number((embeddedAlpha * opacity).toFixed(3)).toString() + ')';
+          }
+          const rgb = token.match(/^rgb\\(\\s*([^)]+)\\s*\\)$/i);
+          if (rgb) return 'rgba(' + rgb[1] + ', ' + alpha + ')';
+          return token;
+        };
         const result = [];
         for (const el of svg.querySelectorAll(candidateSelector)) {
           if (el.closest(resourceSelector)) continue;
-          const fill = el.getAttribute('fill')?.trim();
-          if (!fill || fill === 'none' || /^url\\(/i.test(fill)) continue;
+          const style = getComputedStyle(el);
+          const tagName = el.tagName.toLowerCase();
+          const explicitFill = el.getAttribute('fill')?.trim();
+          const styleFill = el.getAttribute('style')?.match(/(?:^|;)\\s*fill\\s*:\\s*([^;]+)/i)?.[1]?.trim();
+          const computedFill = style.getPropertyValue('fill')?.trim();
+          const fill = explicitFill || styleFill || (tagName === 'g' ? undefined : computedFill);
+          const opacity =
+            cumulativeOpacity(el) *
+            parseOpacity(style.getPropertyValue('fill-opacity') || el.getAttribute('fill-opacity'));
+          const color = normalizePaint(fill, opacity);
+          if (!color) continue;
           const rect = el.getBoundingClientRect();
           if (!rect.width || !rect.height) continue;
           result.push({
@@ -116,7 +166,8 @@ const readSvgPaintCandidatesFromDom = async (
               width: Number(rect.width.toFixed(3)),
               height: Number(rect.height.toFixed(3)),
             },
-            color: fill,
+            color,
+            opacity,
           });
         }
         return result;
@@ -135,6 +186,7 @@ const readSvgPaintCandidatesFromDom = async (
         height: Number((candidate.box.height / safeScale).toFixed(3)),
       },
       color: candidate.color,
+      ...(typeof candidate.opacity === "number" ? { opacity: candidate.opacity } : {}),
     }));
   } finally {
     if (browser) {
@@ -244,6 +296,14 @@ const readColor = (value: unknown) => {
     return undefined;
   }
   return color;
+};
+
+const isSemitransparentColor = (value: unknown) => {
+  if (typeof value !== "string") return false;
+  const match = value.trim().match(SEMITRANSPARENT_COLOR_RE);
+  if (!match) return false;
+  const alpha = Number(match[1]);
+  return Number.isFinite(alpha) && alpha >= 0 && alpha < 0.999;
 };
 
 const normalizeInlineText = (value: string) =>
@@ -489,7 +549,6 @@ const attachSvgColors = async ({
       ? candidates[0]?.color
       : undefined;
   return blocks.map((block) => {
-    if (readColor(block.color)) return block;
     const region = block.textRegion ?? block.region;
     const matched = candidates
       .flatMap((candidate) => {
@@ -506,6 +565,7 @@ const attachSvgColors = async ({
           left.area - right.area,
       )[0];
     const color = matched?.color ?? globalColor;
+    if (readColor(block.color) && !isSemitransparentColor(color)) return block;
     return color ? { ...block, color } : block;
   });
 };

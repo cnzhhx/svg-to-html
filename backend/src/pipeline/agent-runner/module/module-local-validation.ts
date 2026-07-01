@@ -64,6 +64,7 @@ const collectAgentLocalValidation = async ({
     sessionId,
     `[module-pipeline-v2] collect agent local module diff for ${modules.length} module(s)`,
   );
+  const threshold = getModuleDiffRatioThreshold();
 
   const validatedStats = await runWithLimit({
     items: modules,
@@ -72,6 +73,9 @@ const collectAgentLocalValidation = async ({
     worker: async (module) => {
       const moduleDir = getModuleDir(modulesRootDir, module);
       throwIfRunAborted(controller);
+      const existingFailureKind = failedModuleKinds.get(module.id);
+      const preserveExistingInputFailure =
+        existingFailureKind === "module_input_failed";
       const moduleSvgPath = await ensureModuleSvg({
         design,
         module,
@@ -84,7 +88,9 @@ const collectAgentLocalValidation = async ({
         ReturnType<typeof verifyModuleLocal>
       > | null;
       if (!hasOutput) {
-        failureKind = "incomplete_output";
+        failureKind = preserveExistingInputFailure
+          ? existingFailureKind
+          : "incomplete_output";
       }
 
       if (hasOutput) {
@@ -165,7 +171,7 @@ const collectAgentLocalValidation = async ({
         !mergeError &&
         hasOutput &&
         Boolean(localVerify) &&
-        diffRatio <= getModuleDiffRatioThreshold();
+        diffRatio <= threshold;
       if (!passed && !failureKind) {
         failureKind = "module_visual_failed";
       }
@@ -190,6 +196,23 @@ const collectAgentLocalValidation = async ({
           sessionId,
           `[module-pipeline-v2:${module.id}] module-local diffRatio=${(diffRatio * 100).toFixed(2)}%`,
         );
+      }
+      if (!passed) {
+        const resolvedFailureKind =
+          preserveExistingInputFailure
+            ? "module_input_failed"
+            : failureKind ?? "module_visual_failed";
+        const failureMessage =
+          mergeError ??
+          (!hasOutput
+            ? "incomplete module output"
+            : !localVerify
+              ? "no module-local verify result"
+              : `module-local diffRatio ${(diffRatio * 100).toFixed(2)}% > ${(threshold * 100).toFixed(2)}%`);
+        if (!preserveExistingInputFailure || !failedModules.has(module.id)) {
+          failedModules.set(module.id, failureMessage);
+        }
+        failedModuleKinds.set(module.id, resolvedFailureKind);
       }
 
       return {
@@ -292,7 +315,7 @@ const collectAgentLocalValidation = async ({
     moduleStats,
     round: 1,
     scope: "agent-local",
-    threshold: getModuleDiffRatioThreshold(),
+    threshold,
   });
   sessionStore.completeWorkflowNode(
     sessionId,

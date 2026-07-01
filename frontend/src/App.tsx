@@ -199,6 +199,27 @@ export default function App() {
     }
   }, [setError, state.runtime])
 
+  const hasLiveSessionSummaries = state.sessions.some((session) => session.status === 'running' || session.status === 'queued')
+
+  useEffect(() => {
+    if (!state.runtime) return undefined
+    if (!hasLiveSessionSummaries) return undefined
+    let cancelled = false
+    const refreshSessions = () => {
+      loadSessions()
+        .then((sessions) => {
+          if (!cancelled) dispatch({ type: 'sessions/refreshed', sessions })
+        })
+        .catch(() => {})
+    }
+    refreshSessions()
+    const timer = window.setInterval(refreshSessions, 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [hasLiveSessionSummaries, state.runtime])
+
   const handleSessionEvent = useCallback((event: SessionEvent) => {
     const eventSessionId = event.type === 'init' ? event.session.id : event.sessionId
     const currentSessionId = currentSessionIdRef.current

@@ -1226,7 +1226,10 @@ const writeModuleSemanticPayload = async ({
   );
   completedStages.add("input-summary");
   if (semanticTextBlocks.length) completedStages.add("text-blocks");
-  if (textStyleSummary.length) completedStages.add("text-style-inference");
+  if (textStyleSummary.length) {
+    completedStages.add("text-paint-opacity-v2");
+    completedStages.add("text-style-inference");
+  }
   let nextPayload: Record<string, unknown> = {
     ...currentPayload,
     ...payload,

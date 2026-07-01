@@ -4,6 +4,7 @@ export const STORAGE_KEYS = {
   localArtifactDb: 'svg2html:artifactCache',
   localSessionSnapshots: 'svg2html:sessionSnapshots',
   modelChannels: 'svg2html:modelChannels:v1',
+  runningPreviewFitModes: 'svg2html:runningPreviewFitModes:v1',
   resultComparePosition: 'svg2html:resultComparePosition',
   resultPreviewWidth: 'svg2html:resultPreviewWidth',
   resultViewMode: 'svg2html:resultViewMode:v2',

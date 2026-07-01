@@ -46,7 +46,11 @@ import {
 } from "../../src/pipeline/agent-runner/module/module-semantic-probes.js";
 import { readPngAlphaStats } from "../../src/pipeline/agent-runner/module/module-semantic-png.js";
 import { buildDeterministicSemantic } from "../../src/pipeline/agent-runner/module/module-semantic-deterministic.js";
-import type { ModuleSemanticNode } from "../../src/pipeline/agent-runner/module/module-semantic.js";
+import {
+  buildModuleSemanticTextHints,
+  type ModuleSemanticDocument,
+  type ModuleSemanticNode,
+} from "../../src/pipeline/agent-runner/module/module-semantic.js";
 import {
   getExportSvgNodeAssetUsage,
   parseExportSvgNodeAssetArgs,
@@ -164,6 +168,81 @@ test("semantic paint helpers preserve text color and transparency rules", () => 
     }),
     false,
   );
+});
+
+test("semantic text hints preserve node paint opacity", () => {
+  const node: ModuleSemanticNode = {
+    attrs: { fill: "#6C6F7E", opacity: "0.8" },
+    bbox: { x: 32.528, y: 0.914, width: 616.994, height: 140.548 },
+    childIds: [],
+    depth: 2,
+    id: "n0007",
+    inspectIndex: 6,
+    nodePath: "svg > g > path",
+    parentId: "n0006",
+    semantic: {
+      containsReadableText: true,
+      exportDecision: "skip",
+      kind: "text",
+      text: "活动说明：",
+      textHandling: "dom-text",
+    },
+    siblingIndex: 0,
+    tag: "path",
+    visible: true,
+  };
+  const document = {
+    analysisSheets: [],
+    generatedAssets: [],
+    module: {
+      id: "module-04",
+      kind: "section",
+      region: { x: 0, y: 0, width: 750, height: 196 },
+      scale: 2,
+    },
+    nodes: [node],
+    runtime: {
+      completedStages: [],
+      nodeFactVersion: 1,
+    },
+    sourceImage: {
+      height: 196,
+      id: "module-reference",
+      path: "module-reference.png",
+      readableByAgent: true,
+      width: 750,
+    },
+    svgSummary: {
+      hasContextSvg: false,
+      height: 196,
+      imageCount: 0,
+      maskOrClipCount: 0,
+      pathCount: 1,
+      rootAttrs: {},
+      width: 750,
+    },
+    textBlocks: [
+      {
+        id: "n0007",
+        kind: "text",
+        sourceNodeIds: ["n0007"],
+        text: "活动说明：",
+        textRegion: node.bbox,
+      },
+    ],
+  } satisfies ModuleSemanticDocument;
+
+  assert.deepEqual(buildModuleSemanticTextHints(document).blocks, [
+    {
+      bbox: node.bbox,
+      color: "rgba(108, 111, 126, 0.8)",
+      id: "n0007",
+      lineCount: undefined,
+      lines: undefined,
+      role: "text",
+      text: "活动说明：",
+    },
+  ]);
 });
 
 test("semantic deterministic helper classifies obvious node cases", () => {

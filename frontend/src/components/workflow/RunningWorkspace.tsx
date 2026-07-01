@@ -2,7 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentEvent } from '../../types/events'
 import type { Session, SessionMessage } from '../../types/session'
 import { livePreviewUrl } from '../../utils/artifacts'
+import { STORAGE_KEYS, readJsonStorage, writeJsonStorage } from '../../utils/storage'
 import { ChatDrawer } from '../chat/ChatDrawer'
+
+type PreviewSlot = 'primary' | 'secondary'
+type PreviewFitMode = 'width' | 'height'
+
+const previewSlots: PreviewSlot[] = ['primary', 'secondary']
+const previewSwapDelayMs = 180
+
+const isPreviewFitMode = (value: unknown): value is PreviewFitMode =>
+  value === 'width' || value === 'height'
+
+const readStoredPreviewFitModes = () => {
+  const stored = readJsonStorage<Record<string, unknown>>(STORAGE_KEYS.runningPreviewFitModes, {})
+  return Object.fromEntries(
+    Object.entries(stored).flatMap(([sessionId, value]) =>
+      sessionId && isPreviewFitMode(value) ? [[sessionId, value]] : [],
+    ),
+  ) as Record<string, PreviewFitMode>
+}
 
 export function RunningWorkspace({
   agentEvents,
@@ -23,17 +42,44 @@ export function RunningWorkspace({
   selectedModuleId: string | null
   session: Session | null
 }) {
-  const [previewFitMode, setPreviewFitMode] = useState<'width' | 'height'>('width')
+  const sessionId = session?.id || ''
+  const [previewFitModesBySession, setPreviewFitModesBySession] = useState<Record<string, PreviewFitMode>>(readStoredPreviewFitModes)
+  const storedPreviewFitMode = sessionId ? (previewFitModesBySession[sessionId] || 'width') : 'width'
   const [heightFitFrameWidth, setHeightFitFrameWidth] = useState<number | null>(null)
-  const previewUrl = livePreviewUrl(session, selectedModuleId)
-  const frameRef = useRef<HTMLIFrameElement | null>(null)
+  const previewUrl = livePreviewUrl(session)
+  const frameRefs = useRef<Record<PreviewSlot, HTMLIFrameElement | null>>({
+    primary: null,
+    secondary: null,
+  })
   const frameShellRef = useRef<HTMLDivElement | null>(null)
+  const [previewFrames, setPreviewFrames] = useState<{
+    activeSlot: PreviewSlot
+    pendingSlot: PreviewSlot | null
+    readySlot: PreviewSlot | null
+    urls: Record<PreviewSlot, string>
+  }>(() => ({
+    activeSlot: 'primary',
+    pendingSlot: null,
+    readySlot: null,
+    urls: { primary: '', secondary: '' },
+  }))
   const previewAspectRatio = useMemo(() => {
     const width = Number(session?.result?.designWidth || 0)
     const height = Number(session?.result?.designHeight || 0)
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
     return width / height
   }, [session?.result?.designHeight, session?.result?.designWidth])
+  const previewFitMode = storedPreviewFitMode === 'height' && !previewAspectRatio ? 'width' : storedPreviewFitMode
+
+  const updatePreviewFitMode = useCallback((mode: PreviewFitMode) => {
+    if (!sessionId) return
+    setPreviewFitModesBySession((previous) => {
+      if (previous[sessionId] === mode) return previous
+      const next = { ...previous, [sessionId]: mode }
+      writeJsonStorage(STORAGE_KEYS.runningPreviewFitModes, next)
+      return next
+    })
+  }, [sessionId])
 
   useEffect(() => {
     const shell = frameShellRef.current
@@ -52,8 +98,68 @@ export function RunningWorkspace({
     return () => observer.disconnect()
   }, [previewAspectRatio, previewFitMode])
 
-  const applyModuleHighlight = useCallback(() => {
-    const frame = frameRef.current
+  useEffect(() => {
+    setPreviewFrames((previous) => {
+      if (!previewUrl) {
+        if (!previous.urls.primary && !previous.urls.secondary) return previous
+        return {
+          activeSlot: 'primary',
+          pendingSlot: null,
+          readySlot: null,
+          urls: { primary: '', secondary: '' },
+        }
+      }
+      const activeUrl = previous.urls[previous.activeSlot]
+      const pendingUrl = previous.pendingSlot ? previous.urls[previous.pendingSlot] : ''
+      if (activeUrl === previewUrl || pendingUrl === previewUrl) return previous
+      if (!activeUrl) {
+        return {
+          ...previous,
+          pendingSlot: null,
+          readySlot: null,
+          urls: {
+            ...previous.urls,
+            [previous.activeSlot]: previewUrl,
+          },
+        }
+      }
+      const pendingSlot: PreviewSlot = previous.activeSlot === 'primary' ? 'secondary' : 'primary'
+      return {
+        ...previous,
+        pendingSlot,
+        readySlot: null,
+        urls: {
+          ...previous.urls,
+          [pendingSlot]: previewUrl,
+        },
+      }
+    })
+  }, [previewUrl])
+
+  useEffect(() => {
+    const pendingSlot = previewFrames.pendingSlot
+    if (!pendingSlot || previewFrames.readySlot !== pendingSlot) return undefined
+    const timer = window.setTimeout(() => {
+      setPreviewFrames((previous) => {
+        const nextActiveSlot = previous.pendingSlot
+        if (!nextActiveSlot || previous.readySlot !== nextActiveSlot) return previous
+        const previousActiveSlot = previous.activeSlot
+        return {
+          activeSlot: nextActiveSlot,
+          pendingSlot: null,
+          readySlot: null,
+          urls: {
+            ...previous.urls,
+            [previousActiveSlot]: '',
+          },
+        }
+      })
+    }, previewSwapDelayMs)
+    return () => window.clearTimeout(timer)
+  }, [previewFrames.pendingSlot, previewFrames.readySlot])
+
+  const applyModuleHighlight = useCallback((slot: PreviewSlot = previewFrames.activeSlot, behavior: ScrollBehavior = 'smooth') => {
+    const frame = frameRefs.current[slot]
     const doc = frame?.contentDocument
     const win = frame?.contentWindow
     if (!doc || !win) return
@@ -141,22 +247,42 @@ export function RunningWorkspace({
     const targetTop = win.scrollY + rect.top + rect.height / 2 - win.innerHeight / 2
     positionOverlay()
     win.requestAnimationFrame(() => {
-      win.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' })
+      win.scrollTo({ top: Math.max(0, targetTop), behavior })
       schedulePosition()
     })
-  }, [selectedModuleId])
+  }, [previewFrames.activeSlot, selectedModuleId])
 
   useEffect(() => {
-    const frame = frameRef.current
-    if (!frame) return undefined
-    const handleLoad = () => applyModuleHighlight()
-    frame.addEventListener('load', handleLoad)
-    const timer = window.setTimeout(applyModuleHighlight, 80)
+    const timer = window.setTimeout(() => {
+      applyModuleHighlight(previewFrames.activeSlot)
+      if (previewFrames.pendingSlot) applyModuleHighlight(previewFrames.pendingSlot, 'auto')
+    }, 80)
     return () => {
-      frame.removeEventListener('load', handleLoad)
       window.clearTimeout(timer)
     }
-  }, [applyModuleHighlight, previewUrl])
+  }, [applyModuleHighlight, previewFrames.activeSlot, previewFrames.pendingSlot])
+
+  const syncPendingFrameViewport = useCallback((slot: PreviewSlot) => {
+    if (selectedModuleId) return
+    const sourceWindow = frameRefs.current[previewFrames.activeSlot]?.contentWindow
+    const targetWindow = frameRefs.current[slot]?.contentWindow
+    if (!sourceWindow || !targetWindow || sourceWindow === targetWindow) return
+    const left = sourceWindow.scrollX
+    const top = sourceWindow.scrollY
+    targetWindow.requestAnimationFrame(() => {
+      targetWindow.scrollTo({ left, top, behavior: 'auto' })
+    })
+  }, [previewFrames.activeSlot, selectedModuleId])
+
+  const handleFrameLoad = useCallback((slot: PreviewSlot, url: string) => {
+    const isPending = previewFrames.pendingSlot === slot
+    applyModuleHighlight(slot, isPending ? 'auto' : 'smooth')
+    if (isPending) syncPendingFrameViewport(slot)
+    setPreviewFrames((previous) => {
+      if (previous.urls[slot] !== url || previous.pendingSlot !== slot) return previous
+      return { ...previous, readySlot: slot }
+    })
+  }, [applyModuleHighlight, previewFrames.pendingSlot, syncPendingFrameViewport])
 
   return (
     <section className="running-workspace">
@@ -179,7 +305,7 @@ export function RunningWorkspace({
         <div className="live-preview-fit-toggle result-view-toggle" role="group" aria-label="实时预览适配模式">
           <button
             className={`result-view-toggle-btn${previewFitMode === 'width' ? ' is-active' : ''}`}
-            onClick={() => setPreviewFitMode('width')}
+            onClick={() => updatePreviewFitMode('width')}
             type="button"
           >
             宽度
@@ -187,7 +313,7 @@ export function RunningWorkspace({
           <button
             className={`result-view-toggle-btn${previewFitMode === 'height' ? ' is-active' : ''}`}
             disabled={!previewAspectRatio}
-            onClick={() => setPreviewFitMode('height')}
+            onClick={() => updatePreviewFitMode('height')}
             type="button"
           >
             高度
@@ -202,7 +328,32 @@ export function RunningWorkspace({
           }}
         >
           {previewUrl ? (
-            <iframe className="live-preview-frame" key={previewUrl} ref={frameRef} src={previewUrl} title="实时预览" />
+            <div className="live-preview-frame-stack">
+              {previewSlots.map((slot) => {
+                const url = previewFrames.urls[slot]
+                if (!url) return null
+                const isActive = slot === previewFrames.activeSlot
+                const isPending = slot === previewFrames.pendingSlot
+                const isReady = slot === previewFrames.readySlot
+                return (
+                  <iframe
+                    className={[
+                      'live-preview-frame',
+                      isActive ? 'is-active' : '',
+                      isPending ? 'is-pending' : '',
+                      isReady ? 'is-ready' : '',
+                    ].filter(Boolean).join(' ')}
+                    key={slot}
+                    onLoad={() => handleFrameLoad(slot, url)}
+                    ref={(element) => {
+                      frameRefs.current[slot] = element
+                    }}
+                    src={url}
+                    title="实时预览"
+                  />
+                )
+              })}
+            </div>
           ) : (
             <div className="live-preview-empty">
               <strong>正在准备预览</strong>
