@@ -8,6 +8,7 @@ type ModuleState = {
 }
 
 const terminalStatuses = new Set(['completed', 'failed', 'interrupted'])
+const turnEndEvents = new Set(['turn.completed', 'turn.failed'])
 
 function getAgentEventModuleId(event: AgentEvent) {
   const item = event.item
@@ -24,7 +25,21 @@ function collectActiveModuleIds(agentEvents: AgentEvent[]) {
     if (!moduleId) return
     const eventType = String(event.type || '').trim()
     const itemStatus = String(event.item?.status || '').trim().toLowerCase()
-    if (eventType === 'item.started' || itemStatus === 'in_progress' || itemStatus === 'running') {
+    if (eventType === 'turn.started') {
+      active.add(moduleId)
+      return
+    }
+    if (turnEndEvents.has(eventType)) {
+      active.delete(moduleId)
+      return
+    }
+    if (
+      eventType === 'item.started' ||
+      eventType === 'item.updated' ||
+      eventType === 'item.completed' ||
+      itemStatus === 'in_progress' ||
+      itemStatus === 'running'
+    ) {
       active.add(moduleId)
     }
   })
@@ -59,6 +74,11 @@ export function ModulePicker({
 }) {
   const modules = collectSelectableModules(session)
   const activeModuleIds = collectActiveModuleIds(agentEvents)
+  const sessionActiveModuleIds = session?.result?.moduleActiveIds || []
+  sessionActiveModuleIds.forEach((moduleId) => {
+    const normalized = String(moduleId || '').trim()
+    if (normalized) activeModuleIds.add(normalized)
+  })
   return (
     <div className={`module-picker${modules.length ? '' : ' is-empty'}`}>
       <div className="module-picker-list">

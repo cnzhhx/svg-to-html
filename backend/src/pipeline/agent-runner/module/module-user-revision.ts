@@ -19,6 +19,7 @@ import { runVerify } from "../verify/verify-step.js";
 import {
   createAgentUnitThread,
   runAgentUnit,
+  setModuleActive,
 } from "./agent-unit.js";
 import { readModuleSemanticDocument } from "./module-semantic.js";
 import {
@@ -216,44 +217,50 @@ async function runModuleUserRevisionTurn(
 
   const moduleTurnInterrupt = new AbortController();
   moduleTurnInterrupts?.set(module.id, moduleTurnInterrupt);
-  const result = await runAgentUnit({
-    module,
-    moduleSvgPath,
-    originalSvgPath: design.svgPath,
-    design,
-    workingDir: moduleDir,
-    artifactDir,
-    modulePlan,
-    reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
-    sessionId,
-    controller,
-    interruptSignal: moduleTurnInterrupt.signal,
-    interruptLabel: "user-guidance-interrupt",
-    prependFollowupBasePrompt: promptMode !== "guidance",
-    revisionPrompt,
-    onThreadStarted: (threadId) => {
-      persistedModuleThreadIds[module.id] = threadId;
-      persistModuleAgentThreadId({
-        moduleId: module.id,
-        sessionId,
-        threadId,
-      });
-    },
-    onArtifactUpdateSignal: () => {
-      requestLivePreviewRefresh({
-        design,
-        modulePlanPath,
-        scaffoldHtmlPath,
-        sessionId,
-      });
-    },
-    round,
-    thread,
-  }).finally(() => {
+  let result: Awaited<ReturnType<typeof runAgentUnit>>;
+  try {
+    result = await runAgentUnit({
+      module,
+      moduleSvgPath,
+      originalSvgPath: design.svgPath,
+      design,
+      workingDir: moduleDir,
+      artifactDir,
+      modulePlan,
+      reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
+      sessionId,
+      controller,
+      interruptSignal: moduleTurnInterrupt.signal,
+      interruptLabel: "user-guidance-interrupt",
+      prependFollowupBasePrompt: promptMode !== "guidance",
+      revisionPrompt,
+      onThreadStarted: (threadId) => {
+        persistedModuleThreadIds[module.id] = threadId;
+        persistModuleAgentThreadId({
+          moduleId: module.id,
+          sessionId,
+          threadId,
+        });
+      },
+      onArtifactUpdateSignal: () => {
+        requestLivePreviewRefresh({
+          design,
+          modulePlanPath,
+          scaffoldHtmlPath,
+          sessionId,
+        });
+      },
+      round,
+      thread,
+    });
+  } catch (error) {
+    setModuleActive({ active: false, moduleId: module.id, sessionId });
+    throw error;
+  } finally {
     if (moduleTurnInterrupts?.get(module.id) === moduleTurnInterrupt) {
       moduleTurnInterrupts.delete(module.id);
     }
-  });
+  }
   if (result.interrupted) {
     sessionStore.addMessage(sessionId, {
       id: `system-${Date.now()}-${module.id}-guided-revision`,
@@ -294,9 +301,14 @@ async function runModuleUserRevisionTurn(
       sessionStore.update(sessionId, {
         result: {
           ...previousSession.result,
+          moduleActiveIds: (
+            previousSession.result.moduleActiveIds ?? []
+          ).filter((id) => id !== module.id),
           moduleAgentRuns,
         },
       });
+    } else {
+      setModuleActive({ active: false, moduleId: module.id, sessionId });
     }
     return {
       failedModuleIds: previousSession?.result.moduleFailedIds ?? [],
@@ -492,6 +504,9 @@ async function runModuleUserRevisionTurn(
     sessionStore.update(sessionId, {
       result: {
         ...latestSession.result,
+        moduleActiveIds: (
+          latestSession.result.moduleActiveIds ?? []
+        ).filter((id) => id !== module.id),
         moduleAgentManifestPath,
         moduleAgentRuns,
         moduleAgentThreadIds: readPersistedModuleAgentThreadIds(sessionId),

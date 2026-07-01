@@ -302,6 +302,37 @@ const buildInitialSourceFragmentTemplate = (
 const buildInitialCssTemplate = (module: SvgVerticalModule) =>
   `.${module.id} {\n  position: relative;\n  width: ${Math.round(module.region.width)}px;\n  height: ${Math.round(module.region.height)}px;\n  overflow: hidden;\n}\n`;
 
+const setModuleActive = ({
+  active,
+  moduleId,
+  sessionId,
+}: {
+  active: boolean;
+  moduleId: string;
+  sessionId: string;
+}) => {
+  const session = sessionStore.get(sessionId);
+  if (!session) return;
+  const current = Array.isArray(session.result.moduleActiveIds)
+    ? session.result.moduleActiveIds.map(String)
+    : [];
+  const next = active
+    ? [...new Set([...current, moduleId])]
+    : current.filter((id) => id !== moduleId);
+  if (
+    current.length === next.length &&
+    current.every((id, index) => id === next[index])
+  ) {
+    return;
+  }
+  sessionStore.update(sessionId, {
+    result: {
+      ...session.result,
+      moduleActiveIds: next,
+    },
+  });
+};
+
 const ensureInitialModuleOutputTemplate = async ({
   manifestPath,
   module,
@@ -765,6 +796,7 @@ export async function runAgentUnit(
     });
 
   let turn: Awaited<ReturnType<typeof runModuleTurn>>;
+  setModuleActive({ active: true, moduleId: module.id, sessionId });
   try {
     turn = await runModuleTurn(prompt);
   } catch (error) {
@@ -1030,4 +1062,4 @@ export async function runAgentUnit(
 }
 
 
-export { ModuleOutputIncompleteError, createAgentUnitThread };
+export { ModuleOutputIncompleteError, createAgentUnitThread, setModuleActive };

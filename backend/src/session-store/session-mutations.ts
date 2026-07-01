@@ -231,6 +231,10 @@ const markQueued = (session: Session) => {
     session.steps.agent = { status: 'pending' }
     session.steps.verify = { status: 'pending' }
   }
+  session.result = {
+    ...session.result,
+    moduleActiveIds: [],
+  }
   session.status = 'queued'
   session.queuedAt = Date.now()
   session.executionStartedAt = undefined
@@ -265,6 +269,10 @@ const completePipeline = (
   const progress = ensureWorkflowProgress(session)
   session.status = options?.status ?? 'completed'
   session.error = undefined
+  session.result = {
+    ...session.result,
+    moduleActiveIds: [],
+  }
   session.progress = {
     ...progress,
     currentNode: 'done',
@@ -316,6 +324,10 @@ const failPipeline = (session: Session, error: string) => {
   session.status = 'failed'
   session.activeStep = null
   session.error = storedError
+  session.result = {
+    ...session.result,
+    moduleActiveIds: [],
+  }
   session.progress = {
     ...progress,
     nodes: nextNodes,

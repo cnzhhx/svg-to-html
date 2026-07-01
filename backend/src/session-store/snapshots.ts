@@ -63,6 +63,7 @@ const RESULT_KEYS = new Set<keyof SessionResult>([
   'outputTokens',
   'verifyMode',
   'moduleAgentManifestPath',
+  'moduleActiveIds',
   'moduleAgentRuns',
   'moduleAgentThreadIds',
   'moduleValidationRuns',
