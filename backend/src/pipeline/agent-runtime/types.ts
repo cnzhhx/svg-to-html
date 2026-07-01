@@ -74,6 +74,16 @@ type ThreadOptions = {
   model?: string;
   modelReasoningEffort?: string;
   networkAccessEnabled?: boolean;
+  opencodeAgents?: Record<
+    string,
+    {
+      description?: string;
+      mode?: "all" | "primary" | "subagent";
+      prompt?: string;
+      steps?: number;
+      tools?: Record<string, boolean>;
+    }
+  >;
   runtimeTraceDir?: string;
   runtimeTraceLabel?: string;
   sandboxMode?: "read-only" | "danger-full-access" | string;

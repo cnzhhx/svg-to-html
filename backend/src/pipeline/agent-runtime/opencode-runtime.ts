@@ -367,6 +367,10 @@ const createOpencodeConfigFile = async ({
             options: providerOptions,
           },
         },
+        ...(options.opencodeAgents &&
+        Object.keys(options.opencodeAgents).length > 0
+          ? { agent: options.opencodeAgents }
+          : {}),
         mcp: {
           "browser-session": {
             type: "local",

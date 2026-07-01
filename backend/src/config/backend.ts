@@ -183,6 +183,18 @@ const buildBackendConfig = () => {
         Math.min(readNumber("MAX_PARALLEL_MODULE_AGENTS", 10), 3),
       ),
       moduleTimeoutMs: readNumber("MODULE_AGENT_TIMEOUT_MS", 3_600_000),
+      moduleCoordinatorEnabled: readTruthyFlag(
+        "MODULE_AGENT_COORDINATOR_ENABLED",
+        true,
+      ),
+      moduleCoordinatorNodeThreshold: readNonNegativeNumber(
+        "MODULE_AGENT_COORDINATOR_NODE_THRESHOLD",
+        50,
+      ),
+      moduleCoordinatorJsonBytes: readNonNegativeNumber(
+        "MODULE_AGENT_COORDINATOR_JSON_BYTES",
+        35 * 1024,
+      ),
     },
     browser: {
       browserPath: readBackendEnvString("BROWSER_PATH"),
@@ -427,7 +439,7 @@ const MODEL_FIELD_DEFINITIONS: BackendConfigFieldDefinition[] = [
   }),
   makeField({
     configKey: "model.global.thinking",
-    defaultValue: null,
+    defaultValue: true,
     description: "模型支持时启用 thinking 输出。",
     envName: "MODEL_THINKING",
     section: "model",
@@ -530,6 +542,30 @@ const BACKEND_CONFIG_FIELDS: BackendConfigFieldDefinition[] = [
     defaultValue: 3_600_000,
     description: "单个模块 agent 回合最长执行时间，单位毫秒。",
     envName: "MODULE_AGENT_TIMEOUT_MS",
+    section: "agent",
+    type: "number",
+  },
+  {
+    configKey: "agent.moduleCoordinatorEnabled",
+    defaultValue: true,
+    description: "大模块 module agent 是否启用 coordinator / subagent planning phase。",
+    envName: "MODULE_AGENT_COORDINATOR_ENABLED",
+    section: "agent",
+    type: "boolean",
+  },
+  {
+    configKey: "agent.moduleCoordinatorNodeThreshold",
+    defaultValue: 50,
+    description: "module-semantic.json 节点数达到该值时启用大模块 coordinator。",
+    envName: "MODULE_AGENT_COORDINATOR_NODE_THRESHOLD",
+    section: "agent",
+    type: "number",
+  },
+  {
+    configKey: "agent.moduleCoordinatorJsonBytes",
+    defaultValue: 35 * 1024,
+    description: "module-semantic.json 文件大小达到该字节数时启用大模块 coordinator。",
+    envName: "MODULE_AGENT_COORDINATOR_JSON_BYTES",
     section: "agent",
     type: "number",
   },

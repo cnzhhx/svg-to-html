@@ -46,6 +46,15 @@ function collectActiveModuleIds(agentEvents: AgentEvent[]) {
   return active
 }
 
+function collectSeenModuleIds(agentEvents: AgentEvent[]) {
+  const seen = new Set<string>()
+  agentEvents.forEach((event) => {
+    const moduleId = getAgentEventModuleId(event)
+    if (moduleId) seen.add(moduleId)
+  })
+  return seen
+}
+
 function deriveModuleState(status: string, active: boolean): ModuleState {
   const normalized = status.trim().toLowerCase()
   if (normalized === 'completed') return { key: 'done', label: '已完成' }
@@ -74,10 +83,15 @@ export function ModulePicker({
 }) {
   const modules = collectSelectableModules(session)
   const activeModuleIds = collectActiveModuleIds(agentEvents)
+  const seenModuleIds = collectSeenModuleIds(agentEvents)
   const sessionActiveModuleIds = session?.result?.moduleActiveIds || []
   sessionActiveModuleIds.forEach((moduleId) => {
     const normalized = String(moduleId || '').trim()
     if (normalized) activeModuleIds.add(normalized)
+  })
+  Object.keys(session?.result?.moduleAgentThreadIds || {}).forEach((moduleId) => {
+    const normalized = String(moduleId || '').trim()
+    if (normalized) seenModuleIds.add(normalized)
   })
   return (
     <div className={`module-picker${modules.length ? '' : ' is-empty'}`}>
@@ -92,7 +106,10 @@ export function ModulePicker({
               全部
             </button>
             {modules.map((module) => {
-              const state = deriveModuleState(module.status, activeModuleIds.has(module.id))
+              const state = deriveModuleState(
+                module.status,
+                activeModuleIds.has(module.id) || (!module.status && seenModuleIds.has(module.id)),
+              )
               const label = formatModuleLabel(module.id)
               return (
                 <button

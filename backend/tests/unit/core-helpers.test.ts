@@ -28,6 +28,11 @@ import {
   normalizeModuleFailureKind,
 } from "../../src/pipeline/agent-runner/module/module-pipeline-records.js";
 import {
+  buildModuleCoordinatorPromptSection,
+  buildModuleCoordinatorSubagents,
+  resolveModuleAgentCoordinatorDecision,
+} from "../../src/pipeline/agent-runner/module/module-agent-coordinator.js";
+import {
   isPureTransparentNode,
   readPaintLuminance,
   textColorFromNodePaint,
@@ -44,7 +49,11 @@ import {
   deduplicateProbeNodes,
   toProbeNode,
 } from "../../src/pipeline/agent-runner/module/module-semantic-probes.js";
-import { readPngAlphaStats } from "../../src/pipeline/agent-runner/module/module-semantic-png.js";
+import { deduplicateProbeArtifactsByPixels } from "../../src/pipeline/agent-runner/module/module-semantic-probe-pixel-dedup.js";
+import {
+  readPngAlphaStats,
+  readPngRgbaImage,
+} from "../../src/pipeline/agent-runner/module/module-semantic-png.js";
 import { buildDeterministicSemantic } from "../../src/pipeline/agent-runner/module/module-semantic-deterministic.js";
 import {
   buildModuleSemanticTextHints,
@@ -121,6 +130,108 @@ test("pipeline record helpers normalize usage and failure kinds", () => {
   assert.equal(getCachedInputTokens({ input_tokens: 20, cached_input_tokens: 7 }), 7);
   assert.equal(getUncachedInputTokens({ input_tokens: 20, cached_input_tokens: 7 }), 13);
   assert.equal(getUncachedInputTokens(null), 0);
+});
+
+test("module coordinator triggers on node count or json size", () => {
+  const config = {
+    enabled: true,
+    jsonBytesThreshold: 35 * 1024,
+    nodeThreshold: 50,
+  };
+  const makeSemantic = (nodeCount: number) => ({
+    nodes: Array.from({ length: nodeCount }, (_, index) => ({ id: `n${index}` })),
+  });
+
+  assert.deepEqual(
+    resolveModuleAgentCoordinatorDecision({
+      config,
+      jsonBytes: 1000,
+      moduleSemantic: makeSemantic(50),
+    }),
+    {
+      enabled: true,
+      jsonBytes: 1000,
+      jsonBytesThreshold: 35840,
+      nodeCount: 50,
+      nodeThreshold: 50,
+      reason: "nodes",
+    },
+  );
+  assert.equal(
+    resolveModuleAgentCoordinatorDecision({
+      config,
+      jsonBytes: 35 * 1024,
+      moduleSemantic: makeSemantic(1),
+    }).reason,
+    "json-bytes",
+  );
+  assert.equal(
+    resolveModuleAgentCoordinatorDecision({
+      config,
+      jsonBytes: 1000,
+      moduleSemantic: makeSemantic(49),
+    }).enabled,
+    false,
+  );
+  assert.equal(
+    resolveModuleAgentCoordinatorDecision({
+      config: { ...config, enabled: false },
+      jsonBytes: 100_000,
+      moduleSemantic: makeSemantic(100),
+    }).reason,
+    "disabled",
+  );
+});
+
+test("module coordinator subagents are read-only and non-recursive", () => {
+  const agents = buildModuleCoordinatorSubagents();
+  assert.deepEqual(Object.keys(agents ?? {}).sort(), ["module-analysis"]);
+
+  for (const agent of Object.values(agents ?? {})) {
+    assert.equal(agent.mode, "subagent");
+    assert.equal(agent.steps, 6);
+    assert.equal(agent.tools?.read, true);
+    assert.equal(agent.tools?.glob, true);
+    assert.equal(agent.tools?.grep, true);
+    assert.equal(agent.tools?.task, false);
+    assert.equal(agent.tools?.edit, false);
+    assert.equal(agent.tools?.write, false);
+    assert.equal(agent.tools?.bash, false);
+    assert.equal(agent.tools?.webfetch, false);
+    assert.equal(agent.tools?.websearch, false);
+  }
+});
+
+test("module coordinator prompt section is only emitted when enabled", () => {
+  const disabled = resolveModuleAgentCoordinatorDecision({
+    config: {
+      enabled: true,
+      jsonBytesThreshold: 35 * 1024,
+      nodeThreshold: 50,
+    },
+    jsonBytes: 1000,
+    moduleSemantic: { nodes: [] },
+  });
+  assert.equal(buildModuleCoordinatorPromptSection(disabled), "");
+
+  const enabled = resolveModuleAgentCoordinatorDecision({
+    config: {
+      enabled: true,
+      jsonBytesThreshold: 35 * 1024,
+      nodeThreshold: 50,
+    },
+    jsonBytes: 36 * 1024,
+    moduleSemantic: { nodes: [] },
+  });
+  const section = buildModuleCoordinatorPromptSection(enabled);
+  assert.match(section, /coordinator planning phase/);
+  assert.match(section, /这不是固定拆法/);
+  assert.match(section, /subagent 不会带来收益，可以不用/);
+  assert.match(section, /module-analysis/);
+  assert.match(section, /Task 工具/);
+  assert.doesNotMatch(section, /module-structure/);
+  assert.doesNotMatch(section, /module-assets/);
+  assert.doesNotMatch(section, /module-text/);
 });
 
 test("semantic paint helpers preserve text color and transparency rules", () => {
@@ -498,6 +609,79 @@ test("semantic png helper reads alpha visibility stats", async () => {
       hasAlpha: false,
       visiblePixelCount: 1,
     });
+    const visibleImage = await readPngRgbaImage(visiblePath);
+    assert.equal(visibleImage?.width, 1);
+    assert.equal(visibleImage?.height, 1);
+    assert.equal(visibleImage?.hasAlpha, true);
+    assert.deepEqual(
+      visibleImage ? Array.from(visibleImage.data) : [],
+      [255, 0, 0, 255],
+    );
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("semantic probe pixel helper deduplicates rendered-equivalent probes", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "semantic-probe-pixel-"));
+  try {
+    const redPath = path.join(tempDir, "red.png");
+    const redCopyPath = path.join(tempDir, "red-copy.png");
+    const transparentPath = path.join(tempDir, "transparent.png");
+    const redPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    await writeFile(redPath, redPng);
+    await writeFile(redCopyPath, redPng);
+    await writeFile(
+      transparentPath,
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DAAAAEAQEARwbK3gAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    );
+
+    const makeProbe = (id: string, outputPath: string) => {
+      const probe = toProbeNode({
+        attrs: { fill: "#f00", pathDataLength: "10" },
+        bbox: { x: id === "red-copy" ? 10 : 0, y: 0, width: 1, height: 1 },
+        childIds: [],
+        depth: 1,
+        id,
+        inspectIndex: 1,
+        nodePath: `svg > path#${id}`,
+        parentId: null,
+        selector: `#${id}`,
+        semantic: {
+          containsReadableText: false,
+          exportDecision: "pending",
+          kind: "unknown",
+          textHandling: "pending",
+        },
+        siblingIndex: 0,
+        tag: "path",
+        visible: true,
+      });
+      assert.ok(probe);
+      return {
+        node: probe,
+        outputPath,
+      };
+    };
+
+    const result = await deduplicateProbeArtifactsByPixels([
+      makeProbe("red", redPath),
+      makeProbe("red-copy", redCopyPath),
+      makeProbe("transparent", transparentPath),
+    ]);
+
+    assert.deepEqual(
+      result.deduplicatedArtifacts.map((artifact) => artifact.node.id),
+      ["red", "transparent"],
+    );
+    assert.equal(result.duplicateToRepresentative.get("red-copy"), "red");
+    assert.equal(result.duplicateToRepresentative.has("transparent"), false);
   } finally {
     await rm(tempDir, { force: true, recursive: true });
   }
