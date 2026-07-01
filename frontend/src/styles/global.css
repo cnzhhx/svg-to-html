@@ -2030,8 +2030,7 @@ body {
 }
 
 .module-picker-dot.is-done {
-  background: var(--good);
-  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.1);
+  display: none;
 }
 
 .module-picker-dot.is-failed {
@@ -2044,20 +2043,7 @@ body {
 }
 
 .module-picker-dot.is-running {
-  background: var(--accent);
-  animation: module-picker-pulse 1.2s var(--ease-standard) infinite;
-}
-
-@keyframes module-picker-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    box-shadow: 0 0 0 0 var(--warn-dim);
-  }
-  50% {
-    opacity: 0.55;
-    box-shadow: 0 0 0 4px transparent;
-  }
+  display: none;
 }
 
 .module-picker-state-text {
@@ -2084,8 +2070,8 @@ body {
 }
 
 .module-picker-option.state-running {
-  border-color: rgba(56, 189, 248, 0.26);
-  background: rgba(56, 189, 248, 0.08);
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .module-picker-option.state-running .module-picker-state-text {

@@ -19,3 +19,12 @@ export const SEMANTIC_VISION_CONCURRENCY = getSemanticVisionConcurrency()
 export const getModuleAgentTimeoutMs = () =>
   getBackendConfig().agent.moduleTimeoutMs
 export const MODULE_AGENT_TIMEOUT_MS = getModuleAgentTimeoutMs()
+
+export const getModuleAgentCoordinatorConfig = () => {
+  const agentConfig = getBackendConfig().agent
+  return {
+    enabled: agentConfig.moduleCoordinatorEnabled,
+    jsonBytesThreshold: agentConfig.moduleCoordinatorJsonBytes,
+    nodeThreshold: agentConfig.moduleCoordinatorNodeThreshold,
+  }
+}

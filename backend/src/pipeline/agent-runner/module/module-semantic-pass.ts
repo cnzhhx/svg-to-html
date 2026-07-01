@@ -52,6 +52,7 @@ import {
   type PngAlphaStats,
 } from "./module-semantic-png.js";
 import { buildDeterministicSemantic } from "./module-semantic-deterministic.js";
+import { deduplicateProbeArtifactsByPixels } from "./module-semantic-probe-pixel-dedup.js";
 
 type ElementClassification =
   | "atomic-visual-text"
@@ -1317,18 +1318,43 @@ const analyzeModuleElements = async ({
     return buildAnalysisResultFromDocument(nextDocument);
   }
 
+  const {
+    deduplicatedArtifacts: pixelDeduplicatedProbeArtifacts,
+    duplicateGroups: pixelDuplicateGroups,
+    duplicateToRepresentative: pixelDuplicateToRepresentative,
+  } = await deduplicateProbeArtifactsByPixels(probeArtifacts);
+
+  if (pixelDuplicateToRepresentative.size > 0) {
+    const groupSummary = pixelDuplicateGroups
+      .slice(0, 5)
+      .map(
+        (group) =>
+          `${group.representativeId}->${group.duplicateIds.join(",")}`,
+      )
+      .join("; ");
+    sessionStore.addLog(
+      sessionId,
+      `[module-semantic] ${module.id}: pixel-deduplicated ${pixelDuplicateToRepresentative.size} rendered probe(s), ${pixelDeduplicatedProbeArtifacts.length} unique rendered probe(s) remain${groupSummary ? ` (${groupSummary})` : ""}`,
+    );
+  }
+
   const { semanticsById, sheetAssignments, sheets } = await runSemanticVisionPass({
     module,
     moduleDir,
-    probeArtifacts,
+    probeArtifacts: pixelDeduplicatedProbeArtifacts,
     signal,
     sessionId,
     visionSemaphore,
   });
 
+  const allDuplicateToRepresentative = new Map([
+    ...duplicateToRepresentative,
+    ...pixelDuplicateToRepresentative,
+  ]);
+
   // Backfill deduplicated probe nodes: copy the vision result from each
   // representative node to all its visual duplicates.
-  for (const [duplicateId, representativeId] of duplicateToRepresentative) {
+  for (const [duplicateId, representativeId] of allDuplicateToRepresentative) {
     const repSemantic = semanticsById.get(representativeId);
     if (repSemantic) {
       semanticsById.set(duplicateId, repSemantic);

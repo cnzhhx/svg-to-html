@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 
 import { AGENT_REASONING_EFFORTS } from "../../../config/agent-reasoning.js";
 import type { OutputFormat } from "../../../core/output-target.js";
@@ -42,6 +42,7 @@ import {
   preprocessModuleSemantic,
   readAgentGeneratedAssetCount,
 } from "./module-semantic-preprocess.js";
+import { resolveModuleAgentCoordinatorDecision } from "./module-agent-coordinator.js";
 import { persistModuleAgentThreadId } from "./module-thread-ids.js";
 import {
   publishLivePreview,
@@ -156,6 +157,19 @@ const runInitialModuleRound = async ({
       });
       throwIfRunAborted(controller);
       const moduleTextBlockCount = textBlocksFile.blockCount;
+      const preparedModuleSemantic = await readModuleSemanticDocument(moduleDir);
+      if (!preparedModuleSemantic) {
+        throw new ModuleInputError(
+          `module-semantic.json missing before agent run: ${module.id}`,
+        );
+      }
+      const moduleSemanticJsonBytes = await stat(
+        moduleSemantic.jsonPath,
+      ).then((stats) => stats.size);
+      const moduleCoordinator = resolveModuleAgentCoordinatorDecision({
+        jsonBytes: moduleSemanticJsonBytes,
+        moduleSemantic: preparedModuleSemantic,
+      });
       const existingThread = moduleThreads.get(module.id);
       const persistedThreadId = persistedModuleThreadIds[module.id];
       const thread =
@@ -163,6 +177,7 @@ const runInitialModuleRound = async ({
         createAgentUnitThread({
           artifactDir,
           design,
+          enableModuleCoordinator: moduleCoordinator.enabled,
           originalSvgPath: design.svgPath,
           reasoningEffort: AGENT_REASONING_EFFORTS.agentUnit,
           threadId: persistedThreadId,
@@ -172,7 +187,7 @@ const runInitialModuleRound = async ({
 
       sessionStore.addLog(
         sessionId,
-        `[module-pipeline-v2:${module.id}] initial generation: existingAgentGeneratedAssets=${initialAgentGeneratedAssetCount}, textBlocks=${moduleTextBlockCount}`,
+        `[module-pipeline-v2:${module.id}] initial generation: existingAgentGeneratedAssets=${initialAgentGeneratedAssetCount}, textBlocks=${moduleTextBlockCount}, coordinator=${moduleCoordinator.enabled ? "enabled" : "disabled"}(${moduleCoordinator.reason}; nodes=${moduleCoordinator.nodeCount}/${moduleCoordinator.nodeThreshold}; jsonBytes=${moduleCoordinator.jsonBytes}/${moduleCoordinator.jsonBytesThreshold})`,
       );
 
       const startedAt = Date.now();
@@ -194,16 +209,7 @@ const runInitialModuleRound = async ({
         }
         assertModuleSemanticHasUsableInput({
           module,
-          moduleSemantic: await readModuleSemanticDocument(moduleDir).then(
-            (document) => {
-              if (!document) {
-                throw new ModuleInputError(
-                  `module-semantic.json missing before agent run: ${module.id}`,
-                );
-              }
-              return document;
-            },
-          ),
+          moduleSemantic: preparedModuleSemantic,
           textBlockCount: moduleTextBlockCount,
         });
         const result = await runAgentUnit({
@@ -241,6 +247,7 @@ const runInitialModuleRound = async ({
                 userInstructions: initialUserInstructions,
               })
             : undefined,
+          moduleCoordinator,
           round: 1,
           thread,
         });

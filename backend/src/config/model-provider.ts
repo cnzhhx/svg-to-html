@@ -250,7 +250,7 @@ const resolveRequestedModel = ({
 const getConfiguredModelKey = (role: ModelConfigRole) =>
   role === "moduleAgent" ? "moduleAgentModel" : "otherModel";
 
-const getDefaultThinking = (role: ModelConfigRole) => role === "moduleAgent";
+const getDefaultThinking = (_role: ModelConfigRole) => true;
 
 const getDefaultReasoningEffort = (role: ModelConfigRole) =>
   role === "moduleAgent"

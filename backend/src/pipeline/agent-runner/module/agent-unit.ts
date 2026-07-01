@@ -38,6 +38,8 @@ import {
   getSourceFragmentFileName,
 } from "../../../prompts/module-agent.js";
 import { sanitizeModuleOutputFiles } from "./module-output-sanitize.js";
+import type { ModuleAgentCoordinatorDecision } from "./module-agent-coordinator.js";
+import { buildModuleCoordinatorSubagents } from "./module-agent-coordinator.js";
 
 type AgentUnitInput = {
   module: SvgVerticalModule;
@@ -52,6 +54,7 @@ type AgentUnitInput = {
   controller: AbortController;
   interruptSignal?: AbortSignal;
   interruptLabel?: string;
+  moduleCoordinator?: ModuleAgentCoordinatorDecision;
   extraPrompt?: string;
   prependFollowupBasePrompt?: boolean;
   revisionPrompt?: string; // 可选的后续修复 prompt
@@ -66,6 +69,7 @@ type AgentUnitInput = {
 type AgentUnitThreadInput = {
   artifactDir: string;
   design: ResolvedDesignTarget;
+  enableModuleCoordinator?: boolean;
   originalSvgPath: string;
   reasoningEffort: AgentReasoningEffort;
   threadId?: string;
@@ -429,6 +433,7 @@ const createAgentUnitThread = ({
   design,
   originalSvgPath,
   reasoningEffort,
+  enableModuleCoordinator,
   threadId,
   turnStartedAt,
   workingDir,
@@ -456,6 +461,9 @@ const createAgentUnitThread = ({
       path.basename(workingDir),
     ),
     runtimeTraceLabel: path.basename(workingDir),
+    ...(enableModuleCoordinator
+      ? { opencodeAgents: buildModuleCoordinatorSubagents() }
+      : {}),
   };
   return threadId
     ? resumeAgentThread(threadId, options, {
@@ -670,6 +678,7 @@ export async function runAgentUnit(
     controller,
     interruptSignal,
     interruptLabel,
+    moduleCoordinator,
     extraPrompt,
     prependFollowupBasePrompt = true,
     revisionPrompt,
@@ -729,6 +738,7 @@ export async function runAgentUnit(
       module,
       design,
       modulePlan,
+      moduleCoordinator,
       workingDir,
     });
     // 首次 prompt：注入 compacted semantic + output files，省去 4-8 次 read
@@ -745,6 +755,7 @@ export async function runAgentUnit(
       design,
       originalSvgPath,
       reasoningEffort,
+      enableModuleCoordinator: moduleCoordinator?.enabled,
       turnStartedAt: startedAt,
       workingDir,
     });

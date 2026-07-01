@@ -38,6 +38,12 @@ const maybePersist = (session: Session | null) => {
   saveLocalSessionSnapshot(session)
 }
 
+const mergeSessionPatch = (session: Session, patch: Partial<Session>): Session => ({
+  ...session,
+  ...patch,
+  result: patch.result ? { ...(session.result || {}), ...patch.result } : session.result,
+})
+
 const syncSelectedModule = (state: AppState, session: Session | null): string | null => {
   if (!session) return null
   const modules = collectSelectableModules(session)
@@ -98,8 +104,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const current =
         state.currentSession?.id === action.sessionId
           ? {
-              ...state.currentSession,
-              ...action.data,
+              ...mergeSessionPatch(state.currentSession, action.data),
               updatedAt: action.timestamp || Date.now(),
             }
           : state.currentSession
@@ -110,7 +115,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         selectedModuleId: current?.id === action.sessionId ? syncSelectedModule(state, current) : state.selectedModuleId,
         sessions: state.sessions.map((session) =>
           session.id === action.sessionId
-            ? ({ ...session, ...action.data, updatedAt: action.timestamp || Date.now() } as SessionSummary)
+            ? ({
+                ...mergeSessionPatch(session, action.data),
+                updatedAt: action.timestamp || Date.now(),
+              } as SessionSummary)
             : session,
         ),
       }

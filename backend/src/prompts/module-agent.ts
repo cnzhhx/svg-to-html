@@ -9,6 +9,10 @@ import {
   type OutputFormat,
 } from "../core/output-target.js";
 import type { ModulePlan } from "../pipeline/module-merge/types.js";
+import {
+  buildModuleCoordinatorPromptSection,
+  type ModuleAgentCoordinatorDecision,
+} from "../pipeline/agent-runner/module/module-agent-coordinator.js";
 
 const resolveModuleOutputFormat = ({
   design,
@@ -173,12 +177,14 @@ function buildAgentUnitPrompt(input: {
   module: SvgVerticalModule;
   design: ResolvedDesignTarget;
   modulePlan: ModulePlan;
+  moduleCoordinator?: ModuleAgentCoordinatorDecision;
   workingDir: string;
 }): string {
   const {
     module,
     design,
     modulePlan,
+    moduleCoordinator,
     workingDir,
   } = input;
   const region = module.region;
@@ -242,6 +248,9 @@ function buildAgentUnitPrompt(input: {
       : "";
   const semanticJsonUsageLine = "- module-semantic.json：结构化主输入，已在末尾预加载（精简版）。导出资产后如需刷新 generatedAssets，再次 read 磁盘文件";
   const methodFirstStep = "1. 直接使用末尾预加载的 module-semantic.json 精简版（无需再 read）；只按需读取输入路径列表里实际提供的参考图，确认语义层级、关键视觉块、关键文本框和区域类型。generatedAssets 初始可能为空，不代表缺资源；首批视觉还原优先把 textBlocks 之外的复杂视觉节点/组合节点通过 browser-session_export_svg_node tool 导出 PNG，不要先花大量时间用 CSS 手绘或逐节点推理。需要图片资源时，从 nodes 的 nodeId/inspectIndex/bbox/semantic 判断并导出。不要把所有节点坐标逐项重算成超长“几何账本”。结构化坐标（已导出图片资产用 generatedAssets[].box，其余按需参考 nodes[].bbox）是坐标主来源，截图只用于理解语义和验证。";
+  const moduleCoordinatorSection = moduleCoordinator
+    ? buildModuleCoordinatorPromptSection(moduleCoordinator)
+    : "";
   const dualFragmentSection = isFrameworkOutput
     ? `
 ## 双片段对齐（${outputFormat === "vue" ? "Vue" : "React"}）
@@ -268,6 +277,8 @@ ${semanticJsonUsageLine}
 ${referenceUsageLines}
 - verify stdout 的 artifacts.renderPngPath / artifacts.svgPngPath：运行 verify 后产生；需要读图时只读 stdout 返回的明确路径，不要猜 round 目录
 - preview.fragment.html / module.css / manifest.json：启动前可能已存在最小可运行模板；这是方便你直接修改的脚手架，不代表已完成。直接在模板上替换/扩展即可，不要为基础 manifest/root 容器结构反复推理。
+
+${moduleCoordinatorSection ? `${moduleCoordinatorSection}\n` : ""}
 
 module-semantic.json 关键字段（按此优先级取用）：
 | 字段 | 含义与用途 |
