@@ -14,6 +14,17 @@ const upsertSession = (sessions: SessionSummary[], session: Session): SessionSum
 const removeSession = (sessions: SessionSummary[], sessionId: string) =>
   sessions.filter((session) => session.id !== sessionId)
 
+const mergeSessionSummaries = (
+  existing: SessionSummary[],
+  incoming: SessionSummary[],
+) => {
+  const byId = new Map(existing.map((session) => [session.id, session]))
+  incoming.forEach((session) => {
+    byId.set(session.id, { ...(byId.get(session.id) || {}), ...session } as SessionSummary)
+  })
+  return [...byId.values()].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+}
+
 const upsertMessage = (messages: SessionMessage[] = [], message: SessionMessage) => {
   const index = messages.findIndex((entry) => entry.id === message.id)
   if (index < 0) return [...messages, message]
@@ -42,6 +53,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, runtime: action.runtime }
     case 'sessions/loaded':
       return { ...state, loading: false, sessions: action.sessions }
+    case 'sessions/refreshed':
+      const refreshedCurrent = state.currentSession
+        ? action.sessions.find((session) => session.id === state.currentSession?.id)
+        : null
+      return {
+        ...state,
+        currentSession: state.currentSession && refreshedCurrent
+          ? ({
+              ...state.currentSession,
+              ...refreshedCurrent,
+              result: state.currentSession.result,
+              messages: state.currentSession.messages,
+            } as Session)
+          : state.currentSession,
+        sessions: mergeSessionSummaries(state.sessions, action.sessions),
+      }
     case 'session/selected':
       return {
         ...state,

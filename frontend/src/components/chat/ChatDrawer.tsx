@@ -132,7 +132,7 @@ export function ChatDrawer({
           </button>
         ) : null}
       </div>
-      <ModulePicker onSelectModule={selectModule} selectedModuleId={selectedModuleId} session={session} />
+      <ModulePicker agentEvents={agentEvents} onSelectModule={selectModule} selectedModuleId={selectedModuleId} session={session} />
       <div className="conversation-stream" ref={conversationRef}>
         {conversationItems.length ? (
           <>
@@ -146,12 +146,13 @@ export function ChatDrawer({
           <div className="empty-state">暂无聊天记录</div>
         )}
       </div>
-      <form className={`composer${!selectedModuleId ? ' is-disabled' : ''}`} onSubmit={submit}>
+      <form
+        className={`composer${!selectedModuleId ? ' is-disabled' : ''}${error ? ' has-error' : notice ? ' has-notice' : ''}`}
+        onSubmit={submit}
+        title={error || notice || undefined}
+      >
         <textarea disabled={disabled || !session || !selectedModuleId} onChange={(event) => setText(event.target.value)} placeholder={selectedModuleId ? '输入调整要求…' : '选择模块后可输入调整要求'} ref={textareaRef} rows={1} value={text} />
-        <div className="composer-footer">
-          <span className={`composer-hint${error ? ' is-error' : notice ? ' is-notice' : ''}`}>{error || notice || (selectedModuleId ? '发送需点击按钮，Enter 不会提交' : '选择全部时仅查看记录')}</span>
-          <button className="send-btn" disabled={!canSend} type="submit">{busy ? '发送中…' : '发送'}</button>
-        </div>
+        <button className="send-btn" disabled={!canSend} type="submit">{busy ? '发送中…' : '发送'}</button>
       </form>
     </section>
   )

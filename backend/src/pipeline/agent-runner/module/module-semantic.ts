@@ -11,6 +11,7 @@ import { writeJsonFile, writeTextFile } from "../../../core/file-io.js";
 import { readSvgLayout } from "../../../core/svg-layout.js";
 import type { SvgVerticalModule } from "../../../core/svg-vertical-modules/types.js";
 import type { ModuleOutputAllowedAsset } from "../../module-output-policy.js";
+import { textColorFromNodePaint } from "./module-semantic-paint.js";
 
 const MODULE_REFERENCE_RENDER_VERSION = 3;
 
@@ -72,6 +73,7 @@ type ModuleSemanticNode = {
 };
 
 type ModuleSemanticTextBlockStyleInference = {
+  "color"?: string;
   "font-family"?: string;
   "font-size"?: string;
   "font-weight"?: string;
@@ -239,6 +241,25 @@ const readExplicitPaint = (value: unknown) => {
     return undefined;
   }
   return paint;
+};
+
+const SEMITRANSPARENT_COLOR_RE =
+  /^rgba\(\s*[^,]+\s*,\s*[^,]+\s*,\s*[^,]+\s*,\s*(0(?:\.\d+)?|1\.0+)\s*\)$/i;
+
+const isSemitransparentColor = (value: string | undefined) => {
+  const match = value?.trim().match(SEMITRANSPARENT_COLOR_RE);
+  if (!match) return false;
+  const alpha = Number(match[1]);
+  return Number.isFinite(alpha) && alpha >= 0 && alpha < 0.999;
+};
+
+const preferSemitransparentPaint = (
+  primary: string | undefined,
+  fallback: string | undefined,
+) => {
+  if (isSemitransparentColor(primary)) return primary;
+  if (isSemitransparentColor(fallback)) return fallback;
+  return primary ?? fallback;
 };
 
 const readNumber = (value: unknown) =>
@@ -1375,11 +1396,15 @@ const buildModuleSemanticTextHints = (
       const text =
         readString(node.semantic.text) ?? readString(node.textContent) ?? undefined;
       if (node.semantic.textHandling !== "dom-text" || !node.bbox || !text) return [];
+      const color =
+        preferSemitransparentPaint(
+          textBlockColorById.get(node.id),
+          node.attrs ? textColorFromNodePaint(node) : undefined,
+        ) ?? readExplicitPaint(node.attrs?.fill);
       return [
         {
           bbox: node.bbox,
-          color:
-            readExplicitPaint(node.attrs?.fill) ?? textBlockColorById.get(node.id),
+          color,
           id: node.id,
           lineCount: node.semantic.lineCount,
           lines: node.semantic.visualLines,

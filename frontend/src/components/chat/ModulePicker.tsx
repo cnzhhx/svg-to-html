@@ -1,22 +1,66 @@
+import type { AgentEvent } from '../../types/events'
 import type { Session } from '../../types/session'
 import { collectSelectableModules } from '../../utils/modules'
 
+type ModuleState = {
+  key: 'done' | 'failed' | 'pending' | 'running'
+  label: string
+}
+
+const terminalStatuses = new Set(['completed', 'failed', 'interrupted'])
+
+function getAgentEventModuleId(event: AgentEvent) {
+  const item = event.item
+  const direct = String(event.moduleId || item?.moduleId || '').trim()
+  if (direct) return direct
+  const source = String(event.sourceLabel || item?.server || item?.tool || '').trim()
+  return source.match(/module-\d+/i)?.[0] || ''
+}
+
+function collectActiveModuleIds(agentEvents: AgentEvent[]) {
+  const active = new Set<string>()
+  agentEvents.forEach((event) => {
+    const moduleId = getAgentEventModuleId(event)
+    if (!moduleId) return
+    const eventType = String(event.type || '').trim()
+    const itemStatus = String(event.item?.status || '').trim().toLowerCase()
+    if (eventType === 'item.started' || itemStatus === 'in_progress' || itemStatus === 'running') {
+      active.add(moduleId)
+    }
+  })
+  return active
+}
+
+function deriveModuleState(status: string, active: boolean): ModuleState {
+  const normalized = status.trim().toLowerCase()
+  if (normalized === 'completed') return { key: 'done', label: '已完成' }
+  if (normalized === 'failed') return { key: 'failed', label: '执行失败' }
+  if (normalized === 'interrupted') return { key: 'running', label: '调整中' }
+  if (active && !terminalStatuses.has(normalized)) return { key: 'running', label: '进行中' }
+  return { key: 'pending', label: '等待中' }
+}
+
+function formatModuleLabel(id: string) {
+  const match = id.match(/^module-(\d+)$/i)
+  if (!match) return id
+  return `模块${Number(match[1])}`
+}
+
 export function ModulePicker({
+  agentEvents,
   onSelectModule,
   selectedModuleId,
   session,
 }: {
+  agentEvents: AgentEvent[]
   onSelectModule: (id: string | null) => void
   selectedModuleId: string | null
   session: Session | null
 }) {
   const modules = collectSelectableModules(session)
+  const activeModuleIds = collectActiveModuleIds(agentEvents)
   return (
     <div className={`module-picker${modules.length ? '' : ' is-empty'}`}>
-      <div className="module-picker-header">
-        <span>选择模块</span>
-        <strong>{selectedModuleId || (modules.length ? '全部' : '暂无模块')}</strong>
-      </div>
       <div className="module-picker-list">
         {modules.length ? (
           <>
@@ -27,17 +71,24 @@ export function ModulePicker({
             >
               全部
             </button>
-            {modules.map((module, index) => (
-              <button
-                className={`module-picker-option${module.id === selectedModuleId ? ' is-selected' : ''}`}
-                data-module-id={module.id}
-                key={module.id}
-                onClick={() => onSelectModule(module.id)}
-                type="button"
-              >
-                {index + 1}. {module.id}
-              </button>
-            ))}
+            {modules.map((module) => {
+              const state = deriveModuleState(module.status, activeModuleIds.has(module.id))
+              const label = formatModuleLabel(module.id)
+              return (
+                <button
+                  className={`module-picker-option state-${state.key}${module.id === selectedModuleId ? ' is-selected' : ''}`}
+                  data-module-id={module.id}
+                  key={module.id}
+                  onClick={() => onSelectModule(module.id)}
+                  title={`${label} · ${module.id} · ${state.label}`}
+                  type="button"
+                >
+                  <span className={`module-picker-dot is-${state.key}`} aria-hidden="true" />
+                  <span className="module-picker-label">{label}</span>
+                  <span className="module-picker-state-text">{state.label}</span>
+                </button>
+              )
+            })}
           </>
         ) : (
           <span className="chat-drawer-meta">生成完成后可选择模块</span>

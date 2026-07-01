@@ -16,6 +16,7 @@ import {
   createModuleTextStyleHints,
   type ModuleTextStyleHintsFile,
 } from "./module-text-style-inference.js";
+import { textColorFromNodePaint } from "./module-semantic-paint.js";
 import { Semaphore } from "../queue/concurrency.js";
 import { throwIfRunAborted } from "../session/run-control.js";
 
@@ -26,47 +27,86 @@ class ModuleInputError extends Error {
   }
 }
 
+const TEXT_PAINT_OPACITY_STAGE = "text-paint-opacity-v2";
+
+const SEMITRANSPARENT_COLOR_RE =
+  /^rgba\(\s*[^,]+\s*,\s*[^,]+\s*,\s*[^,]+\s*,\s*(0(?:\.\d+)?|1\.0+)\s*\)$/i;
+
+const isSemitransparentColor = (value: string | undefined) => {
+  const match = value?.trim().match(SEMITRANSPARENT_COLOR_RE);
+  if (!match) return false;
+  const alpha = Number(match[1]);
+  return Number.isFinite(alpha) && alpha >= 0 && alpha < 0.999;
+};
+
+const buildTextNodeColorById = (document: ModuleSemanticDocument) =>
+  new Map(
+    document.nodes.flatMap((node) => {
+      const color = node.attrs ? textColorFromNodePaint(node) : undefined;
+      return color ? [[node.id, color] as const] : [];
+    }),
+  );
+
+const resolveTextBlockColor = ({
+  block,
+  nodeColorById,
+}: {
+  block: ModuleSemanticDocument["textBlocks"][number];
+  nodeColorById: Map<string, string>;
+}) => {
+  const nodeColor = nodeColorById.get(block.id);
+  const blockColor = typeof block.color === "string" && block.color.trim().length > 0
+    ? block.color.trim()
+    : undefined;
+  if (isSemitransparentColor(nodeColor)) return nodeColor;
+  if (isSemitransparentColor(blockColor)) return blockColor;
+  return nodeColor ?? blockColor;
+};
+
 const buildTextBlocksFileFromSemantic = (
   document: ModuleSemanticDocument,
-): ModuleTextBlocksFile => ({
-  blockCount: document.textBlocks.length,
-  blocks: document.textBlocks.map((block) => ({
-    bboxIncludesIcon:
-      typeof block.bboxIncludesIcon === "boolean"
-        ? block.bboxIncludesIcon
+): ModuleTextBlocksFile => {
+  const nodeColorById = buildTextNodeColorById(document);
+  return {
+    blockCount: document.textBlocks.length,
+    blocks: document.textBlocks.map((block) => ({
+      bboxIncludesIcon:
+        typeof block.bboxIncludesIcon === "boolean"
+          ? block.bboxIncludesIcon
+          : undefined,
+      color: resolveTextBlockColor({ block, nodeColorById }),
+      confidence:
+        typeof block.confidence === "number" ? block.confidence : undefined,
+      id: block.id,
+      kind: typeof block.kind === "string" ? block.kind : undefined,
+      lineCount:
+        typeof block.lineCount === "number" && Number.isFinite(block.lineCount)
+          ? Math.round(block.lineCount)
+          : undefined,
+      lineRegions: Array.isArray(block.lineRegions) ? block.lineRegions : undefined,
+      lines: Array.isArray(block.lines) ? block.lines : undefined,
+      region: isRecord(block.region)
+        ? (block.region as ModuleTextBlocksFile["blocks"][number]["region"])
+        : block.textRegion,
+      renderedTextRegion: isRecord(block.renderedTextRegion)
+        ? (block.renderedTextRegion as ModuleTextBlocksFile["blocks"][number]["renderedTextRegion"])
         : undefined,
-    color: typeof block.color === "string" ? block.color : undefined,
-    confidence:
-      typeof block.confidence === "number" ? block.confidence : undefined,
-    id: block.id,
-    kind: typeof block.kind === "string" ? block.kind : undefined,
-    lineCount:
-      typeof block.lineCount === "number" && Number.isFinite(block.lineCount)
-        ? Math.round(block.lineCount)
-        : undefined,
-    lineRegions: Array.isArray(block.lineRegions) ? block.lineRegions : undefined,
-    lines: Array.isArray(block.lines) ? block.lines : undefined,
-    region: isRecord(block.region)
-      ? (block.region as ModuleTextBlocksFile["blocks"][number]["region"])
-      : block.textRegion,
-    renderedTextRegion: isRecord(block.renderedTextRegion)
-      ? (block.renderedTextRegion as ModuleTextBlocksFile["blocks"][number]["renderedTextRegion"])
-      : undefined,
-    source: typeof block.source === "string" ? (block.source as "semantic") : undefined,
-    sourceBlockId:
-      typeof block.sourceBlockId === "string" ? block.sourceBlockId : undefined,
-    sourceBlockText:
-      typeof block.sourceBlockText === "string" ? block.sourceBlockText : undefined,
-    text: block.text,
-    textRegion: block.textRegion,
-  })),
-  coordinateSpace: "local",
-  generatedAt: new Date().toISOString(),
-  generatedBy: "semantic-text-extract",
-  moduleId: document.module.id,
-  previewPath: document.sourceImage.path,
-  region: document.module.region,
-});
+      source: typeof block.source === "string" ? (block.source as "semantic") : undefined,
+      sourceBlockId:
+        typeof block.sourceBlockId === "string" ? block.sourceBlockId : undefined,
+      sourceBlockText:
+        typeof block.sourceBlockText === "string" ? block.sourceBlockText : undefined,
+      text: block.text,
+      textRegion: block.textRegion,
+    })),
+    coordinateSpace: "local",
+    generatedAt: new Date().toISOString(),
+    generatedBy: "semantic-text-extract",
+    moduleId: document.module.id,
+    previewPath: document.sourceImage.path,
+    region: document.module.region,
+  };
+};
 
 const buildTextStyleHintsFileFromSemantic = (
   document: ModuleSemanticDocument,
@@ -89,6 +129,7 @@ const buildTextStyleHintsFileFromSemantic = (
     };
   };
   const rawDocument = document as Record<string, unknown>;
+  const nodeColorById = buildTextNodeColorById(document);
   const textAppearanceHints = Array.isArray(rawDocument["textAppearanceHints"])
     ? rawDocument["textAppearanceHints"].filter(isRecord)
     : [];
@@ -129,8 +170,9 @@ const buildTextStyleHintsFileFromSemantic = (
             ),
           ) as Record<string, string>)
         : {});
-    if (typeof block.color === "string" && block.color.trim().length > 0) {
-      declarations.color = block.color.trim();
+    const color = resolveTextBlockColor({ block, nodeColorById });
+    if (color) {
+      declarations.color = color;
     }
     if (Object.keys(declarations).length === 0) return [];
     return [
@@ -198,6 +240,7 @@ const preprocessModuleSemantic = async ({
   const hasCachedTextArtifacts =
     currentSemantic.runtime.completedStages.includes("text-blocks") &&
     currentSemantic.runtime.completedStages.includes("text-style-inference") &&
+    currentSemantic.runtime.completedStages.includes(TEXT_PAINT_OPACITY_STAGE) &&
     currentSemantic.textBlocks.length > 0;
 
   const semanticTextHints = buildModuleSemanticTextHints(currentSemantic);

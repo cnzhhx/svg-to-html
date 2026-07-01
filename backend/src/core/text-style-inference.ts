@@ -146,7 +146,7 @@ const inferTextStyles = async ({
             : 1;
         const styleHeightTargets = blocks.map((block) => block.region.height);
         const clusteredStyleHeight = (height) => {
-          const peers = styleHeightTargets.filter((candidate) => Math.abs(candidate - height) <= 2);
+          const peers = styleHeightTargets.filter((candidate) => Math.abs(candidate - height) <= 1);
           return peers.length >= 2 ? Math.max(...peers) : height;
         };
         const measure = ({ family, fontSize, fontWeight, text }) => {

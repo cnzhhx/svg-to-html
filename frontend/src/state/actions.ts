@@ -21,5 +21,6 @@ export type AppAction =
   | { type: 'session/selected'; session: Session | null; sessionId: string | null }
   | { type: 'session/updated'; data: Partial<Session>; sessionId: string; timestamp?: number }
   | { type: 'sessions/loaded'; sessions: SessionSummary[] }
+  | { type: 'sessions/refreshed'; sessions: SessionSummary[] }
   | { type: 'settings/open'; open: boolean }
   | { type: 'upload/open'; open: boolean }

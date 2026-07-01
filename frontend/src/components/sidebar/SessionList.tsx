@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { SessionSummary } from '../../types/session'
 import { formatSessionDuration, labelForOutputFormat, labelForSessionStatus } from '../../utils/format'
 import { getSessionOutputFormat } from '../../utils/artifacts'
@@ -11,6 +12,15 @@ export function SessionList({
   onSelectSession: (id: string) => void
   sessions: SessionSummary[]
 }) {
+  const hasLiveSessions = sessions.some((session) => session.status === 'running' || session.status === 'queued')
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!hasLiveSessions) return undefined
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [hasLiveSessions])
+
   if (!sessions.length) {
     return <div className="session-list"><div className="empty-state">暂无 session</div></div>
   }
@@ -32,7 +42,7 @@ export function SessionList({
             <span className="session-item-body">
               <span className="session-item-title">{session.designName || session.id}</span>
               <span className="session-item-meta">
-                {formatSessionDuration(session)} · {outputFormat} · {labelForSessionStatus(session)}
+                {formatSessionDuration(session, now)} · {outputFormat} · {labelForSessionStatus(session)}
               </span>
             </span>
           </button>
