@@ -152,6 +152,7 @@ const safeResultForApi = (
     "livePreviewEntryPath",
     "livePreviewUpdatedAt",
     "livePreviewVersion",
+    "moduleActiveIds",
     "moduleAgentRuns",
     "moduleAgentThreadIds",
     "moduleAgentManifestPath",

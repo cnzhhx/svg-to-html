@@ -121,6 +121,7 @@ type AgentResultFields = {
   livePreviewUpdatedAt?: number
   livePreviewVersion?: number
   renderEntryPath?: string
+  moduleActiveIds?: string[]
   modulePlanModules?: SessionResultModule[]
   moduleAgentManifestPath?: string
   moduleAgentRuns?: Array<Record<string, unknown>>

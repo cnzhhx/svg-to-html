@@ -73,6 +73,7 @@ export type SessionResult = Record<string, unknown> & {
   livePreviewEntryPath?: string
   livePreviewUpdatedAt?: number
   livePreviewVersion?: number
+  moduleActiveIds?: string[]
   moduleAgentRuns?: ModuleAgentRun[]
   moduleAgentThreadIds?: Record<string, string>
   moduleConcurrencyLimit?: number

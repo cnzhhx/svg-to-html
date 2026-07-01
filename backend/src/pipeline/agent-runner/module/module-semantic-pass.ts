@@ -108,10 +108,12 @@ const SHEET_GAP = 12;
 const CELL_INNER_PADDING = 8;
 const SHEET_META_HEIGHT = 18;
 const SHEET_META_GAP = 8;
+const SHEET_CELL_MIN_WIDTH = 104;
 const PREVIEW_SCALE = 2;
 const SEMANTIC_PROBE_SCALE_MULTIPLIER = 2;
 const RECHECK_BATCH_SIZE = 4;
 const MAX_TEXT_RECHECK_CANDIDATES = 12;
+const STANDALONE_PATH_DATA_LENGTH_MIN = 50_000;
 
 const toBboxArray = (box: Box): [number, number, number, number] => [
   box.x,
@@ -168,7 +170,10 @@ const buildSheetHtml = ({
       previewWidth,
       originalIndex,
       outputPath: probe.outputPath,
-      width: previewWidth + CELL_INNER_PADDING * 2,
+      width: Math.max(
+        SHEET_CELL_MIN_WIDTH,
+        previewWidth + CELL_INNER_PADDING * 2,
+      ),
     };
   });
   const targetColumns =
@@ -605,6 +610,14 @@ const renderAnalysisSheet = async ({
   };
 };
 
+type RenderedAnalysisBatch = {
+  batchSize: number;
+  layout: Awaited<ReturnType<typeof renderAnalysisSheet>>;
+  probes: ProbeArtifact[];
+  sheetId: string;
+  sheetPath: string;
+};
+
 const classifySheetWithVision = async ({
   cells,
   moduleDir,
@@ -722,6 +735,15 @@ const shouldAdoptRecheckSemantic = ({
   return nextTextLength > currentTextLength;
 };
 
+const shouldClassifyProbeStandalone = (probe: ProbeArtifact) => {
+  if (probe.node.tag !== "path") return false;
+  const pathDataLength = Number(probe.node.attrs.pathDataLength ?? 0);
+  return (
+    Number.isFinite(pathDataLength) &&
+    pathDataLength >= STANDALONE_PATH_DATA_LENGTH_MIN
+  );
+};
+
 const runSuspiciousTextRecheck = async ({
   module,
   moduleDir,
@@ -769,6 +791,7 @@ const runSuspiciousTextRecheck = async ({
     });
   }
 
+  const renderedRecheckBatches: RenderedAnalysisBatch[] = [];
   for (const { probes, sheetNumber } of recheckBatches) {
     const sheetId = `sheet-recheck-${String(sheetNumber).padStart(3, "0")}`;
     const sheetPath = path.join(analysisSheetsDir, `${sheetId}.png`);
@@ -778,18 +801,28 @@ const runSuspiciousTextRecheck = async ({
       sheetId,
       variant: "recheck",
     });
+    renderedRecheckBatches.push({
+      batchSize: RECHECK_BATCH_SIZE,
+      layout,
+      probes,
+      sheetId,
+      sheetPath,
+    });
+  }
+
+  await Promise.all(renderedRecheckBatches.map(async (renderedBatch) => {
     try {
       const recheckedSemantics = await visionSemaphore.run(() =>
         classifySheetWithVision({
-          cells: layout.cellPlacements,
+          cells: renderedBatch.layout.cellPlacements,
           moduleDir,
           moduleId: module.id,
           moduleRegion: module.region,
-          probes,
+          probes: renderedBatch.probes,
           signal,
           sessionId,
-          sheetId,
-          sheetPath,
+          sheetId: renderedBatch.sheetId,
+          sheetPath: renderedBatch.sheetPath,
         }),
       );
       recheckedSemantics.forEach((semantic, id) => {
@@ -806,10 +839,10 @@ const runSuspiciousTextRecheck = async ({
       const message = error instanceof Error ? error.message : String(error);
       sessionStore.addLog(
         sessionId,
-        `[module-semantic] ${module.id}: ${sheetId} recheck failed: ${message}; keeping primary classifications`,
+        `[module-semantic] ${module.id}: ${renderedBatch.sheetId} recheck failed: ${message}; keeping primary classifications`,
       );
     }
-  }
+  }));
 
   return nextSemantics;
 };
@@ -852,62 +885,110 @@ const runSemanticVisionPass = async ({
     textHandling: "ignore",
   });
 
-  const classifyBatch = async (
+  let renderSheetChain = Promise.resolve();
+
+  const renderBatchSheet = (
     probes: ProbeArtifact[],
     batchSizeIndex: number,
-  ): Promise<void> => {
-    if (probes.length === 0) return;
+  ): Promise<RenderedAnalysisBatch | null> => {
+    if (probes.length === 0) return Promise.resolve(null);
     const batchSize = ANALYSIS_BATCH_SIZES[batchSizeIndex];
     if (!batchSize) {
       throw new Error(
         `[module-semantic] ${module.id}: invalid analysis batch size index ${batchSizeIndex}`,
       );
     }
-    const sheetNumber = nextSheetNumber;
-    nextSheetNumber += 1;
-    const sheetId = `sheet-${String(sheetNumber).padStart(3, "0")}`;
-    const sheetPath = path.join(analysisSheetsDir, `${sheetId}.png`);
-    const layout = await renderAnalysisSheet({
-      outputPath: sheetPath,
-      probes,
-      sheetId,
+
+    const renderTask = renderSheetChain.then(async () => {
+      const sheetNumber = nextSheetNumber;
+      nextSheetNumber += 1;
+      const sheetId = `sheet-${String(sheetNumber).padStart(3, "0")}`;
+      const sheetPath = path.join(analysisSheetsDir, `${sheetId}.png`);
+      const layout = await renderAnalysisSheet({
+        outputPath: sheetPath,
+        probes,
+        sheetId,
+      });
+      return {
+        batchSize,
+        layout,
+        probes,
+        sheetId,
+        sheetPath,
+      };
     });
+
+    renderSheetChain = renderTask.then(
+      () => undefined,
+      () => undefined,
+    );
+    return renderTask;
+  };
+
+  const recordSheet = ({
+    renderedBatch,
+    sheetSemantics,
+  }: {
+    renderedBatch: RenderedAnalysisBatch;
+    sheetSemantics: Map<string, ModuleSemanticNodeSemantic>;
+  }) => {
+    sheets.push({
+      batchSize: renderedBatch.batchSize,
+      id: renderedBatch.sheetId,
+      layout: {
+        columns: renderedBatch.layout.columns,
+        rows: renderedBatch.layout.rows,
+        thumbSize: renderedBatch.layout.thumbSize,
+      },
+      nodeIds: renderedBatch.probes.map((probe) => probe.node.id),
+      path: `analysis-sheets/${path.basename(renderedBatch.sheetPath)}`,
+      readableByAgent: true,
+    });
+    renderedBatch.layout.cellPlacements.forEach((cell) => {
+      sheetAssignments.set(cell.id, {
+        column: cell.column,
+        row: cell.row,
+        sheetId: renderedBatch.sheetId,
+      });
+    });
+    sheetSemantics.forEach((semantic, id) => {
+      semanticsById.set(id, semantic);
+    });
+  };
+
+  const recordFallbackSheet = ({
+    error,
+    renderedBatch,
+  }: {
+    error: Error;
+    renderedBatch: RenderedAnalysisBatch;
+  }) => {
+    const fallbackSemantics = new Map<string, ModuleSemanticNodeSemantic>();
+    renderedBatch.probes.forEach((probe) => {
+      fallbackSemantics.set(probe.node.id, makeFallbackSemantic(error));
+    });
+    recordSheet({ renderedBatch, sheetSemantics: fallbackSemantics });
+  };
+
+  const classifyRenderedBatch = async (
+    renderedBatch: RenderedAnalysisBatch,
+    batchSizeIndex: number,
+  ): Promise<void> => {
     try {
       const sheetSemantics = await visionSemaphore.run(() =>
         classifySheetWithVision({
-          cells: layout.cellPlacements,
+          cells: renderedBatch.layout.cellPlacements,
           moduleDir,
           moduleId: module.id,
           moduleRegion: module.region,
-          probes,
+          probes: renderedBatch.probes,
           signal,
           sessionId,
-          sheetId,
-          sheetPath,
+          sheetId: renderedBatch.sheetId,
+          sheetPath: renderedBatch.sheetPath,
         }),
       );
-      sheets.push({
-        batchSize,
-        id: sheetId,
-        layout: {
-          columns: layout.columns,
-          rows: layout.rows,
-          thumbSize: layout.thumbSize,
-        },
-        nodeIds: probes.map((probe) => probe.node.id),
-        path: `analysis-sheets/${path.basename(sheetPath)}`,
-        readableByAgent: true,
-      });
-      layout.cellPlacements.forEach((cell) => {
-        sheetAssignments.set(cell.id, {
-          column: cell.column,
-          row: cell.row,
-          sheetId,
-        });
-      });
-      sheetSemantics.forEach((semantic, id) => {
-        semanticsById.set(id, semantic);
-      });
+      recordSheet({ renderedBatch, sheetSemantics });
     } catch (error) {
       const batchError =
         error instanceof Error ? error : new Error(String(error));
@@ -915,64 +996,77 @@ const runSemanticVisionPass = async ({
       if (nextBatchSize) {
         sessionStore.addLog(
           sessionId,
-          `[module-semantic] ${module.id}: ${sheetId} batch size ${batchSize} failed: ${batchError.message}; retrying ${probes.length} node(s) with batch size ${nextBatchSize}`,
+          `[module-semantic] ${module.id}: ${renderedBatch.sheetId} batch size ${renderedBatch.batchSize} failed: ${batchError.message}; retrying ${renderedBatch.probes.length} node(s) with batch size ${nextBatchSize}`,
         );
         const retryBatches: ProbeArtifact[][] = [];
         for (
           let batchStart = 0;
-          batchStart < probes.length;
+          batchStart < renderedBatch.probes.length;
           batchStart += nextBatchSize
         ) {
-          retryBatches.push(probes.slice(batchStart, batchStart + nextBatchSize));
+          retryBatches.push(
+            renderedBatch.probes.slice(batchStart, batchStart + nextBatchSize),
+          );
         }
+        const renderedRetryBatches: RenderedAnalysisBatch[] = [];
         for (const batch of retryBatches) {
-          await classifyBatch(batch, batchSizeIndex + 1);
+          const retryBatch = await renderBatchSheet(batch, batchSizeIndex + 1);
+          if (retryBatch) renderedRetryBatches.push(retryBatch);
         }
+        await Promise.all(
+          renderedRetryBatches.map((retryBatch) =>
+            classifyRenderedBatch(retryBatch, batchSizeIndex + 1),
+          ),
+        );
         return;
       }
       sessionStore.addLog(
         sessionId,
-        `[module-semantic] ${module.id}: ${sheetId} batch size ${batchSize} failed: ${batchError.message}; marking ${probes.length} node(s) as visual export targets for agent-driven export`,
+        `[module-semantic] ${module.id}: ${renderedBatch.sheetId} batch size ${renderedBatch.batchSize} failed: ${batchError.message}; marking ${renderedBatch.probes.length} node(s) as visual export targets for agent-driven export`,
       );
-      sheets.push({
-        batchSize,
-        id: sheetId,
-        layout: {
-          columns: layout.columns,
-          rows: layout.rows,
-          thumbSize: layout.thumbSize,
-        },
-        nodeIds: probes.map((probe) => probe.node.id),
-        path: `analysis-sheets/${path.basename(sheetPath)}`,
-        readableByAgent: true,
-      });
-      layout.cellPlacements.forEach((cell) => {
-        sheetAssignments.set(cell.id, {
-          column: cell.column,
-          row: cell.row,
-          sheetId,
-        });
-      });
-      probes.forEach((probe) => {
-        semanticsById.set(probe.node.id, makeFallbackSemantic(batchError));
-      });
+      recordFallbackSheet({ error: batchError, renderedBatch });
     }
   };
 
   const initialBatchSize = ANALYSIS_BATCH_SIZES[0];
+  const standaloneProbeArtifacts = probeArtifacts.filter(
+    shouldClassifyProbeStandalone,
+  );
+  const batchedProbeArtifacts = probeArtifacts.filter(
+    (probe) => !shouldClassifyProbeStandalone(probe),
+  );
+
+  if (standaloneProbeArtifacts.length > 0) {
+    sessionStore.addLog(
+      sessionId,
+      `[module-semantic] ${module.id}: classifying ${standaloneProbeArtifacts.length} long path probe(s) as standalone sheets (pathDataLength>=${STANDALONE_PATH_DATA_LENGTH_MIN})`,
+    );
+  }
+
   const primaryBatches: ProbeArtifact[][] = [];
   for (
     let batchStart = 0;
-    batchStart < probeArtifacts.length;
+    batchStart < batchedProbeArtifacts.length;
     batchStart += initialBatchSize
   ) {
     primaryBatches.push(
-      probeArtifacts.slice(batchStart, batchStart + initialBatchSize),
+      batchedProbeArtifacts.slice(batchStart, batchStart + initialBatchSize),
     );
   }
-  for (const batch of primaryBatches) {
-    await classifyBatch(batch, 0);
+  for (const probeArtifact of standaloneProbeArtifacts) {
+    primaryBatches.push([probeArtifact]);
   }
+
+  const renderedPrimaryBatches: RenderedAnalysisBatch[] = [];
+  for (const batch of primaryBatches) {
+    const renderedBatch = await renderBatchSheet(batch, 0);
+    if (renderedBatch) renderedPrimaryBatches.push(renderedBatch);
+  }
+  await Promise.all(
+    renderedPrimaryBatches.map((renderedBatch) =>
+      classifyRenderedBatch(renderedBatch, 0),
+    ),
+  );
 
   const recheckedSemanticsById = await runSuspiciousTextRecheck({
     module,
@@ -983,7 +1077,11 @@ const runSemanticVisionPass = async ({
     sessionId,
     visionSemaphore,
   });
-  return { semanticsById: recheckedSemanticsById, sheetAssignments, sheets };
+  return {
+    semanticsById: recheckedSemanticsById,
+    sheetAssignments,
+    sheets: sheets.slice().sort((left, right) => left.id.localeCompare(right.id)),
+  };
 };
 
 const buildAnalysisResultFromDocument = (

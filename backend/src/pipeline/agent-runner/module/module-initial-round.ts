@@ -15,6 +15,7 @@ import {
   createAgentUnitThread,
   ModuleOutputIncompleteError,
   runAgentUnit,
+  setModuleActive,
 } from "./agent-unit.js";
 import { buildUserModuleGuidancePrompt } from "../../../prompts/module-agent.js";
 import {
@@ -283,6 +284,9 @@ const runInitialModuleRound = async ({
             sessionStore.update(sessionId, {
               result: {
                 ...currentAfterInterrupt.result,
+                moduleActiveIds: (
+                  currentAfterInterrupt.result.moduleActiveIds ?? []
+                ).filter((id) => id !== module.id),
                 moduleAgentRuns: [...moduleAgentRuns],
               },
             });
@@ -337,6 +341,9 @@ const runInitialModuleRound = async ({
           sessionStore.update(sessionId, {
             result: {
               ...currentAfterRun.result,
+              moduleActiveIds: (
+                currentAfterRun.result.moduleActiveIds ?? []
+              ).filter((id) => id !== module.id),
               moduleAgentRuns: [...moduleAgentRuns],
             },
           });
@@ -451,9 +458,14 @@ const runInitialModuleRound = async ({
           sessionStore.update(sessionId, {
             result: {
               ...currentAfterFailure.result,
+              moduleActiveIds: (
+                currentAfterFailure.result.moduleActiveIds ?? []
+              ).filter((id) => id !== module.id),
               moduleAgentRuns: [...moduleAgentRuns],
             },
           });
+        } else {
+          setModuleActive({ active: false, moduleId: module.id, sessionId });
         }
         completedInitialModules?.add(module.id);
         await publishLivePreview({
