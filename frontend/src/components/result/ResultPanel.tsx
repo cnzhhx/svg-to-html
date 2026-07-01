@@ -111,9 +111,6 @@ export function ResultPanel({
         session={session}
         viewMode={viewMode}
       />
-      <div className="result-urls">
-        {cacheMeta?.byteSize || result?.localArtifactCacheByteSize ? <span>本地缓存 {formatBytes(cacheMeta?.byteSize || result?.localArtifactCacheByteSize || 0)}</span> : null}
-      </div>
       <div className="result-actions">
         {compareEntryPath ? <button className="link-btn" onClick={() => onOpenArtifact('compare')} type="button">打开对照页</button> : null}
         {sourceEntryPath && sourceEntryPath !== renderEntryPath ? <button className="link-btn" onClick={() => onOpenArtifact('source')} type="button">打开源码</button> : null}
