@@ -287,12 +287,13 @@ module-semantic.json 关键字段（按此优先级取用）：
 | textBlocks[].layoutTargetRegion | 文本的 DOM 容器框，定位文本外盒用它 |
 | textBlocks[].styleInference | 文本样式（font-size/weight/color/line-height/letter-spacing/font-family），硬约束 |
 | generatedAssets[] | agent 已经按需导出的资产；模块启动时可以为空，不代表缺资源 |
+| generatedAssets[].path | 已导出 PNG 的模块内相对路径 |
 | generatedAssets[].box | 已导出 PNG 的 CSS 放置外框（x/y/宽/高，对应截图 clip，可能包含小数坐标取整留下的透明边）；**引用该资产时用它定位 + 定尺寸**，宽高比即 PNG 比例。资产只给路径，不会自动作为图片附件塞入请求 |
 | generatedAssets[].sourceNodeIds | 该资产由哪些 SVG 节点导出，便于合并/重导 |
 | nodes[].id / nodeId | SVG 节点 id；按需导出 PNG 时传给 browser-session_export_svg_node 的 nodeIds |
 | nodes[].bbox | 节点几何框；用于判断位置、尺寸、分组和按需导出范围 |
 | nodes[].inspectIndex | 绘制顺序，越大越靠上，是 z-index 的依据 |
-| nodes[].semantic | 节点语义与导出决策 |
+| nodes[].semantic | 节点语义与导出决策；DOM 文本内容以 textBlocks 为准，nodes[].semantic.text 只可能用于非 textBlocks 的视觉文字提示 |
 | nodes[].attrs.mask / filter / clip-path | 视觉引用提示；节点或其子图被裁切、加阴影或滤镜时优先导出带该属性的节点，不要只导内部 leaf 节点 |
 | nodes[].visualEffects | 由 SVG filter 解析出的轻量视觉提示；可能包含 inner-shadow 的边缘方向、偏移、透明度和 CSS 近似写法，适合辅助判断简单边缘阴影/分隔线 |
 
