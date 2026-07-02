@@ -211,7 +211,6 @@ const nodeContainsAnyReadableTextEvidence = (node: ModuleSemanticNode) =>
   !isExportableVisualTextAsset(node) &&
   (TEXT_TAGS.has(node.tag) ||
     node.semantic.textHandling === "dom-text" ||
-    node.semantic.containsReadableText === true ||
     (typeof node.textContent === "string" && node.textContent.trim().length > 0) ||
     (typeof node.semantic.text === "string" && node.semantic.text.trim().length > 0));
 
@@ -868,12 +867,6 @@ const registerGeneratedAsset = async ({
   });
   const assetBaseName = path.basename(outputRef, path.extname(outputRef));
   const sourceNodeIds = selectedNodes.map((node) => node.id);
-  // nodePath is stripped by compactDocumentForAgent; fall back to selector
-  // (equivalent after the svg:nth-of-type(1) prefix is stripped) so the
-  // generatedAsset still records a usable path for re-export/debugging.
-  const sourceNodePaths = selectedNodes.map(
-    (node) => node.nodePath ?? node.selector,
-  );
 
   let registeredAsset: ModuleSemanticGeneratedAsset | undefined;
   await updateModuleSemanticDocument({
@@ -883,18 +876,17 @@ const registerGeneratedAsset = async ({
         document.generatedAssets.find((asset) => asset.path === outputRef)?.id ??
         `${document.module.id}:${assetBaseName}`;
       const nextAsset = {
-        assetRole: inferredAssetRole,
         box: assetBox,
-        htmlRef: outputRef,
         id: assetId,
         path: outputRef,
-        readableByAgent: true,
-        relativePath: outputRef,
-        source: "module-agent.export-svg-node-asset",
         sourceNodeIds,
-        sourceNodePaths,
-        containsText,
-        textTreatment,
+        ...(inferredAssetRole !== "visual-asset"
+          ? { assetRole: inferredAssetRole }
+          : {}),
+        ...(containsText ? { containsText } : {}),
+        ...(textTreatment !== GENERATED_ASSET_NO_ORDINARY_TEXT_TREATMENT
+          ? { textTreatment }
+          : {}),
       } satisfies ModuleSemanticGeneratedAsset;
       registeredAsset = nextAsset;
       const existingIndex = document.generatedAssets.findIndex(

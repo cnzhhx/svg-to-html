@@ -506,7 +506,7 @@ const buildInjectedModuleContext = async (
     const compacted = compactDocumentForAgent(semanticDoc);
     semanticSection = `### module-semantic.json（精简版，已预加载）
 \`\`\`json
-${JSON.stringify(compacted, null, 2)}
+${JSON.stringify(compacted)}
 \`\`\``;
   }
 

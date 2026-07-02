@@ -57,6 +57,8 @@ import {
 import { buildDeterministicSemantic } from "../../src/pipeline/agent-runner/module/module-semantic-deterministic.js";
 import {
   buildModuleSemanticTextHints,
+  compactDocumentForAgent,
+  readModuleAllowedAssets,
   type ModuleSemanticDocument,
   type ModuleSemanticNode,
 } from "../../src/pipeline/agent-runner/module/module-semantic.js";
@@ -354,6 +356,137 @@ test("semantic text hints preserve node paint opacity", () => {
       text: "活动说明：",
     },
   ]);
+});
+
+test("agent semantic compaction removes duplicate fields but preserves asset compatibility", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "semantic-compact-"));
+  try {
+    const textNode: ModuleSemanticNode = {
+      attrs: { fill: "#A1A1A1" },
+      bbox: { x: 10, y: 20, width: 80, height: 16 },
+      childIds: [],
+      depth: 1,
+      id: "text-1",
+      inspectIndex: 2,
+      nodePath: "svg > path:nth-of-type(1)",
+      parentId: null,
+      semantic: {
+        containsReadableText: true,
+        contentType: "unknown",
+        exportDecision: "skip",
+        kind: "text",
+        text: "Hello",
+        textHandling: "dom-text",
+      },
+      siblingIndex: 0,
+      tag: "path",
+      visible: true,
+    };
+    const visualTextNode: ModuleSemanticNode = {
+      ...textNode,
+      id: "visual-text-1",
+      inspectIndex: 3,
+      semantic: {
+        containsReadableText: true,
+        exportDecision: "export",
+        kind: "visual-text",
+        text: "Logo",
+        textHandling: "export-asset",
+      },
+    };
+    const document: ModuleSemanticDocument = {
+      analysisSheets: [],
+      generatedAssets: [
+        {
+          assetRole: "visual-asset",
+          box: { x: 1, y: 2, width: 30, height: 40 },
+          htmlRef: "assets/a.png",
+          id: "module-x:a",
+          path: "assets/a.png",
+          readableByAgent: true,
+          relativePath: "assets/a.png",
+          source: "module-agent.export-svg-node-asset",
+          sourceNodeIds: ["visual-text-1"],
+          sourceNodePaths: ["svg > path:nth-of-type(2)"],
+          textTreatment: "no-preprocessed-text",
+        },
+      ],
+      module: {
+        id: "module-x",
+        kind: "section",
+        region: { x: 0, y: 0, width: 100, height: 100 },
+        scale: 1,
+      },
+      nodes: [textNode, visualTextNode],
+      runtime: {
+        completedStages: [],
+        nodeFactVersion: 1,
+        referenceRenderVersion: 1,
+        schemaVersion: 1,
+        semanticPassVersion: 1,
+        textStylePassVersion: 1,
+      },
+      sourceImage: {
+        height: 100,
+        id: "module-reference",
+        path: "module-reference.png",
+        readableByAgent: true,
+        width: 100,
+      },
+      svgSummary: {
+        nodeCount: 2,
+        rootAttrs: {},
+        tagCounts: { path: 2 },
+        textNodeCount: 0,
+        visibleNodeCount: 2,
+      },
+      textBlocks: [
+        {
+          color: "#A1A1A1",
+          id: "text-1",
+          sourceNodeIds: ["text-1"],
+          styleInference: {
+            color: "#A1A1A1",
+            "font-size": "13px",
+          },
+          text: "Hello",
+          textRegion: textNode.bbox!,
+        },
+      ],
+    };
+
+    const compacted = compactDocumentForAgent(document);
+    const compactTextNode = compacted.nodes.find((node) => node.id === "text-1");
+    const compactVisualTextNode = compacted.nodes.find(
+      (node) => node.id === "visual-text-1",
+    );
+    assert.ok(compactTextNode);
+    assert.ok(compactVisualTextNode);
+    assert.equal(compactTextNode.semantic.text, undefined);
+    assert.equal(compactTextNode.semantic.containsReadableText, undefined);
+    assert.equal(compactTextNode.semantic.contentType, undefined);
+    assert.equal(compactVisualTextNode.semantic.text, "Logo");
+    assert.equal(compacted.textBlocks[0]?.color, undefined);
+    assert.deepEqual(compacted.generatedAssets[0], {
+      box: { x: 1, y: 2, width: 30, height: 40 },
+      id: "module-x:a",
+      path: "assets/a.png",
+      sourceNodeIds: ["visual-text-1"],
+    });
+
+    await writeFile(
+      path.join(tempDir, "module-semantic.json"),
+      JSON.stringify(compacted),
+      "utf8",
+    );
+    const allowedAssets = await readModuleAllowedAssets(tempDir);
+    assert.equal(allowedAssets[0]?.htmlRef, "assets/a.png");
+    assert.equal(allowedAssets[0]?.path, "assets/a.png");
+    assert.equal(allowedAssets[0]?.relativePath, "assets/a.png");
+    assert.equal(allowedAssets[0]?.textTreatment, "unknown");
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+  }
 });
 
 test("semantic deterministic helper classifies obvious node cases", () => {

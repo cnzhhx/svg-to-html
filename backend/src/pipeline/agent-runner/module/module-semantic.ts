@@ -98,19 +98,19 @@ type ModuleSemanticTextBlock = {
 };
 
 type ModuleSemanticGeneratedAsset = {
-  assetRole: string;
+  assetRole?: string;
   box?: Box;
   contentType?: string;
   htmlRef?: string;
   id: string;
-  path: string;
+  path?: string;
   [key: string]: unknown;
-  readableByAgent: boolean;
+  readableByAgent?: boolean;
   relativePath?: string;
   source?: string;
-  sourceNodeIds: string[];
+  sourceNodeIds?: string[];
   sourceNodePaths?: string[];
-  textTreatment: string;
+  textTreatment?: string;
 };
 
 type ModuleSemanticAnalysisSheet = {
@@ -1147,25 +1147,36 @@ const pickAgentAttrs = (
 // - skip nodes: kept with minimal fields (id/tag/bbox/inspectIndex/semantic) for
 //   z-order context unless they carry visual refs.
 // - export nodes: full compact treatment with visibleBox/visualEffects retained.
-const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
+const compactDocumentForAgent = <
+  T extends { nodes: ModuleSemanticNode[]; textBlocks?: ModuleSemanticTextBlock[] },
+>(
   document: T,
 ): T => {
   const isVisibleNode = (node: ModuleSemanticNode) =>
     node.visible === true ||
     (node.visible !== false && hasMeaningfulBox(node.bbox));
 
+  const textBlockIds = new Set(
+    Array.isArray(document.textBlocks)
+      ? document.textBlocks.flatMap((block) =>
+          typeof block.id === "string" && block.id.length > 0
+            ? [block.id]
+            : [],
+        )
+      : [],
+  );
+
   const compactSemantic = (node: ModuleSemanticNode) => ({
     exportDecision: node.semantic.exportDecision,
     kind: node.semantic.kind,
     textHandling: node.semantic.textHandling,
-    ...(typeof node.semantic.containsReadableText === "boolean"
-      ? { containsReadableText: node.semantic.containsReadableText }
+    ...(node.semantic.text && !textBlockIds.has(node.id)
+      ? { text: node.semantic.text }
       : {}),
-    ...(node.semantic.text ? { text: node.semantic.text } : {}),
     ...(node.semantic.textKind
       ? { textKind: node.semantic.textKind }
       : {}),
-    ...(node.semantic.contentType
+    ...(node.semantic.contentType && node.semantic.contentType !== "unknown"
       ? { contentType: node.semantic.contentType }
       : {}),
   });
@@ -1237,7 +1248,7 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
   delete result.graphicAssets;
   delete result.summaryVersion;
 
-  // Compact textBlocks: keep only {id, text, color?,
+  // Compact textBlocks: keep only {id, text,
   // layoutTargetRegion, styleInference}. Verified across 8 modules / 48 blocks:
   // region==textRegion, renderedTextRegion==layoutTargetRegion,
   // sourceBlockText==text, sourceBlockId==id (all 100% identical, 0 refs).
@@ -1256,7 +1267,36 @@ const compactDocumentForAgent = <T extends { nodes: ModuleSemanticNode[] }>(
         // only if layoutTargetRegion is missing.
         const layoutBox = block.layoutTargetRegion ?? block.region;
         if (layoutBox) compacted.layoutTargetRegion = layoutBox;
-        if (block.color) compacted.color = block.color;
+        return compacted;
+      },
+    );
+  }
+
+  if (Array.isArray(result.generatedAssets)) {
+    result.generatedAssets = (result.generatedAssets as ModuleSemanticGeneratedAsset[]).map(
+      (asset) => {
+        const assetPath = asset.path ?? asset.relativePath ?? asset.htmlRef;
+        const compacted: Record<string, unknown> = {
+          id: asset.id,
+        };
+        if (assetPath) compacted.path = assetPath;
+        if (asset.box) compacted.box = asset.box;
+        if (asset.sourceNodeIds?.length) {
+          compacted.sourceNodeIds = asset.sourceNodeIds;
+        }
+        if (asset.assetRole && asset.assetRole !== "visual-asset") {
+          compacted.assetRole = asset.assetRole;
+        }
+        if (
+          asset.textTreatment &&
+          asset.textTreatment !== "no-preprocessed-text"
+        ) {
+          compacted.textTreatment = asset.textTreatment;
+        }
+        if (asset.containsText === true) compacted.containsText = true;
+        if (asset.htmlRef && asset.htmlRef !== assetPath) {
+          compacted.htmlRef = asset.htmlRef;
+        }
         return compacted;
       },
     );
