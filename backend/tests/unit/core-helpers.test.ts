@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -21,6 +21,11 @@ import {
   normalizeOutputFormat,
   parseOutputFormat,
 } from "../../src/core/output-target.js";
+import {
+  buildFrameworkProject,
+  writeFrameworkEntryFiles,
+  type FrameworkFormat,
+} from "../../src/core/framework-build.js";
 import { truncate } from "../../src/core/string-utils.js";
 import {
   getCachedInputTokens,
@@ -80,6 +85,59 @@ test("output format helpers normalize supported formats", () => {
 test("output format parser rejects unsupported values", () => {
   assert.throws(() => parseOutputFormat("svelte"), /Invalid outputFormat/);
   assert.throws(() => assertOutputFormat(undefined), /Unsupported outputFormat/);
+});
+
+test("framework builds resolve runtime dependencies outside repo workspace", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "framework-build-"));
+
+  try {
+    for (const format of ["vue", "react"] satisfies FrameworkFormat[]) {
+      const entryDir = path.join(tempDir, format, "entry");
+      const srcDir = path.join(entryDir, "src");
+      const sourceEntryPath = path.join(
+        srcDir,
+        `Module.${format === "vue" ? "vue" : "tsx"}`,
+      );
+      const sourceStylePath = path.join(srcDir, "Module.css");
+
+      await mkdir(srcDir, { recursive: true });
+      if (format === "vue") {
+        await writeFile(
+          sourceEntryPath,
+          '<template><main class="box">Vue OK</main></template><style>.box{color:#123}</style>',
+          "utf8",
+        );
+      } else {
+        await Promise.all([
+          writeFile(
+            sourceEntryPath,
+            'export default function ModulePage() { return <main className="box">React OK</main>; }',
+            "utf8",
+          ),
+          writeFile(sourceStylePath, ".box{color:#123}", "utf8"),
+        ]);
+      }
+
+      await writeFrameworkEntryFiles({
+        designName: `${format}-module`,
+        entryDir,
+        format,
+        height: 100,
+        sourceEntryPath,
+        sourceStylePath: format === "react" ? sourceStylePath : undefined,
+        srcDir,
+        width: 100,
+      });
+
+      await buildFrameworkProject({
+        distDir: path.join(entryDir, "dist"),
+        entryDir,
+        format,
+      });
+    }
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+  }
 });
 
 test("geometry helpers compute overlap and containment", () => {

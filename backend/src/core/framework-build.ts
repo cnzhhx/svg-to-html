@@ -1,4 +1,5 @@
-import { readFile, mkdir } from "node:fs/promises";
+import { mkdir, readFile, realpath } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 
 import react from "@vitejs/plugin-react";
@@ -36,6 +37,29 @@ type InlineFrameworkDistHtmlInput = {
 
 const getFrameworkMountId = (format: FrameworkFormat): FrameworkMountId =>
   format === "vue" ? "app" : "root";
+
+const requireFromRuntime = createRequire(import.meta.url);
+
+const resolveRuntimeDependency = (id: string) =>
+  requireFromRuntime.resolve(id).replaceAll(path.sep, "/");
+
+const frameworkDependencyAliases = [
+  {
+    find: "react-dom/client",
+    replacement: resolveRuntimeDependency("react-dom/client"),
+  },
+  { find: "react-dom", replacement: resolveRuntimeDependency("react-dom") },
+  {
+    find: "react/jsx-dev-runtime",
+    replacement: resolveRuntimeDependency("react/jsx-dev-runtime"),
+  },
+  {
+    find: "react/jsx-runtime",
+    replacement: resolveRuntimeDependency("react/jsx-runtime"),
+  },
+  { find: "react", replacement: resolveRuntimeDependency("react") },
+  { find: "vue", replacement: resolveRuntimeDependency("vue") },
+];
 
 const normalizeImportPath = (fromDir: string, targetPath: string) => {
   let relative = path.relative(fromDir, targetPath).replaceAll(path.sep, "/");
@@ -249,21 +273,25 @@ const buildFrameworkProject = async ({
   entryDir,
   format,
 }: BuildFrameworkProjectInput) => {
+  const rootDir = await realpath(entryDir);
+  const outDir = path.resolve(rootDir, path.relative(entryDir, distDir));
+
   await build({
     base: "./",
     build: {
       assetsInlineLimit: 0,
       assetsDir: "assets",
       emptyOutDir: true,
-      outDir: distDir,
+      outDir,
     },
     configFile: false,
     logLevel: "warn",
     plugins: format === "vue" ? [vue()] : [react()],
     resolve: {
-      alias: [],
+      alias: frameworkDependencyAliases,
+      dedupe: format === "vue" ? ["vue"] : ["react", "react-dom"],
     },
-    root: entryDir,
+    root: rootDir,
   });
 };
 

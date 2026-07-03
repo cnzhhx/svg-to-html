@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { evaluatePage, launchEdge } from "../../../core/cdp.js";
+import { toUrlPath } from "../../../core/paths.js";
 import { startStaticServer } from "../../../core/static-server.js";
 
 /**
@@ -26,7 +27,38 @@ type RenderHealthCheckResult = {
 };
 
 const MOUNT_INSPECT_SCRIPT = `\
-(() => {
+(async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5000) {
+    const iframe = document.getElementById('source');
+    const doc = iframe && iframe.contentDocument;
+    if (!doc) {
+      await sleep(100);
+      continue;
+    }
+    const app = doc.getElementById('app');
+    const root = doc.getElementById('root');
+    const mount = app || root;
+    if (!mount) {
+      await sleep(100);
+      continue;
+    }
+    const childCount = mount.childElementCount;
+    if (childCount > 0) return { ok: true, childCount };
+    const errors = Array.isArray(window.__RENDER_RUNTIME_ERRORS__)
+      ? window.__RENDER_RUNTIME_ERRORS__
+      : [];
+    if (errors.length) {
+      return {
+        ok: false,
+        reason: 'mount empty; runtime errors: ' + errors.slice(0, 3).join(' | '),
+        childCount: 0,
+      };
+    }
+    await sleep(100);
+  }
+
   const iframe = document.getElementById('source');
   const doc = iframe && iframe.contentDocument;
   if (!doc) return { ok: false, reason: 'render iframe document unavailable' };
@@ -36,8 +68,6 @@ const MOUNT_INSPECT_SCRIPT = `\
   if (!mount) {
     return { ok: false, reason: 'mount element (#app/#root) missing from rendered document' };
   }
-  const childCount = mount.childElementCount;
-  if (childCount > 0) return { ok: true, childCount };
   // Mount exists but is empty: the framework bundle either failed to mount
   // or threw before rendering. Capture any onerror the wrapper recorded.
   const errors = Array.isArray(window.__RENDER_RUNTIME_ERRORS__)
@@ -46,7 +76,7 @@ const MOUNT_INSPECT_SCRIPT = `\
   const reason = errors.length
     ? 'mount empty; runtime errors: ' + errors.slice(0, 3).join(' | ')
     : 'mount element empty after framework render (bundle likely threw)';
-  return { ok: false, reason, childCount: 0 };
+  return { ok: false, reason, childCount: mount.childElementCount };
 })()
 `;
 
@@ -66,11 +96,11 @@ export const checkFrameworkRenderHealth = async ({
   const server = await startStaticServer();
   const browser = await launchEdge();
   try {
-    const relativeArtifact = path.relative(process.cwd(), wrapperPath);
-    const url = `${server.origin}/${relativeArtifact.split(path.sep).join("/")}`;
+    const url = `${server.origin}${toUrlPath(wrapperPath)}`;
     const result = await evaluatePage({
       expression: MOUNT_INSPECT_SCRIPT,
       port: browser.port,
+      readyExpression: 'document.readyState === "complete"',
       url,
       viewportHeight,
       viewportWidth,
