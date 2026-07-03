@@ -66,8 +66,10 @@ export function ResultPanel({
   const compareEntryPath = getSessionCompareEntryPath(session)
   const tokenBadges = tokenBadgesForResult(result)
 
+  if (!show) return null
+
   return (
-    <section className={`result-panel${show ? ' visible' : ''}`} id="resultPanel">
+    <section className="result-panel visible" id="resultPanel">
       <div className="result-panel-header">
         <div className="result-panel-heading">
           {result?.diffRatio !== undefined ? (

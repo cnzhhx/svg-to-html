@@ -63,6 +63,77 @@ const defaultSteps = {
   verify: { status: 'pending' as const },
 }
 
+const isLiveSessionStatus = (status: unknown) => status === 'running' || status === 'queued'
+
+const sessionLivePreviewVersion = (session: Session | null | undefined) => {
+  const value = Number(session?.result?.livePreviewVersion ?? session?.result?.livePreviewUpdatedAt ?? 0)
+  return Number.isFinite(value) ? value : 0
+}
+
+const shouldDeferSummaryPreview = (session: Session | null | undefined) =>
+  Boolean(session?.__summary && isLiveSessionStatus(session.status) && session.result?.livePreviewEntryPath)
+
+const withoutLivePreview = (session: Session): Session => {
+  const {
+    livePreviewEntryPath: _livePreviewEntryPath,
+    livePreviewUpdatedAt: _livePreviewUpdatedAt,
+    livePreviewVersion: _livePreviewVersion,
+    ...result
+  } = session.result || {}
+  return { ...session, result }
+}
+
+const withoutLivePreviewFromSummary = (session: Session): Session =>
+  shouldDeferSummaryPreview(session) ? withoutLivePreview(session) : session
+
+const immediateSessionForSelection = (session: Session): Session =>
+  isLiveSessionStatus(session.status) && session.result?.livePreviewEntryPath
+    ? withoutLivePreview(session)
+    : withoutLivePreviewFromSummary(session)
+
+const mergeSessionIfNewerPreview = (current: Session | null, incoming: Session) => {
+  if (current?.id !== incoming.id || !isLiveSessionStatus(current.status) || !isLiveSessionStatus(incoming.status)) {
+    return incoming
+  }
+  const currentPreviewVersion = sessionLivePreviewVersion(current)
+  const incomingPreviewVersion = sessionLivePreviewVersion(incoming)
+  if (currentPreviewVersion > incomingPreviewVersion) {
+    return {
+      ...incoming,
+      result: {
+        ...(incoming.result || {}),
+        livePreviewEntryPath: current.result?.livePreviewEntryPath,
+        livePreviewUpdatedAt: current.result?.livePreviewUpdatedAt,
+        livePreviewVersion: current.result?.livePreviewVersion,
+      },
+    }
+  }
+  return incoming
+}
+
+const sanitizeSessionUpdateForPreview = (current: Session | null, data: Partial<Session>) => {
+  const result = data.result
+  const hasPreviewPatch = Boolean(
+    result &&
+      ('livePreviewEntryPath' in result ||
+        'livePreviewUpdatedAt' in result ||
+        'livePreviewVersion' in result),
+  )
+  if (!current || !hasPreviewPatch || !isLiveSessionStatus(current.status)) return data
+  const currentPreviewVersion = sessionLivePreviewVersion(current)
+  const incomingPreviewVersion = Number(result?.livePreviewVersion ?? result?.livePreviewUpdatedAt ?? 0)
+  if (!Number.isFinite(incomingPreviewVersion) || incomingPreviewVersion >= currentPreviewVersion) return data
+  return {
+    ...data,
+    result: {
+      ...(result || {}),
+      livePreviewEntryPath: current.result?.livePreviewEntryPath,
+      livePreviewUpdatedAt: current.result?.livePreviewUpdatedAt,
+      livePreviewVersion: current.result?.livePreviewVersion,
+    },
+  }
+}
+
 const autoCacheKeyForSession = (session: Session) =>
   [
     session.id,
@@ -83,9 +154,13 @@ export default function App() {
   const currentSessionIdRef = useRef(state.currentSessionId)
   const autoCacheKeysRef = useRef<Map<string, string>>(new Map())
   const ownedSessionIdsRef = useRef<Set<string>>(new Set())
+  const sessionDetailsRef = useRef<Map<string, Session>>(new Map())
 
   useEffect(() => {
     currentSessionRef.current = state.currentSession
+    if (state.currentSession?.id && !state.currentSession.__summary) {
+      sessionDetailsRef.current.set(state.currentSession.id, state.currentSession)
+    }
   }, [state.currentSession])
 
   useEffect(() => {
@@ -227,14 +302,19 @@ export default function App() {
     const currentSession = currentSessionRef.current
     switch (event.type) {
       case 'init': {
-        const session = restoreGeneratedSessionOwner(event.session)
+        const session = mergeSessionIfNewerPreview(currentSessionRef.current, restoreGeneratedSessionOwner(event.session))
         currentSessionIdRef.current = session.id
         currentSessionRef.current = session
         dispatch({ type: 'session/init', session })
         break
       }
       case 'session:updated':
-        dispatch({ type: 'session/updated', data: event.data, sessionId: event.sessionId, timestamp: event.timestamp })
+        dispatch({
+          type: 'session/updated',
+          data: sanitizeSessionUpdateForPreview(currentSessionRef.current, event.data),
+          sessionId: event.sessionId,
+          timestamp: event.timestamp,
+        })
         break
       case 'session:deleted':
         dispatch({ type: 'session/deleted', sessionId: event.sessionId })
@@ -317,29 +397,65 @@ export default function App() {
     writeStringStorage(STORAGE_KEYS.resultPreviewWidth, String(state.resultPreviewWidth))
   }, [state.resultPreviewWidth])
 
-  const selectSession = async (id: string) => {
+  const selectSession = (id: string) => {
+    if (!id || id === currentSessionIdRef.current) return
     const previousSessionId = currentSessionIdRef.current
+    const previousSession = currentSessionRef.current
     currentSessionIdRef.current = id
-    try {
-      const snapshot = getLocalSessionSnapshot(id)
-      const localOnly = state.sessions.find((session) => session.id === id)?.__localOnly
-      const session = localOnly && snapshot ? reviveLocalSessionSnapshot(snapshot, 'server-reset')! : restoreGeneratedSessionOwner(await loadSession(id))
-      currentSessionRef.current = session
-      dispatch({ type: 'session/selected', session, sessionId: id })
-      updateUrlSession(id)
-    } catch (error) {
-      const snapshot = getLocalSessionSnapshot(id)
-      const restored = snapshot ? reviveLocalSessionSnapshot(snapshot, 'server-reset') : null
-      if (restored) {
-        currentSessionRef.current = restored
-        currentSessionIdRef.current = restored.id
-        dispatch({ type: 'session/selected', session: restored, sessionId: restored.id })
-        updateUrlSession(restored.id)
-      } else {
-        currentSessionIdRef.current = previousSessionId
-        setError(error instanceof Error ? error.message : String(error))
-      }
+    const snapshot = getLocalSessionSnapshot(id)
+    const localOnly = state.sessions.find((session) => session.id === id)?.__localOnly
+    if (localOnly && snapshot) {
+      const restored = reviveLocalSessionSnapshot(snapshot, 'server-reset')!
+      sessionDetailsRef.current.set(restored.id, restored)
+      currentSessionRef.current = restored
+      currentSessionIdRef.current = restored.id
+      dispatch({ type: 'session/selected', session: restored, sessionId: restored.id })
+      updateUrlSession(restored.id)
+      return
     }
+
+    const cached = sessionDetailsRef.current.get(id)
+    if (cached) {
+      const immediateSession = immediateSessionForSelection(cached)
+      currentSessionRef.current = immediateSession
+      dispatch({ type: 'session/selected', session: immediateSession, sessionId: id })
+      updateUrlSession(id)
+    } else {
+      const summary = state.sessions.find((session) => session.id === id) || null
+      const immediateSession = summary ? immediateSessionForSelection(summary) : null
+      currentSessionRef.current = immediateSession
+      dispatch({ type: 'session/selected', session: immediateSession, sessionId: id })
+      updateUrlSession(id)
+    }
+
+    void loadSession(id)
+      .then((loaded) => {
+        if (currentSessionIdRef.current !== id) return
+        const session = mergeSessionIfNewerPreview(currentSessionRef.current, restoreGeneratedSessionOwner(loaded))
+        sessionDetailsRef.current.set(session.id, session)
+        currentSessionRef.current = session
+        dispatch({ type: 'session/selected', session, sessionId: session.id })
+        updateUrlSession(session.id)
+      })
+      .catch((error) => {
+        if (currentSessionIdRef.current !== id) return
+        const restored = snapshot ? reviveLocalSessionSnapshot(snapshot, 'server-reset') : null
+        if (restored) {
+          sessionDetailsRef.current.set(restored.id, restored)
+          currentSessionRef.current = restored
+          currentSessionIdRef.current = restored.id
+          dispatch({ type: 'session/selected', session: restored, sessionId: restored.id })
+          updateUrlSession(restored.id)
+          return
+        }
+        if (!cached) {
+          currentSessionIdRef.current = previousSessionId
+          currentSessionRef.current = previousSession
+          dispatch({ type: 'session/selected', session: previousSession, sessionId: previousSessionId })
+          updateUrlSession(previousSessionId)
+        }
+        setError(error instanceof Error ? error.message : String(error))
+      })
   }
 
   const startCurrentSession = async () => {
@@ -358,10 +474,12 @@ export default function App() {
   const deleteCurrentSession = async () => {
     if (!state.currentSession?.id) return
     if (!window.confirm(`确定删除 session ${state.currentSession.id} 吗？`)) return
+    const deletedSessionId = state.currentSession.id
     try {
       if (!state.currentSession.__localOnly) await deleteSession(state.currentSession.id)
       removeLocalSessionId(state.currentSession.id)
-      dispatch({ type: 'session/deleted', sessionId: state.currentSession.id })
+      sessionDetailsRef.current.delete(deletedSessionId)
+      dispatch({ type: 'session/deleted', sessionId: deletedSessionId })
       updateUrlSession(null)
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))

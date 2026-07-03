@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '../../types/session'
-import { workspaceFileUrl } from '../../utils/artifacts'
+import { resultImageVersion, workspaceFileUrl } from '../../utils/artifacts'
 import { computeModuleOverlayBoxes, collectSelectableModules } from '../../utils/modules'
 import { selectResultImageCards } from '../../state/selectors'
 import type { ResultViewMode } from '../../state/app-state'
@@ -33,13 +33,19 @@ export function ResultImageComparison({
 }) {
   const syncScroll = useSyncedScroll()
   const sourceCards = useMemo(() => selectResultImageCards(session), [session])
+  const imageVersion = useMemo(() => resultImageVersion(session), [session])
   const [cachedUrls, setCachedUrls] = useState<Record<string, string>>({})
   useEffect(() => {
     let cancelled = false
     const objectUrls: string[] = []
-    const shouldUseCache = Boolean(session?.id && cacheMeta?.status === 'cached' && (session.__localOnly || sourceCards.some((card) => card.path && cacheMeta.paths?.includes(card.path))))
+    const shouldUseCache = Boolean(
+      session?.id &&
+        session.__localOnly &&
+        cacheMeta?.status === 'cached' &&
+        sourceCards.some((card) => card.path && cacheMeta.paths?.includes(card.path)),
+    )
     if (!shouldUseCache) {
-      setCachedUrls({})
+      setCachedUrls((previous) => (Object.keys(previous).length ? {} : previous))
       return () => {}
     }
     void getCachedArtifactFiles(session!.id)
@@ -53,7 +59,7 @@ export function ResultImageComparison({
         if (!cancelled) setCachedUrls(entries)
       })
       .catch(() => {
-        if (!cancelled) setCachedUrls({})
+        if (!cancelled) setCachedUrls((previous) => (Object.keys(previous).length ? {} : previous))
       })
     return () => {
       cancelled = true
@@ -62,17 +68,29 @@ export function ResultImageComparison({
   }, [cacheMeta?.status, cacheMeta?.paths, session, sourceCards])
   const cards = sourceCards.map((card) => ({
     ...card,
-    url: cachedUrls[card.path] || workspaceFileUrl(card.path, session),
+    url: cachedUrls[card.path] || workspaceFileUrl(card.path, session, imageVersion),
   }))
   const svgCard = cards.find((card) => card.kind === 'svg')
   const renderCard = cards.find((card) => card.kind === 'render')
   const effectiveMode = viewMode === 'slider' && svgCard && renderCard ? 'slider' : 'split'
-  const modules = collectSelectableModules(session)
-  const boxes = computeModuleOverlayBoxes({
-    designHeight: Number(session?.result?.designHeight || 0),
-    designWidth: Number(session?.result?.designWidth || 0),
-    modules,
-  })
+  const boxes = useMemo(() => {
+    if (!chatOpen) return []
+    return computeModuleOverlayBoxes({
+      designHeight: Number(session?.result?.designHeight || 0),
+      designWidth: Number(session?.result?.designWidth || 0),
+      modules: collectSelectableModules(session),
+    })
+  }, [
+    chatOpen,
+    session?.result?.designHeight,
+    session?.result?.designWidth,
+    session?.result?.moduleAgentRuns,
+    session?.result?.moduleCount,
+    session?.result?.moduleFailedIds,
+    session?.result?.modulePlanModules,
+    session?.result?.moduleAgentThreadIds,
+    session?.messages,
+  ])
 
   if (!cards.length) return <div className="result-grid" />
 

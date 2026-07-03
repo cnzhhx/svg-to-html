@@ -1174,7 +1174,7 @@ body {
 
 .live-preview-frame-shell.fit-height .live-preview-frame-stack {
   height: 100%;
-  width: var(--live-preview-frame-width, 100%);
+  width: var(--live-preview-frame-width, auto);
   max-width: 100%;
   aspect-ratio: var(--live-preview-host-ratio);
   flex: 0 1 auto;

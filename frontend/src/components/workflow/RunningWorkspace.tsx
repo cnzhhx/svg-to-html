@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AgentEvent } from '../../types/events'
 import type { Session, SessionMessage } from '../../types/session'
 import { livePreviewUrl } from '../../utils/artifacts'
@@ -9,7 +9,9 @@ type PreviewSlot = 'primary' | 'secondary'
 type PreviewFitMode = 'width' | 'height'
 
 const previewSlots: PreviewSlot[] = ['primary', 'secondary']
-const previewSwapDelayMs = 180
+const previewSwapDelayMs = 0
+const previewInitialCommitDelayMs = 160
+const previewUpdateCommitDelayMs = 80
 
 const isPreviewFitMode = (value: unknown): value is PreviewFitMode =>
   value === 'width' || value === 'height'
@@ -45,8 +47,10 @@ export function RunningWorkspace({
   const sessionId = session?.id || ''
   const [previewFitModesBySession, setPreviewFitModesBySession] = useState<Record<string, PreviewFitMode>>(readStoredPreviewFitModes)
   const storedPreviewFitMode = sessionId ? (previewFitModesBySession[sessionId] || 'width') : 'width'
-  const [heightFitFrameWidth, setHeightFitFrameWidth] = useState<number | null>(null)
-  const previewUrl = livePreviewUrl(session)
+  const [heightFitFrameWidth, setHeightFitFrameWidth] = useState<{ sessionId: string; width: number } | null>(null)
+  const rawPreviewUrl = livePreviewUrl(session)
+  const [previewCommit, setPreviewCommit] = useState<{ sessionId: string; url: string }>(() => ({ sessionId: '', url: '' }))
+  const previewCommitRef = useRef(previewCommit)
   const frameRefs = useRef<Record<PreviewSlot, HTMLIFrameElement | null>>({
     primary: null,
     secondary: null,
@@ -56,11 +60,13 @@ export function RunningWorkspace({
     activeSlot: PreviewSlot
     pendingSlot: PreviewSlot | null
     readySlot: PreviewSlot | null
+    sessionId: string
     urls: Record<PreviewSlot, string>
   }>(() => ({
     activeSlot: 'primary',
     pendingSlot: null,
     readySlot: null,
+    sessionId: '',
     urls: { primary: '', secondary: '' },
   }))
   const previewAspectRatio = useMemo(() => {
@@ -70,6 +76,47 @@ export function RunningWorkspace({
     return width / height
   }, [session?.result?.designHeight, session?.result?.designWidth])
   const previewFitMode = storedPreviewFitMode === 'height' && !previewAspectRatio ? 'width' : storedPreviewFitMode
+  const activeHeightFitFrameWidth = heightFitFrameWidth?.sessionId === sessionId ? heightFitFrameWidth.width : null
+  const previewUrl = previewCommit.sessionId === sessionId ? previewCommit.url : ''
+  const renderedPreviewFrames = previewFrames.sessionId === sessionId
+    ? previewFrames
+    : {
+        activeSlot: 'primary' as PreviewSlot,
+        pendingSlot: null,
+        readySlot: null,
+        sessionId,
+        urls: { primary: previewUrl, secondary: '' },
+      }
+
+  const commitPreviewUrl = useCallback((next: { sessionId: string; url: string }) => {
+    previewCommitRef.current = next
+    setPreviewCommit((previous) => (
+      previous.sessionId === next.sessionId && previous.url === next.url ? previous : next
+    ))
+  }, [])
+
+  useEffect(() => {
+    previewCommitRef.current = previewCommit
+  }, [previewCommit])
+
+  useEffect(() => {
+    const current = previewCommitRef.current
+    if (!rawPreviewUrl) {
+      commitPreviewUrl({ sessionId, url: '' })
+      return undefined
+    }
+    if (current.sessionId === sessionId && current.url === rawPreviewUrl) return undefined
+    if (current.sessionId !== sessionId) {
+      commitPreviewUrl({ sessionId, url: '' })
+    }
+    const delay = current.sessionId === sessionId && current.url
+      ? previewUpdateCommitDelayMs
+      : previewInitialCommitDelayMs
+    const timer = window.setTimeout(() => {
+      commitPreviewUrl({ sessionId, url: rawPreviewUrl })
+    }, delay)
+    return () => window.clearTimeout(timer)
+  }, [commitPreviewUrl, rawPreviewUrl, sessionId])
 
   const updatePreviewFitMode = useCallback((mode: PreviewFitMode) => {
     if (!sessionId) return
@@ -81,31 +128,49 @@ export function RunningWorkspace({
     })
   }, [sessionId])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const shell = frameShellRef.current
     if (!shell || previewFitMode !== 'height' || !previewAspectRatio) {
-      setHeightFitFrameWidth(null)
+      setHeightFitFrameWidth((previous) => (previous?.sessionId === sessionId ? null : previous))
       return undefined
     }
     const updateFrameWidth = () => {
       const rect = shell.getBoundingClientRect()
       const nextWidth = Math.min(rect.width, rect.height * previewAspectRatio)
-      setHeightFitFrameWidth(Number.isFinite(nextWidth) && nextWidth > 0 ? nextWidth : null)
+      setHeightFitFrameWidth((previous) => {
+        if (!Number.isFinite(nextWidth) || nextWidth <= 0) {
+          return previous?.sessionId === sessionId ? null : previous
+        }
+        if (previous?.sessionId === sessionId && Math.abs(previous.width - nextWidth) < 0.5) {
+          return previous
+        }
+        return { sessionId, width: nextWidth }
+      })
     }
     updateFrameWidth()
     const observer = new ResizeObserver(updateFrameWidth)
     observer.observe(shell)
     return () => observer.disconnect()
-  }, [previewAspectRatio, previewFitMode])
+  }, [previewAspectRatio, previewFitMode, sessionId])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setPreviewFrames((previous) => {
+      if (previous.sessionId !== sessionId) {
+        return {
+          activeSlot: 'primary',
+          pendingSlot: null,
+          readySlot: null,
+          sessionId,
+          urls: { primary: previewUrl, secondary: '' },
+        }
+      }
       if (!previewUrl) {
         if (!previous.urls.primary && !previous.urls.secondary) return previous
         return {
           activeSlot: 'primary',
           pendingSlot: null,
           readySlot: null,
+          sessionId,
           urls: { primary: '', secondary: '' },
         }
       }
@@ -117,6 +182,7 @@ export function RunningWorkspace({
           ...previous,
           pendingSlot: null,
           readySlot: null,
+          sessionId,
           urls: {
             ...previous.urls,
             [previous.activeSlot]: previewUrl,
@@ -128,13 +194,14 @@ export function RunningWorkspace({
         ...previous,
         pendingSlot,
         readySlot: null,
+        sessionId,
         urls: {
           ...previous.urls,
           [pendingSlot]: previewUrl,
         },
       }
     })
-  }, [previewUrl])
+  }, [previewUrl, sessionId])
 
   useEffect(() => {
     const pendingSlot = previewFrames.pendingSlot
@@ -148,6 +215,7 @@ export function RunningWorkspace({
           activeSlot: nextActiveSlot,
           pendingSlot: null,
           readySlot: null,
+          sessionId: previous.sessionId,
           urls: {
             ...previous.urls,
             [previousActiveSlot]: '',
@@ -324,17 +392,17 @@ export function RunningWorkspace({
           className={`live-preview-frame-shell fit-${previewFitMode}`}
           style={{
             ...(previewAspectRatio ? { ['--live-preview-host-ratio' as string]: String(previewAspectRatio) } : {}),
-            ...(heightFitFrameWidth ? { ['--live-preview-frame-width' as string]: `${heightFitFrameWidth}px` } : {}),
+            ...(activeHeightFitFrameWidth ? { ['--live-preview-frame-width' as string]: `${activeHeightFitFrameWidth}px` } : {}),
           }}
         >
           {previewUrl ? (
             <div className="live-preview-frame-stack">
               {previewSlots.map((slot) => {
-                const url = previewFrames.urls[slot]
+                const url = renderedPreviewFrames.urls[slot]
                 if (!url) return null
-                const isActive = slot === previewFrames.activeSlot
-                const isPending = slot === previewFrames.pendingSlot
-                const isReady = slot === previewFrames.readySlot
+                const isActive = slot === renderedPreviewFrames.activeSlot
+                const isPending = slot === renderedPreviewFrames.pendingSlot
+                const isReady = slot === renderedPreviewFrames.readySlot
                 return (
                   <iframe
                     className={[
@@ -343,7 +411,7 @@ export function RunningWorkspace({
                       isPending ? 'is-pending' : '',
                       isReady ? 'is-ready' : '',
                     ].filter(Boolean).join(' ')}
-                    key={slot}
+                    key={`${renderedPreviewFrames.sessionId}:${slot}`}
                     onLoad={() => handleFrameLoad(slot, url)}
                     ref={(element) => {
                       frameRefs.current[slot] = element

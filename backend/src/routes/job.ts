@@ -133,10 +133,17 @@ const safeResultForApi = (
     ...(summary ? {} : deriveTokenSplitFromEvents(session)),
   };
   const summaryKeys: Array<keyof SessionResult> = [
+    "compareEntryPath",
+    "designWidth",
+    "designHeight",
     "diffRatio",
     "livePreviewEntryPath",
     "livePreviewUpdatedAt",
     "livePreviewVersion",
+    "renderEntryPath",
+    "renderPngPath",
+    "sourceEntryPath",
+    "svgPngPath",
     "moduleCount",
     "verifyMode",
   ];

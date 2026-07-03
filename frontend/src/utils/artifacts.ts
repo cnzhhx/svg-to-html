@@ -27,10 +27,23 @@ export function workspaceFileVersion(session?: Session | null) {
   return String(session?.updatedAt || Date.now())
 }
 
-export function workspaceFileUrl(absPath: unknown, session?: Session | null) {
+export function workspaceFileUrl(absPath: unknown, session?: Session | null, versionOverride?: string | number | null) {
   const relative = workspaceRelativePath(absPath)
-  const version = workspaceFileVersion(session)
+  const version = String(versionOverride ?? workspaceFileVersion(session))
   return `${basePath}/files/${relative.split('/').map(encodeURIComponent).join('/')}?v=${encodeURIComponent(version)}`
+}
+
+export function resultImageVersion(session?: Session | null) {
+  const result = session?.result
+  const version = [
+    session?.id || '',
+    workspaceRelativePath(result?.renderPngPath || ''),
+    workspaceRelativePath(result?.svgPngPath || ''),
+    result?.diffRatio ?? '',
+    result?.verifyMode || '',
+    workspaceRelativePath(result?.outputTarget?.renderEntryPath || result?.renderEntryPath || ''),
+  ].filter(Boolean).join('|')
+  return version || 'stable'
 }
 
 export function getOutputTarget(session?: Session | null): SessionOutputTarget | null {
@@ -80,7 +93,7 @@ export function livePreviewUrl(session?: Session | null, selectedModuleId?: stri
   const path = getSessionLivePreviewEntryPath(session)
   if (!path) return ''
   const relative = workspaceRelativePath(path)
-  const version = String(session?.result?.livePreviewVersion || session?.result?.livePreviewUpdatedAt || workspaceFileVersion(session))
+  const version = String(session?.result?.livePreviewVersion ?? session?.result?.livePreviewUpdatedAt ?? 'stable')
   const params = new URLSearchParams({ v: version })
   if (selectedModuleId) params.set('module', selectedModuleId)
   return `${basePath}/files/${relative.split('/').map(encodeURIComponent).join('/')}?${params.toString()}`
