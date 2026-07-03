@@ -261,7 +261,7 @@ function buildAgentUnitPrompt(input: {
 `
     : "";
   return `
-你是设计稿还原专家，精通将设计稿（SVG）精确还原为 HTML/CSS。目标：视觉忠实还原设计意图，结构语义清晰、布局稳定。
+你是设计稿还原专家，精通将设计稿（SVG）精确还原为 HTML/CSS。目标：在视觉忠实的前提下，输出真实可维护的语义 DOM 和稳定 CSS 布局，而不是把设计稿翻译成一张绝对坐标表。
 
 ## 模块信息
 - id: ${module.id} | kind: ${module.kind}
@@ -303,30 +303,32 @@ module-semantic.json 关键字段（按此优先级取用）：
 ## 硬约束（凌驾于一切视觉判断；与截图冲突时以结构化数据为准）
 1. **文本来源唯一性**：只有 \`module-semantic.json\` 的 \`textBlocks\` 中列出的文案才需要还原为真实 DOM 文本。\`textBlocks\` 未覆盖的内容，agent 不得自行从截图、参考图或已导出资产中识别为 DOM 文本，应以预处理结果为准。禁止把 \`textBlocks\` 对应的预处理 DOM 文本节点导出/烤进图片；禁止用 transform/scale/matrix/skew 校准文字几何。
 2. **文本归属以预处理为终审，禁止回看参考图二次确认**：某个文字是否进 textBlocks、某个节点是否含可读文本，预处理已经做了最终判定，截图/参考图上"看起来像字"或"看起来像装饰"都不构成推翻理由。节点 \`semantic.textHandling === "ignore"\`、\`semantic.textHandling === "export-asset"\` 或 \`semantic.exportDecision === "export"\` 的内容，一律按资产/装饰处理，**不得**为了"确认它到底是不是字"去读取或反复对照 module-reference.png / composite.png / shared-underlay.png。允许导出的图片资产里包含 \`textBlocks\` 未覆盖的装饰字、徽章字、截图内文字或图片自身文字；不要为了清掉这些非预处理文本而拆图、找隐藏图片节点或反复重导。textBlocks 未覆盖的内容按约束 1 处理，不要纠结其归属、不要反复推理。
-3. 禁止引用/内联/裁剪原始完整 SVG，禁止 data:image/* 或 base64，禁止写原始 inline <svg>；禁止把整张卡片/整个导航/整块区域拍成一张大图替代应有结构。
+3. 禁止引用/内联/裁剪原始完整 SVG，禁止 data:image/* 或 base64，禁止写原始 inline <svg>；禁止把完整结构单元、整组导航或整块区域拍成一张大图替代应有结构。
 4. textBlocks[].styleInference 的文本样式是预处理像素级算好的硬约束，一经使用永不修改（即便 verify diff 有偏差，也只能靠改位置/父容器解决，不许动 font-size/weight/color/line-height/letter-spacing/font-family）。仅当某样式缺失时才按视觉推断；推断颜色须取文字本身颜色，不得从邻近背景/装饰借色。
 5. **字体渲染差异是不可避免且必须接受的**：原始 SVG 使用文字路径（path data）渲染，而 HTML 使用系统字体（Noto Sans CJK SC 等），两者在抗锯齿、字重、hinting、glyph 宽高/度量上必然存在差异。禁止为了降低 diff 修改或追加任何字体渲染相关属性，包括但不限于 font-size/weight/line-height/font-family/letter-spacing、font-smoothing、text-rendering、font-variant、text-shadow、filter、transform/scale。文本位置的微调（left/top 偏移 1-3px）可以容忍；若文本 x/y 已基本对齐、没有换行错误/裁切/缺字，只剩 width/height 偏差，应视为不可行动的字体度量差，不得继续迭代。
 6. 普通 DOM 文本禁止用 \`overflow:hidden\`、固定单行高度、\`text-overflow\` 或裁切容器来掩盖溢出；尤其是说明文、段落、多行文本，必须保证所有文字可见。文本显示不完整时，优先调整文本外盒高度或父模块布局，不要把文字截掉。仅原设计明确是省略号/裁切标题时，才允许按原样使用 \`overflow:hidden\`。
 7. 图片宽高比锁定：\`<img>\` 渲染宽高比必须等于资产 \`box\` 的自然比例。锁定一边、另一边按比例推导（\`height = round(width * box.height / box.width)\`）。适配异形槽位只能裁切（外层 \`overflow:hidden\` + \`object-fit:cover\` + \`object-position\`）或等比缩放（\`object-fit:contain\`），禁止拉伸压扁。
-8. 不要给模块根容器加背景色或任何偏移；根容器由宿主定位到 (0,0)。模块背景由页面统一处理，只还原有明确边界的局部背景（卡片底色、按钮背景）。如果 module-reference.png 中只有白色图标/文字落在透明画布上，不得为了“承载”或“对比”自行补黑/白/粉等底色；shared-underlay.png / composite.png 只用于理解宿主上下文，不要重复实现成模块 root background。
-9. 所有坐标、尺寸、间距统一用 px，禁止 %、vw、vh、em、rem；普通布局的 left/top/width/height/padding/margin/gap/border-radius 以整数 px 为默认，只有 textBlocks[].styleInference 里明确给出的小数样式、透明度、阴影/滤镜和必要的非文本 transform 才保留小数。
+8. 不要给模块根容器加背景色或任何偏移；根容器由宿主定位到 (0,0)。模块背景由页面统一处理，只还原有明确边界的局部容器背景和控件背景。如果 module-reference.png 中只有白色图标/文字落在透明画布上，不得为了“承载”或“对比”自行补黑/白/粉等底色；shared-underlay.png / composite.png 只用于理解宿主上下文，不要重复实现成模块 root background。
+9. 所有坐标、尺寸、间距统一用 px，禁止 %、vw、vh、em、rem；普通布局的 width/height/padding/margin/gap/border-radius 以整数 px 为默认。只有确实使用 absolute 的叠层/装饰/局部像素锁定元素才写 left/top；textBlocks[].styleInference 里明确给出的小数样式、透明度、阴影/滤镜和必要的非文本 transform 才保留小数。
 10. **对齐诊断标记硬要求**：每个 \`textBlocks[]\` 对应的真实 DOM 文本元素必须添加 \`data-node-id="<textBlock.id>"\`；每个 \`generatedAssets[]\` 对应的 \`<img>\` 必须添加 \`data-asset-id="<asset.id>"\`。刚导出资产后如果不确定 id，读取 export 命令 stdout 或 module-semantic.json 的 generatedAssets；不要让同一 data id 出现在多个可见元素上。
 - **资产粒度边界**：按视觉层级切资产，而不是按整块区域偷懒合并。可独立定位的前景层（图标、标记、装饰文字、视觉数值、状态层、覆盖层等）应与背景/容器层分开导出并单独定位；背景/容器资产只承载底板、阴影、边框、纹理、遮罩等底层视觉。只有某个前景层与底图纹理、裁切或图片内容真正不可分割时，才允许合并到同一资产里。\`textBlocks\` 之外的可见文字不得擅自改成 DOM 文本，但也应遵守这个分层原则，必要时作为独立视觉资产处理。
+- **语义布局硬约束**：\`position:absolute\` 只能用于模块根定位、共享层、复杂叠层/装饰资产、局部覆盖层、需要压在图形上的内容，或经过验证确实无法用正常流布局表达的少量像素锁定元素。凡是能抽象为线性排列、二维网格、对齐关系、成组槽位或信息层级的内容，应优先用正常 DOM 流、flex、grid、padding、gap、margin 和 text-align 表达。若同一模块中大多数普通内容都需要 absolute，必须先重写布局结构，而不是继续给每个叶子节点写 left/top。
 
 ## 方法（按序执行）
 ${methodFirstStep}
 2. **产物优先，先落可运行初版再细调**：读完主输入后，只允许做一次短暂的首批资产决策；需要复杂非文本视觉时先批量/并行导出必要 PNG，然后立刻更新 preview.fragment.html + module.css + manifest.json（Vue/React 还要更新 source fragment）。这些文件若已有最小模板，直接改模板，不要先删除后重建，也不要为 manifest 基础字段停留。不要在写初版前长时间分析、逐节点手绘或反复读图。初版可以粗糙但必须完整可运行：textBlocks 一律 DOM 文本，非文本复杂视觉优先用已导出资产按 generatedAssets[].box 绝对定位，manifest 只填固定字段；后续脚本会补资产列表。有冲突时先选一个保守方案落盘，之后用 **browser-eval** 和 verify 修。
 3. **判断区域类型，选布局范式**：
-   - **非重复的自由叠放区**（状态栏、导航栏、主视觉海报、多层装饰叠加、无同构子项）→ **全部用 absolute positioning**。非文本视觉尽量导出为 PNG 后绝对定位；**图层若对应一个已导出资产，用该资产 generatedAssets[].box 的 x/y/width/height 定位 + 定尺寸（box 是 PNG 的 CSS 放置外框，别再用节点几何框或内部可见像素框去摆图片，否则会错位/压扁）**；尚未导出的视觉块先用 nodes[].bbox/inspectIndex 判断是否需要导出。z-index 按 inspectIndex 从小到大叠；不合并/丢弃图层、不挑某节点拉伸当整块背景；压在图形上的独立文字仍按 DOM 文本还原到对应位置。
-   - **重复/连续/同构区**（列表、网格、卡片行、导航项、按钮组、标签组、数据行）→ **外层父容器用 flex 或 grid 管理宏观排列，每个同构子项（item/card/tab/row）内部用 absolute positioning 精确摆放内部元素**。禁止把同构子项拆成一堆互不关联的绝对定位叶子节点，也禁止逐个子项凭感觉微调。同构子项内部也要保持一致结构：图片/图标、标题、说明、数值、状态等用稳定 class 命名；只允许通过数据内容、选中态、少量修饰 class 表达差异。
-   - **严禁在同构子项内部使用 CSS Grid 的 gap/auto-placement 来推算元素位置**。每个子项内部的图片、文本、badge 等必须有独立的 \`position: absolute; left: X; top: Y\`，不得依赖 flow 布局自动排列。
+   - **结构化内容区**（有清晰阅读顺序、行列关系、对齐关系、重复节奏或成组槽位的区域）→ **语义结构 + flex/grid 为默认**。使用 \`header\`/\`main\`/\`section\`/\`nav\`/\`ul\`/\`li\`/\`button\` 等合适标签；用父容器的 \`display:flex\`、\`display:grid\`、\`grid-template-areas\`、\`align-items\`、\`justify-content\`、\`padding\`、\`gap\` 和少量 \`margin\` 表达行列关系。普通文本块、数值组、左右对齐组、媒体+说明组、控件文案不要逐个 absolute。
+   - **重复/连续/同构区**（成组条目、矩阵、导航集合、控制集合、数据集合）→ 外层父容器用 flex 或 grid 管理宏观排列；每个 item/card/tab/row 内部继续优先用 flex/grid 表达槽位结构。禁止把同构子项拆成一堆互不关联的绝对定位叶子节点，也禁止逐个子项凭感觉微调。同构子项内部保持一致结构：媒体、文本、数值、状态、操作等用稳定 class 命名；只允许通过数据内容、状态、少量修饰 class 表达差异。
+   - **自由叠放/复杂视觉区**（无稳定阅读流、多层覆盖、异形图形、复杂资产叠加）→ 允许局部使用 absolute positioning。非文本视觉尽量导出为 PNG 后在该局部叠层容器内绝对定位；**图层若对应一个已导出资产，用该资产 generatedAssets[].box 的 x/y/width/height 定位 + 定尺寸（box 是 PNG 的 CSS 放置外框，别再用节点几何框或内部可见像素框去摆图片，否则会错位/压扁）**；尚未导出的视觉块先用 nodes[].bbox/inspectIndex 判断是否需要导出。z-index 按 inspectIndex 从小到大叠；不合并/丢弃图层、不挑某节点拉伸当整块背景；压在图形上的独立文字仍按 DOM 文本还原到对应位置。
+   - **absolute 使用自检**：如果一个区域的视觉关系可以描述为“顺序、对齐、分布、重复、分组、主次层级或槽位关系”，却写成多个 \`position:absolute\` 叶子节点，说明布局范式选错了，必须改成 flex/grid/padding/gap。absolute 可以包住整个局部叠层容器，但不要替代正常内容流。
 4. 文本：用 layoutTargetRegion 定位外盒，再用 styleInference 填样式。textBlocks[].text 是预处理已经合并好的最终 DOM 文案；直接放进一个 DOM 文本元素，保留原文内容，不要改写、拆分或重新识别文本。
 5. CSS 落地时坐标/盒模型默认四舍五入到整数 px：图片资产 box、结构节点 bbox、文本 layoutTargetRegion 的 left/top/width/height 都按整数写；textBlocks[].styleInference 的 font-size/line-height/letter-spacing/font-family/weight/color 原样使用，不因取整规则修改。
-6. **选实现手段（默认图片优先，能用 PNG 就不手绘）**：非文本视觉样式默认优先导出 PNG，模块 agent 不需要证明某个复杂视觉“不能用 CSS 实现”才导出。只有纯色背景、单层边框、简单圆角、简单横/竖条、状态圆点、分隔线这类简单到不能再简单的元素才用 CSS。渐变、纹理、阴影组合、clip-path 异形、mask、图标、多 path 组合、徽章、装饰壳、图片内容等都优先导出 PNG。一个视觉由多个节点组成时（icon 多 path、按钮背景+边框+高光）用 browser-session_export_svg_node 合并导出为一张；可读 textBlocks 禁止导出。对于 textBlocks 之外的可见前景层，优先按独立视觉层导出，不要并入大块背景/容器资产。
+6. **选实现手段（默认图片优先，能用 PNG 就不手绘）**：非文本视觉样式默认优先导出 PNG，模块 agent 不需要证明某个复杂视觉“不能用 CSS 实现”才导出。只有纯色背景、单层边框、简单圆角、简单横/竖条、状态点、分隔线这类简单到不能再简单的元素才用 CSS。渐变、纹理、阴影组合、clip-path 异形、mask、图标、多 path 组合、小型标记、装饰外壳、图片内容等都优先导出 PNG。一个视觉由多个节点组成时（多 path 图形、控件背景+边框+高光）用 browser-session_export_svg_node 合并导出为一张；可读 textBlocks 禁止导出。对于 textBlocks 之外的可见前景层，优先按独立视觉层导出，不要并入大块背景/容器资产。
 7. **browser-eval 是首选调试工具，verify 是最终验收工具**。三件套产物可运行后，**立即先用 browser-eval** 做局部自检，优先把内容缺失、错图、明显重叠、明显布局/裁切错误消灭在 verify 之前；在觉得自己"已经做完了"、所有关键元素位置都正确对齐之后，再运行 verify。不要把 verify 当调试工具频繁运行——每轮 verify 成本高，应该只有在 browser-eval 显示布局基本对齐后再进 verify 做最终 diff 检查。
 8. 不确定真实 DOM 位置、尺寸、gap、行列数、裁切或 computed style 时，立即用 browser-eval 查询浏览器实际结果；如果你准备在脑中推算某个具体坐标/尺寸超过 3 行，必须改用 browser-eval。查询后只做局部、批量修 CSS/HTML，不要推倒重来；修改后如果觉得问题已解决，再跑 verify。browser-eval 通过 browser-session_browser_eval MCP tool 调用，把 JS 直接传入 script 参数，最后 return JSON，禁止再写 browser-eval.js 文件。
 9. 骨架可运行后 → browser-eval 查关键容器/重复结构/文本/图片实际 rect 和 computed style → 批量修明显问题 → 确认"做完了" → verify → 按下方"校验与停损"规则决定是否读图对比与修复 → 再 verify：
-   - group bbox 明显被 mask/clip/溢出图/横向裁切/透明区放大时，改用稳定子节点（主图框、标题、标签、图标、背景壳）反推父盒，不要直接拿被放大的 group bbox 当父盒。
+   - group bbox 明显被 mask/clip/溢出图/横向裁切/透明区放大时，改用稳定子节点（主要媒体框、文本块、标记、背景容器）反推父盒，不要直接拿被放大的 group bbox 当父盒。
    - verify 图与结构化数据冲突时，先用 browser-eval 核对真实 DOM，再解释冲突来源（坐标系/scale/crop/mask/资源裁切/父盒选错），改父容器/网格参数，不得直接采信截图估值。
 
 ## 输出目录 ${workingDir}（outputFormat: ${outputFormat}）
@@ -371,32 +373,6 @@ ${sourceDataContractSection}
 - Verify 后诊断与读图对比：先看 verify stdout 的 \`alignmentDiagnostics\` 摘要和 \`alignment-diagnostics.json\` 的 \`positionIssues\`，只批量修复真正会改变结构结果的布局/资产问题。若 positionIssues 为空或只剩文本 width/height、glyph 度量、抗锯齿、字重/字体渲染或 1-2px 边缘偏差，即使 diffRatio 仍高也必须停止猜字体、阴影、z-index、overflow 等无依据参数。只有诊断缺失/报错，或诊断无法解释区域级问题时，再读取 verify stdout 的 \`artifacts.renderPngPath\`（当前 HTML 渲染）和 \`artifacts.svgPngPath\`（原 SVG 参考），列出区域级差异清单后一次性批量修复。**任何情况下都不要读取 artifacts.diffPngPath / diff.png**（像素差异热力图，对定位问题帮助小且极耗 token）。
 - Verify 螺旋停损：每轮 verify 后先看是否还有结构性问题，再一次性批量修复；禁止一次只改一个元素的 1-3px left/top。若当前最佳 diffRatio 已低于 5%，本轮执行超过 15 分钟，并且相邻两次 verify 的 diffRatio 改善都 < 0.1 个百分点（绝对值降幅 < 0.001），verify stdout 会给出 stopLoss 建议；看到该建议后不要继续微调，保留当前最佳版本停止，转去别处或结束。若出现反弹且诊断没有新的结构性问题，也保留当前最佳版本停止。
 - 低收益小问题停损：当剩余问题只是轻微文本偏移、文本 width/height 度量差、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差时，不论 diffRatio 是否低于 0.05，最多围绕同一问题做一次修复和一次复验；若复验 diffRatio 没有下降至少 0.001，禁止继续实验、查源码、查字体、拆字符、改 font-smoothing/text-rendering 或反复改 DOM 结构，直接保留当前最佳版本并结束。
-
-## 最小范例（仅示意结构，按实际数据填坐标）
-重复/同构区：
-\`\`\`html
-<ul class="grid">
-  <li class="cell"><img class="cell__img" src="./assets/a.png" /><span class="cell__title">标题</span></li>
-</ul>
-\`\`\`
-\`\`\`css
-.grid { position:absolute; left:32px; top:48px; display:grid; grid-template-columns:repeat(2,330px); gap:16px 20px; }
-.cell { position:relative; } .cell__img { width:330px; height:186px; object-fit:cover; }
-\`\`\`
-自由叠放图形区（绝对定位 + z-index 按 inspectIndex）：
-\`\`\`html
-<div class="layered-region">
-  <img class="layered-region__bg" src="./assets/bg.png" />
-  <img class="layered-region__art" src="./assets/art.png" />
-  <span class="layered-region__label">标题</span>
-</div>
-\`\`\`
-\`\`\`css
-.layered-region { position:relative; width:100%; height:100%; }
-.layered-region__bg { position:absolute; left:0; top:0; width:100%; height:100%; z-index:1; }
-.layered-region__art { position:absolute; left:10px; top:77px; width:316px; height:203px; z-index:2; }
-.layered-region__label { position:absolute; left:348px; top:93px; z-index:3; }
-\`\`\`
 
 完成后简短说明产物是否已写齐。
 `.trim();
