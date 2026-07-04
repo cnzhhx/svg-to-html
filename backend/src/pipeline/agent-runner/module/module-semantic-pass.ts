@@ -53,6 +53,7 @@ import {
 } from "./module-semantic-png.js";
 import { buildDeterministicSemantic } from "./module-semantic-deterministic.js";
 import { deduplicateProbeArtifactsByPixels } from "./module-semantic-probe-pixel-dedup.js";
+import { detectArtisticSpacedText } from "./module-artistic-text.js";
 
 type ElementClassification =
   | "atomic-visual-text"
@@ -721,6 +722,39 @@ const semanticReadabilityScore = (semantic: ModuleSemanticNodeSemantic | undefin
   return 0;
 };
 
+const appendSemanticNote = (
+  notes: string | undefined,
+  note: string,
+) => notes ? `${notes}; ${note}` : note;
+
+const downgradeArtisticSpacedText = (
+  node: ModuleSemanticNode,
+  semantic: ModuleSemanticNodeSemantic,
+): ModuleSemanticNodeSemantic => {
+  if (semantic.textHandling !== "dom-text" || !semantic.text) return semantic;
+  const decision = detectArtisticSpacedText({
+    bbox: node.bbox,
+    lineCount: semantic.lineCount,
+    text: semantic.text,
+  });
+  if (!decision) return semantic;
+  return {
+    ...semantic,
+    containsReadableText: true,
+    exportDecision: "export",
+    kind: "artistic-text",
+    notes: appendSemanticNote(semantic.notes, decision.reason),
+    text: decision.compactText,
+    textHandling: "export-asset",
+    textKind: "artistic-spaced-text",
+  };
+};
+
+const finalizeNodeSemantic = (
+  node: ModuleSemanticNode,
+  semantic: ModuleSemanticNodeSemantic,
+): ModuleSemanticNodeSemantic => downgradeArtisticSpacedText(node, semantic);
+
 const shouldAdoptRecheckSemantic = ({
   current,
   next,
@@ -1236,14 +1270,16 @@ const analyzeModuleElements = async ({
     ...node,
     sheetCell: undefined,
     sheetId: undefined,
-    semantic:
+    semantic: finalizeNodeSemantic(
+      node,
       deterministicById.get(node.id) ??
-      ({
-        containsReadableText: false,
-        exportDecision: "pending",
-        kind: "unknown",
-        textHandling: "pending",
-      } satisfies ModuleSemanticNodeSemantic),
+        ({
+          containsReadableText: false,
+          exportDecision: "pending",
+          kind: "unknown",
+          textHandling: "pending",
+        } satisfies ModuleSemanticNodeSemantic),
+    ),
   }));
 
   if (probeNodes.length === 0) {
@@ -1294,7 +1330,10 @@ const analyzeModuleElements = async ({
   if (probeArtifacts.length === 0) {
     const completedNodes = nextNodes.map((node) => ({
       ...node,
-      semantic: deterministicById.get(node.id) ?? node.semantic,
+      semantic: finalizeNodeSemantic(
+        node,
+        deterministicById.get(node.id) ?? node.semantic,
+      ),
     }));
     const nextDocument: ModuleSemanticDocument = {
       ...semantic,
@@ -1363,7 +1402,10 @@ const analyzeModuleElements = async ({
 
   const finalizedNodes = nextNodes.map((node) => {
     const classified = semanticsById.get(node.id);
-    const semanticValue = classified ?? deterministicById.get(node.id) ?? node.semantic;
+    const semanticValue = finalizeNodeSemantic(
+      node,
+      classified ?? deterministicById.get(node.id) ?? node.semantic,
+    );
     const assignment = sheetAssignments.get(node.id);
     return {
       ...node,
