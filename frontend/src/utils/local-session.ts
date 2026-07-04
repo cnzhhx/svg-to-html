@@ -14,6 +14,7 @@ const ARTIFACT_RESULT_KEYS = [
   'localArtifactCachePaths',
   'localArtifactCacheAt',
   'localArtifactCacheError',
+  'localArtifactCacheKey',
 ]
 
 let localClientId: string | null = null
@@ -255,6 +256,7 @@ function compactResultForLocalStorage(result: unknown) {
   const source = result as Record<string, unknown>
   const keys = [
     'artifactDir',
+    'artifactUpdatedAt',
     'compareEntryPath',
     'designWidth',
     'designHeight',

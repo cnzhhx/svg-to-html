@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import type { Session } from '../types/session'
 import { sessionDownloadUrl } from '../api/sessions'
 import {
+  artifactCacheKeyForSession,
   cacheSessionArtifacts as cacheSessionArtifactsToIdb,
   createCachedArtifactObjectUrl,
   createZipBlobForCachedSession,
@@ -20,6 +21,8 @@ export type ArtifactCacheStatus = {
 }
 
 const isCached = (meta?: ArtifactCacheMeta | null) => meta?.status === 'cached'
+const isUsableCache = (session: Session, meta?: ArtifactCacheMeta | null) =>
+  isCached(meta) && (session.__localOnly || meta?.cacheKey === artifactCacheKeyForSession(session))
 
 const openUrl = (url: string) => {
   const anchor = document.createElement('a')
@@ -77,7 +80,7 @@ export function useArtifactCache(onSessionCached?: (session: Session, meta: Arti
       return
     }
     const meta = metaBySession.get(session.id) || await getCachedArtifactSessionMeta(session.id).catch(() => null)
-    if (isCached(meta)) {
+    if (isUsableCache(session, meta)) {
       try {
         const records = await getCachedArtifactFiles(session.id)
         if (records.length) {
@@ -99,7 +102,7 @@ export function useArtifactCache(onSessionCached?: (session: Session, meta: Arti
   const downloadSessionZip = useCallback(async (session: Session | null) => {
     if (!session?.id) return
     const meta = metaBySession.get(session.id) || await getCachedArtifactSessionMeta(session.id).catch(() => null)
-    if (isCached(meta)) {
+    if (isUsableCache(session, meta)) {
       try {
         const records = await getCachedArtifactFiles(session.id)
         if (records.length) {

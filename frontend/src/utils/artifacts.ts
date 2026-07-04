@@ -37,6 +37,7 @@ export function resultImageVersion(session?: Session | null) {
   const result = session?.result
   const version = [
     session?.id || '',
+    result?.artifactUpdatedAt ?? '',
     workspaceRelativePath(result?.renderPngPath || ''),
     workspaceRelativePath(result?.svgPngPath || ''),
     result?.diffRatio ?? '',

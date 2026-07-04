@@ -61,12 +61,14 @@ const createRenderScaffold = ({
 }
 
 const createCompareScaffold = ({
+  assetVersion,
   designName,
   height,
   renderEntryFileName,
   svgFileName,
   width,
 }: {
+  assetVersion?: number | string
   designName: string
   height: number
   renderEntryFileName: string
@@ -76,6 +78,9 @@ const createCompareScaffold = ({
   const formatPx = (value: number) => `${Math.round(value)}px`
   const widthPx = formatPx(width)
   const heightPx = formatPx(height)
+  const versionSuffix = assetVersion === undefined
+    ? ''
+    : `?v=${encodeURIComponent(String(assetVersion))}`
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -141,14 +146,14 @@ const createCompareScaffold = ({
       <section class="compare-column">
         <div class="compare-title">高保真稿</div>
         <div class="compare-stage">
-          <img src="./${svgFileName}" alt="${designName} 高保真稿" />
+          <img src="./${svgFileName}${versionSuffix}" alt="${designName} 高保真稿" />
         </div>
       </section>
 
       <section class="compare-column">
         <div class="compare-title">代码还原</div>
         <div class="compare-stage">
-          <iframe src="./${renderEntryFileName}" title="${designName} 代码还原"></iframe>
+          <iframe src="./${renderEntryFileName}${versionSuffix}" title="${designName} 代码还原"></iframe>
         </div>
       </section>
     </main>
@@ -328,6 +333,36 @@ const initializeSourceScaffold = async ({
   }
 }
 
+const writeCompareScaffold = async ({
+  assetVersion,
+  compareEntryPath,
+  designName,
+  height,
+  renderEntryPath,
+  svgPath,
+  width,
+}: {
+  assetVersion?: number | string
+  compareEntryPath: string
+  designName: string
+  height: number
+  renderEntryPath: string
+  svgPath: string
+  width: number
+}) => {
+  await writeTextFile(
+    compareEntryPath,
+    createCompareScaffold({
+      assetVersion,
+      designName,
+      height,
+      renderEntryFileName: path.basename(renderEntryPath),
+      svgFileName: path.basename(svgPath),
+      width,
+    }),
+  )
+}
+
 const initializeDesignScaffolds = async ({
   format,
   renderContent,
@@ -361,16 +396,15 @@ const initializeDesignScaffolds = async ({
     width: design.width,
   })
 
-  await writeTextFile(
-    outputTarget.compareEntryPath,
-    createCompareScaffold({
-      designName: design.designName,
-      height: design.height,
-      renderEntryFileName: path.basename(outputTarget.renderEntryPath),
-      svgFileName: `${design.designName}.svg`,
-      width: design.width,
-    }),
-  )
+  await writeCompareScaffold({
+    assetVersion: Date.now(),
+    compareEntryPath: outputTarget.compareEntryPath,
+    designName: design.designName,
+    height: design.height,
+    renderEntryPath: outputTarget.renderEntryPath,
+    svgPath: design.svgPath,
+    width: design.width,
+  })
 
   return {
     ...design,
@@ -379,4 +413,4 @@ const initializeDesignScaffolds = async ({
   }
 }
 
-export { initializeDesignScaffolds }
+export { initializeDesignScaffolds, writeCompareScaffold }

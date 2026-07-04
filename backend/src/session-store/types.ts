@@ -140,6 +140,7 @@ type AgentResultFields = {
 }
 
 type VerifyResultFields = {
+  artifactUpdatedAt?: number
   diffRatio?: string | number
   svgPngPath?: string
   renderPngPath?: string

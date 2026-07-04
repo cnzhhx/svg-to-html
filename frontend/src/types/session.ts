@@ -58,6 +58,7 @@ export type SessionOutputTarget = {
 
 export type SessionResult = Record<string, unknown> & {
   artifactDir?: string
+  artifactUpdatedAt?: number
   compareEntryPath?: string
   designHeight?: number
   designWidth?: number
@@ -68,6 +69,7 @@ export type SessionResult = Record<string, unknown> & {
   localArtifactCacheByteSize?: number
   localArtifactCacheError?: string
   localArtifactCacheFileCount?: number
+  localArtifactCacheKey?: string
   localArtifactCachePaths?: string[]
   localArtifactCacheStatus?: 'cached' | 'caching' | 'error'
   livePreviewEntryPath?: string

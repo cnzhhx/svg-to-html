@@ -2,11 +2,6 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { loadSession, loadSessions, startSession, deleteSession } from './api/sessions'
 import type { SessionEvent } from './types/events'
 import {
-  getSessionCompareEntryPath,
-  getSessionRenderEntryPath,
-  getSessionRenderPngPath,
-  getSessionSourceEntryPath,
-  getSessionSvgPngPath,
   hasPrimaryResults,
   setRuntimeWorkspaceRoot,
 } from './utils/artifacts'
@@ -38,7 +33,7 @@ import { ChatDrawer } from './components/chat/ChatDrawer'
 import { UploadDialog } from './components/upload/UploadDialog'
 import { SettingsDialog } from './components/settings/SettingsDialog'
 import { Lightbox } from './components/common/Lightbox'
-import type { ArtifactCacheMeta } from './utils/artifact-cache'
+import { artifactCacheKeyForSession, type ArtifactCacheMeta } from './utils/artifact-cache'
 import type { Session, SessionMessage } from './types/session'
 import './styles/global.css'
 import './styles/layout.css'
@@ -134,17 +129,6 @@ const sanitizeSessionUpdateForPreview = (current: Session | null, data: Partial<
   }
 }
 
-const autoCacheKeyForSession = (session: Session) =>
-  [
-    session.id,
-    session.result?.finalOutputReady ?? '',
-    getSessionSourceEntryPath(session),
-    getSessionRenderEntryPath(session),
-    getSessionCompareEntryPath(session),
-    getSessionSvgPngPath(session),
-    getSessionRenderPngPath(session),
-  ].join('|')
-
 export default function App() {
   const [state, dispatch] = useReducer(appReducer, initialAppState)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
@@ -169,25 +153,32 @@ export default function App() {
 
   const handleSessionCached = useCallback((session: NonNullable<typeof state.currentSession>, meta: ArtifactCacheMeta) => {
     const localOwnerId = session.localOwnerId || (ownedSessionIdsRef.current.has(session.id) ? getLocalClientId() : undefined)
+    const currentSession = currentSessionRef.current?.id === session.id
+      ? currentSessionRef.current
+      : session
+    const resultPatch: Session['result'] = {
+      localArtifactCacheAt: meta.cachedAt,
+      localArtifactCacheByteSize: meta.byteSize,
+      localArtifactCacheError: meta.error,
+      localArtifactCacheFileCount: meta.fileCount,
+      localArtifactCacheKey: meta.cacheKey,
+      localArtifactCachePaths: meta.paths,
+      localArtifactCacheStatus: meta.status,
+    }
+    if (!currentSession.result?.compareEntryPath && meta.compareEntryPath) resultPatch.compareEntryPath = meta.compareEntryPath
+    if (!currentSession.result?.renderEntryPath && meta.renderEntryPath) resultPatch.renderEntryPath = meta.renderEntryPath
+    if (!currentSession.result?.sourceEntryPath && meta.sourceEntryPath) resultPatch.sourceEntryPath = meta.sourceEntryPath
+    const currentUpdatedAt = currentSessionRef.current?.id === session.id
+      ? currentSessionRef.current.updatedAt
+      : session.updatedAt
     dispatch({
       type: 'session/updated',
       data: {
         ...(localOwnerId ? { localOwnerId } : {}),
-        result: {
-          ...(session.result || {}),
-          compareEntryPath: session.result?.compareEntryPath || meta.compareEntryPath,
-          localArtifactCacheAt: meta.cachedAt,
-          localArtifactCacheByteSize: meta.byteSize,
-          localArtifactCacheError: meta.error,
-          localArtifactCacheFileCount: meta.fileCount,
-          localArtifactCachePaths: meta.paths,
-          localArtifactCacheStatus: meta.status,
-          renderEntryPath: session.result?.renderEntryPath || meta.renderEntryPath,
-          sourceEntryPath: session.result?.sourceEntryPath || meta.sourceEntryPath,
-        },
+        result: resultPatch,
       },
       sessionId: session.id,
-      timestamp: Date.now(),
+      timestamp: currentUpdatedAt || Date.now(),
     })
   }, [])
   const artifactCache = useArtifactCache(handleSessionCached)
@@ -208,8 +199,12 @@ export default function App() {
     if (!session?.id || session.__localOnly) return
     if (!isSessionOwnedByCurrentClient(session) && !ownedSessionIdsRef.current.has(session.id)) return
     if (!hasPrimaryResults(session)) return
-    if (session.result?.localArtifactCacheStatus === 'cached' || session.result?.localArtifactCacheStatus === 'caching') return
-    const cacheKey = autoCacheKeyForSession(session)
+    const cacheKey = artifactCacheKeyForSession(session)
+    const localCacheKey = typeof session.result?.localArtifactCacheKey === 'string' ? session.result.localArtifactCacheKey : ''
+    if (
+      (session.result?.localArtifactCacheStatus === 'cached' || session.result?.localArtifactCacheStatus === 'caching') &&
+      localCacheKey === cacheKey
+    ) return
     if (autoCacheKeysRef.current.get(session.id) === cacheKey) return
     autoCacheKeysRef.current.set(session.id, cacheKey)
     void artifactCache.cacheSessionArtifacts(session)

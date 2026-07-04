@@ -14,6 +14,7 @@ import { STORAGE_KEYS } from './storage'
 export type ArtifactCacheMeta = {
   byteSize: number
   cachedAt: number
+  cacheKey: string
   compareEntryPath?: string
   designName?: string
   error?: string
@@ -84,6 +85,18 @@ function transactionDone(transaction: IDBTransaction) {
 }
 
 const fileKey = (sessionId: string, filePath: string) => `${sessionId}\n${normalizeFsPath(filePath)}`
+
+export const artifactCacheKeyForSession = (session: Session) =>
+  [
+    session.id,
+    session.result?.artifactUpdatedAt || session.updatedAt || '',
+    session.result?.finalOutputReady ?? '',
+    getSessionSourceEntryPath(session),
+    getSessionRenderEntryPath(session),
+    getSessionCompareEntryPath(session),
+    getSessionSvgPngPath(session),
+    getSessionRenderPngPath(session),
+  ].join('|')
 
 export async function getCachedArtifactSessionMeta(sessionId: string): Promise<ArtifactCacheMeta | null> {
   if (!sessionId) return null
@@ -165,6 +178,7 @@ async function putBundleWithEviction(sessionId: string, records: ArtifactRecord[
 
 export async function cacheSessionArtifacts(session: Session): Promise<ArtifactCacheMeta> {
   const sessionId = session.id
+  const cacheKey = artifactCacheKeyForSession(session)
   const sourceEntryPath = getSessionSourceEntryPath(session)
   const renderEntryPath = getSessionRenderEntryPath(session)
   const compareEntryPath = getSessionCompareEntryPath(session)
@@ -221,6 +235,7 @@ export async function cacheSessionArtifacts(session: Session): Promise<ArtifactC
   const meta: ArtifactCacheMeta = {
     byteSize: records.reduce((sum, record) => sum + Number(record.size || 0), 0),
     cachedAt: Date.now(),
+    cacheKey,
     compareEntryPath: normalizeFsPath(compareEntryPath),
     designName: session.designName || sessionId,
     failures: failures.slice(0, 20),

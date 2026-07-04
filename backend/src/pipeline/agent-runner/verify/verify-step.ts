@@ -1,6 +1,7 @@
 
 import { getDiffRatioThreshold } from "../../../config/index.js";
 import { resolveSvgDesign } from "../../../core/design-resolve.js";
+import { writeCompareScaffold } from "../../../core/design-scaffold.js";
 import {
   sessionStore,
   type Session,
@@ -14,8 +15,10 @@ const buildVerifyStepResult = (
   session: Session,
   verifyResult: VerifyResult,
   design: { height: number; width: number },
+  artifactUpdatedAt: number,
 ): SessionResult => ({
   artifactDir: session.artifactDir,
+  artifactUpdatedAt,
   compareEntryPath: session.outputTarget.compareEntryPath,
   designWidth: design.width,
   designHeight: design.height,
@@ -85,10 +88,23 @@ const runVerify = async (
   const session = sessionStore.get(sessionId);
   if (!session) throw new Error("Session not found");
 
+  const artifactUpdatedAt = Date.now();
+  await writeCompareScaffold({
+    assetVersion: artifactUpdatedAt,
+    compareEntryPath: session.outputTarget.compareEntryPath,
+    designName: verifiedDesign.designName,
+    height: verifiedDesign.height,
+    renderEntryPath: session.outputTarget.renderEntryPath,
+    svgPath: verifiedDesign.svgPath,
+    width: verifiedDesign.width,
+  });
+  sessionStore.addLog(sessionId, "[pipeline] compare entry refreshed");
+
   const verifyStepResult = buildVerifyStepResult(
     session,
     verifyResult,
     verifiedDesign,
+    artifactUpdatedAt,
   );
 
   await archiveSessionCheckpoint({
