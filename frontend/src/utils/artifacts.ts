@@ -11,7 +11,7 @@ export function normalizeFsPath(value: unknown) {
   return String(value || '').replace(/\\/g, '/')
 }
 
-export function workspaceRelativePath(absPath: unknown) {
+function workspaceRelativePath(absPath: unknown) {
   const clean = normalizeFsPath(absPath)
   if (!clean) return ''
   const workspaceRoot = normalizeFsPath(runtimeWorkspaceRoot)
@@ -23,7 +23,7 @@ export function workspaceRelativePath(absPath: unknown) {
   return clean.replace(/^\/+/, '')
 }
 
-export function workspaceFileVersion(session?: Session | null) {
+function workspaceFileVersion(session?: Session | null) {
   return String(session?.updatedAt || Date.now())
 }
 
@@ -86,7 +86,7 @@ export function getSessionSvgPngPath(session?: Session | null) {
   return String(session?.result?.svgPngPath || '')
 }
 
-export function getSessionLivePreviewEntryPath(session?: Session | null) {
+function getSessionLivePreviewEntryPath(session?: Session | null) {
   return String(session?.result?.livePreviewEntryPath || '')
 }
 

@@ -23,8 +23,6 @@ type ModuleAgentCoordinatorInput = {
 
 type OpencodeAgentConfig = NonNullable<ThreadOptions["opencodeAgents"]>[string];
 
-const MODULE_COORDINATOR_SUBAGENT_NAMES = ["module-analysis"] as const;
-
 const buildReadOnlySubagentConfig = ({
   description,
   prompt,
@@ -137,7 +135,6 @@ const buildModuleCoordinatorPromptSection = (
 };
 
 export {
-  MODULE_COORDINATOR_SUBAGENT_NAMES,
   buildModuleCoordinatorPromptSection,
   buildModuleCoordinatorSubagents,
   resolveModuleAgentCoordinatorDecision,

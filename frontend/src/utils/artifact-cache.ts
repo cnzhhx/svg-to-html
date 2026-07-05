@@ -45,7 +45,7 @@ const HTML_REFERENCE_PATTERN = /(?:src|href|poster)=["']([^"'<>]+)["']|url\((['"
 let dbPromise: Promise<IDBDatabase> | null = null
 let crc32Table: Uint32Array | null = null
 
-export function openArtifactDb() {
+function openArtifactDb() {
   if (!('indexedDB' in window)) {
     return Promise.reject(new Error('当前浏览器不支持 IndexedDB，无法缓存大文件'))
   }
@@ -106,7 +106,7 @@ export async function getCachedArtifactSessionMeta(sessionId: string): Promise<A
   return meta || null
 }
 
-export async function getCachedArtifactSessionMetas(): Promise<ArtifactCacheMeta[]> {
+async function getCachedArtifactSessionMetas(): Promise<ArtifactCacheMeta[]> {
   const db = await openArtifactDb()
   const transaction = db.transaction(SESSION_STORE, 'readonly')
   return requestResult<ArtifactCacheMeta[]>(transaction.objectStore(SESSION_STORE).getAll())
@@ -250,7 +250,7 @@ export async function cacheSessionArtifacts(session: Session): Promise<ArtifactC
   return meta
 }
 
-export function collectSessionRootArtifactPaths(session: Session) {
+function collectSessionRootArtifactPaths(session: Session) {
   const result = session.result || {}
   return unique([
     getSessionSourceEntryPath(session),

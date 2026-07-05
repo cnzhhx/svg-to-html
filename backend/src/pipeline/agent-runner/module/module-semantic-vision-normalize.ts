@@ -133,12 +133,7 @@ const normalizeVisionNodeSemantic = (
 };
 
 export {
-  MISSING_TEXT_RECHECK_NOTE,
-  mergeVisualLinesForDomText,
-  normalizeDomText,
-  normalizeInlineText,
   normalizeVisionNodeSemantic,
-  readVisionVisualLines,
   stripJsonMarkdown,
 };
 export type { VisionNodeSemantic };

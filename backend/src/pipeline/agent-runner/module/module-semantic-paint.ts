@@ -155,11 +155,7 @@ const readPaintLuminance = (value: string | undefined) => {
 };
 
 export {
-  applyPaintOpacity,
-  isExplicitPaint,
   isPureTransparentNode,
-  isTransparentPaint,
-  parseNumericAttr,
   readPaintLuminance,
   textColorFromNodePaint,
 };

@@ -38,9 +38,6 @@ const createThreadOptions = (
   webSearchMode: "live",
 });
 
-const getThreadOptions = (modelRole: ModelConfigRole = "text") =>
-  createThreadOptions(resolveModelConfigForRole(modelRole));
-
 const applyThreadOptionDefaults = (
   modelConfig: ModelProviderConfig,
   options: ThreadOptions,
@@ -161,17 +158,6 @@ const resumeAgentThread = (
   });
 };
 
-const runLlm = async (prompt: string): Promise<string> => {
-  const thread = startAgentThread(
-    {
-      modelReasoningEffort: AGENT_REASONING_EFFORTS.support,
-    },
-    { modelRole: "text" },
-  );
-  const turn = await thread.run(prompt);
-  return turn.finalResponse ?? "";
-};
-
 const runVisionLlm = async ({
   imagePath,
   prompt,
@@ -204,9 +190,7 @@ const runVisionLlm = async ({
 };
 
 export {
-  getThreadOptions,
   resumeAgentThread,
-  runLlm,
   runVisionLlm,
   startAgentThread,
 };

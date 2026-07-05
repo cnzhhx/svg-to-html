@@ -1,6 +1,6 @@
 import type { Session } from '../types/session'
 
-export function labelForStatus(status?: string) {
+function labelForStatus(status?: string) {
   const labels: Record<string, string> = {
     draft: '待开始',
     queued: '排队中',
@@ -27,7 +27,7 @@ export function labelForOutputFormat(format?: string) {
   return labels[String(format || '')] || format || '未知格式'
 }
 
-export function formatElapsedDuration(ms: number) {
+function formatElapsedDuration(ms: number) {
   if (!Number.isFinite(ms) || ms < 0) return '0s'
   const seconds = Math.floor(ms / 1000)
   const minutes = Math.floor(seconds / 60)
@@ -66,12 +66,6 @@ export function formatBytes(value: unknown) {
     unit += 1
   }
   return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
-}
-
-export function formatCacheTimestamp(value: unknown) {
-  const timestamp = Number(value)
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return ''
-  return new Date(timestamp).toLocaleString()
 }
 
 export function toPercent(value: unknown, digits = 2) {

@@ -347,8 +347,6 @@ const deduplicateProbeArtifactsByPixels = async <
 };
 
 export {
-  compareCroppedImages,
-  cropVisibleAlpha,
   deduplicateProbeArtifactsByPixels,
 };
 export type {

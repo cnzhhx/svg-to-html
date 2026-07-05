@@ -1,6 +1,6 @@
 export const basePath = '/transformer'
 
-export class ApiError extends Error {
+class ApiError extends Error {
   status: number
 
   constructor(message: string, status: number) {

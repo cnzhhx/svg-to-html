@@ -14,8 +14,6 @@ const normalizePathForCompare = (value: string) =>
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-const unique = <T>(items: T[]) => [...new Set(items)]
-
 const formatPx = (value: number) => `${Math.round(value)}px`
 
 const formatRegionStyle = (
@@ -111,5 +109,4 @@ export {
   parseJsonFile,
   readRequiredText,
   resolveConfiguredPath,
-  unique,
 }

@@ -259,8 +259,6 @@ const sanitizeModuleOutputFiles = async ({
 };
 
 export {
-  moduleHasOwnLargeBackground,
   sanitizeModuleOutputFiles,
-  sanitizeModuleRootBackgroundCss,
 };
 export type { SanitizeModuleOutputResult };

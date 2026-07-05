@@ -24,7 +24,7 @@ export function setLocalSessionStorageEnabled(enabled: boolean) {
   localSessionStorageEnabled = enabled
 }
 
-export function createLocalClientId() {
+function createLocalClientId() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID()
   const random = new Uint8Array(16)
   if (window.crypto?.getRandomValues) {
@@ -54,7 +54,7 @@ export function getLocalSessionIds() {
   return readJsonStorage<string[]>(STORAGE_KEYS.sessions, []).filter(Boolean).map(String)
 }
 
-export function saveLocalSessionId(id: string) {
+function saveLocalSessionId(id: string) {
   if (!localSessionStorageEnabled || !id) return
   const ids = getLocalSessionIds().filter((item) => item !== id)
   ids.unshift(id)
@@ -75,7 +75,7 @@ export function removeLocalSessionId(id: string) {
   void deleteLocalArtifactCache(id).catch(() => {})
 }
 
-export function readLocalSessionSnapshots() {
+function readLocalSessionSnapshots() {
   const values = readJsonStorage<Record<string, Session & { localSavedAt?: number }>>(STORAGE_KEYS.localSessionSnapshots, {})
   return Object.fromEntries(
     Object.entries(values).flatMap(([, snapshot]) => {
@@ -89,13 +89,13 @@ export function getLocalSessionSnapshot(id: string) {
   return readLocalSessionSnapshots()[id] || null
 }
 
-export function getLocalSessionSnapshotIds() {
+function getLocalSessionSnapshotIds() {
   return Object.values(readLocalSessionSnapshots())
     .sort((left, right) => Number((right as { localSavedAt?: number }).localSavedAt || right.updatedAt || 0) - Number((left as { localSavedAt?: number }).localSavedAt || left.updatedAt || 0))
     .map((snapshot) => snapshot.id)
 }
 
-export function canPersistSessionLocally(session?: Session | null) {
+function canPersistSessionLocally(session?: Session | null) {
   if (!localSessionStorageEnabled || !session?.id) return false
   return isSessionOwnedByCurrentClient(session) || Boolean(getLocalSessionSnapshot(session.id)?.localOwnerId === getLocalClientId())
 }

@@ -69,11 +69,6 @@ const parseVerifyStopLossHistory = (value: string | undefined) => {
     .filter((entry): entry is VerifyStopLossSample => Boolean(entry));
 };
 
-const serializeVerifyStopLossHistory = (samples: VerifyStopLossSample[]) =>
-  samples
-    .map((sample) => `${sample.round}:${sample.diffRatio.toFixed(8)}`)
-    .join(",");
-
 const parseVerifyStopLossTurnStartedAt = (value: string | undefined) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : Date.now();
@@ -166,14 +161,10 @@ const buildVerifyStopLossRecommendation = ({
 };
 
 export {
-  VERIFY_STOP_LOSS_DIFF_THRESHOLD,
-  VERIFY_STOP_LOSS_MIN_IMPROVEMENT,
-  VERIFY_STOP_LOSS_MIN_TURN_MS,
   buildVerifyStopLossRecommendation,
   parseVerifyStopLossHistory,
   parseVerifyStopLossTurnStartedAt,
   readVerifyStopLossState,
-  serializeVerifyStopLossHistory,
   writeVerifyStopLossState,
 };
 export type {

@@ -2,7 +2,7 @@ import type { Session, WorkflowNodeKey, WorkflowProgress } from '../types/sessio
 
 export const WORKFLOW_NODE_ORDER: WorkflowNodeKey[] = ['upload', 'analysis', 'agent', 'verify', 'done']
 
-export const WORKFLOW_NODE_LABELS: Record<WorkflowNodeKey, string> = {
+const WORKFLOW_NODE_LABELS: Record<WorkflowNodeKey, string> = {
   upload: '已上传',
   analysis: '结构解析',
   agent: '大模型生成',
@@ -14,7 +14,7 @@ export function labelForWorkflowNode(node?: WorkflowNodeKey | null) {
   return node ? WORKFLOW_NODE_LABELS[node] : '等待开始'
 }
 
-export function createWorkflowProgress(): WorkflowProgress {
+function createWorkflowProgress(): WorkflowProgress {
   return {
     currentNode: 'upload',
     detail: 'SVG 已上传，等待执行',

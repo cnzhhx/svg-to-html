@@ -54,11 +54,6 @@ const trimToUndefined = (value: string | undefined) => {
   return trimmed ? trimmed : undefined;
 };
 
-const isTruthyFlag = (raw: string | undefined) => {
-  if (raw === undefined || raw === "") return false;
-  return /^(1|true|yes|on)$/i.test(raw.trim());
-};
-
 const parseBooleanString = (value: string | undefined) => {
   const normalized = value?.trim().toLowerCase();
   if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
@@ -267,12 +262,9 @@ const buildBackendConfig = () => {
 type BackendConfig = ReturnType<typeof buildBackendConfig>;
 
 const getBackendConfig = () => buildBackendConfig();
-const BACKEND_CONFIG: BackendConfig = buildBackendConfig();
 
 export {
-  BACKEND_CONFIG,
   getBackendConfig,
-  isTruthyFlag,
   parseReasoningEffort,
   readBackendEnvString,
 };

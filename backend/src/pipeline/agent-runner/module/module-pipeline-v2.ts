@@ -35,7 +35,6 @@ import {
 } from "./module-pipeline-shared.js";
 export {
   runModuleUserRevision,
-  runModuleUserRevisionTurn,
   type ModuleUserRevisionInput,
 } from "./module-user-revision.js";
 

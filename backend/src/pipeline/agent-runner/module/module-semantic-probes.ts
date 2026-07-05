@@ -104,7 +104,6 @@ const deduplicateProbeNodes = (
 };
 
 export {
-  computeProbeFingerprint,
   deduplicateProbeNodes,
   hasIntrinsicVisualPresence,
   toProbeNode,
