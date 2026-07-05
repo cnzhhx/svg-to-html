@@ -144,7 +144,6 @@ export type Session = {
   __localOnly?: boolean
   __summary?: boolean
   localOwnerId?: string
-  runtimeSettings?: unknown
 }
 
 export type SessionSummary = Session

@@ -10,26 +10,22 @@ export function Toolbar({
   deleteDisabled,
   onDelete,
   onExpandSidebar,
-  onOpenSettings,
   onToggleChat,
   onToggleTheme,
   session,
   showChatToggle = true,
   sidebarCollapsed = false,
-  settingsEnabled,
 }: {
   chatDisabled: boolean
   chatOpen: boolean
   deleteDisabled: boolean
   onDelete: () => void
   onExpandSidebar?: () => void
-  onOpenSettings: () => void
   onToggleChat: () => void
   onToggleTheme: () => void
   session: Session | null
   showChatToggle?: boolean
   sidebarCollapsed?: boolean
-  settingsEnabled: boolean
 }) {
   const progress = getWorkflowProgress(session)
   const title = session?.designName || '选择一个 session'
@@ -66,14 +62,6 @@ export function Toolbar({
             <line x1="18" y1="6" x2="6" y2="18" />
           </svg>
         </IconButton>
-        {settingsEnabled ? (
-          <IconButton onClick={onOpenSettings} title="执行设置">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
-              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.36a1.7 1.7 0 0 0-1 .58V20a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1-.58 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.64 15a1.7 1.7 0 0 0-.58-1H4a2 2 0 1 1 0-4h.08a1.7 1.7 0 0 0 .58-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.64a1.7 1.7 0 0 0 1-.58V4a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1 .58 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.36 9c.2.35.4.68.58 1H20a2 2 0 1 1 0 4h-.08a1.7 1.7 0 0 0-.52 1z" />
-            </svg>
-          </IconButton>
-        ) : null}
         <IconButton onClick={onToggleTheme} title="切换主题">
           <svg className="theme-icon-dark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />

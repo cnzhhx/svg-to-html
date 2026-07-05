@@ -173,8 +173,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, chatOpen: action.open ?? !state.chatOpen }
     case 'upload/open':
       return { ...state, uploadDialogOpen: action.open }
-    case 'settings/open':
-      return { ...state, settingsDialogOpen: action.open }
     case 'result/view-mode':
       return { ...state, resultViewMode: action.value }
     case 'result/compare-position':

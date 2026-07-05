@@ -6,16 +6,10 @@ import archiver from "archiver";
 
 import {
   getDiffRatioThreshold,
-  getFrontendSettingsResponse,
-  clearSessionRuntimeSettings,
-  getSessionRuntimeSettings,
   getMaxConcurrentAgents,
   getSessionChatDisabled,
   getSessionDeleteDisabled,
   getSessionLocalStorageEnabled,
-  parseFrontendRuntimeSettings,
-  sanitizeFrontendRuntimeSettingsForApi,
-  setSessionRuntimeSettings,
 } from "../config/index.js";
 import { detectBrowserBinary } from "../core/cdp.js";
 import { truncate } from "../core/string-utils.js";
@@ -211,15 +205,12 @@ const safeResultForApi = (
 const sessionForApi = (
   session: Session,
   { summary = false }: { summary?: boolean } = {},
-): Session & { __summary?: boolean; runtimeSettings?: unknown } => ({
+): Session & { __summary?: boolean } => ({
   ...session,
   __summary: summary || undefined,
   logs: safeLogsForApi(session.logs, { includeLogs: !summary }),
   messages: safeMessagesForApi(session.messages, { includeMessages: !summary }),
   pendingUserMessages: [],
-  runtimeSettings: sanitizeFrontendRuntimeSettingsForApi(
-    getSessionRuntimeSettings(session.id),
-  ),
   result: safeResultForApi(session, {
     summary,
   }),
@@ -236,6 +227,11 @@ const canStartSession = (status: string) =>
   isCompletedSessionStatus(status);
 
 const canAcceptUserMessage = (status: string) => status !== "queued";
+
+const findUnsupportedStartField = (body: unknown) => {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  return Object.keys(body as Record<string, unknown>)[0] ?? null;
+};
 
 const forceDeleteSessionFilesWithRetry = async (session: Session) => {
   let lastError: unknown;
@@ -298,22 +294,10 @@ router.post("/sessions/:id/start", async (req, res) => {
       .json({ error: `Cannot start session from status ${session.status}` });
     return;
   }
-  if (
-    req.body &&
-    typeof req.body === "object" &&
-    !Array.isArray(req.body) &&
-    Object.hasOwn(req.body, "settings")
-  ) {
-    try {
-      setSessionRuntimeSettings(
-        session.id,
-        parseFrontendRuntimeSettings(req.body.settings),
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      res.status(400).json({ error: message });
-      return;
-    }
+  const unsupportedField = findUnsupportedStartField(req.body);
+  if (unsupportedField) {
+    res.status(400).json({ error: `Unsupported start field: ${unsupportedField}` });
+    return;
   }
   enqueueSession(session.id);
   res.json({ sessionId: session.id, status: "queued" });
@@ -396,7 +380,6 @@ router.delete("/sessions/:id", async (req, res) => {
     const deletedSession = canceledRun?.active
       ? sessionStore.detachSession(session.id)
       : await sessionStore.deleteSession(session.id);
-    clearSessionRuntimeSettings(session.id);
     if (canceledRun?.active && deletedSession) {
       scheduleForceDeleteSessionFiles(deletedSession, "initial");
       void canceledRun.finished.then(() => {
@@ -414,7 +397,6 @@ router.delete("/sessions/:id", async (req, res) => {
 });
 
 router.get("/runtime", (_req, res) => {
-  const settings = getFrontendSettingsResponse();
   res.json({
     browserPath: detectBrowserBinary() ?? null,
     maxConcurrentAgents: getMaxConcurrentAgents(),
@@ -424,8 +406,6 @@ router.get("/runtime", (_req, res) => {
     diffRatioThreshold: getDiffRatioThreshold(),
     workspaceRoot: getWorkspaceRoot(),
     enableSessionLocalStorage: getSessionLocalStorageEnabled(),
-    frontendSettingsEnabled: settings.enabled,
-    frontendSettingsFields: settings.fields,
     sessionDeleteDisabled: getSessionDeleteDisabled(),
     sessionChatDisabled: getSessionChatDisabled(),
   });

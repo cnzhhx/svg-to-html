@@ -19,7 +19,6 @@ export type AppState = {
   runtime: RuntimeInfo | null
   selectedModuleId: string | null
   sessions: SessionSummary[]
-  settingsDialogOpen: boolean
   uploadDialogOpen: boolean
 }
 
@@ -42,6 +41,5 @@ export const initialAppState: AppState = {
   runtime: null,
   selectedModuleId: null,
   sessions: [],
-  settingsDialogOpen: false,
   uploadDialogOpen: false,
 }

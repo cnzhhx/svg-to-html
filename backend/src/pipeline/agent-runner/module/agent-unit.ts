@@ -3,10 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 
 import type { AgentReasoningEffort } from "../../../config/agent-reasoning.js";
-import {
-  getActiveRuntimeSettingsEnv,
-  getModuleAgentTimeoutMs,
-} from "../../../config/index.js";
+import { getModuleAgentTimeoutMs } from "../../../config/index.js";
 import type { ResolvedDesignTarget } from "../../../core/design-resolve.js";
 import { sessionStore } from "../../../session-store.js";
 import type { AgentThread } from "../../agent-runtime/index.js";
@@ -451,7 +448,6 @@ const createAgentUnitThread = ({
     ),
     deviceScaleFactor: design.scale,
     environment: {
-      ...getActiveRuntimeSettingsEnv(),
       AGENT_TURN_STARTED_AT: String(turnStartedAt ?? Date.now()),
     },
     modelReasoningEffort: reasoningEffort,

@@ -8,13 +8,11 @@ export function UploadDialog({
   initialFile,
   onUploaded,
   open,
-  settings,
 }: {
   onClose: () => void
   initialFile: File | null
   onUploaded: (response: UploadResponse) => void
   open: boolean
-  settings?: Record<string, unknown>
 }) {
   const [file, setFile] = useState<File | null>(null)
   const [format, setFormat] = useState(readStringStorage(STORAGE_KEYS.uploadFormat, 'html') || 'html')
@@ -51,7 +49,6 @@ export function UploadDialog({
         outputFormat: format,
         scale,
         sessionCount,
-        settings,
       })
       onUploaded(response)
       setFile(null)

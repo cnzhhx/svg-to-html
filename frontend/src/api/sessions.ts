@@ -5,10 +5,10 @@ export const loadSessions = () => apiJson<SessionSummary[]>('/api/sessions')
 
 export const loadSession = (id: string) => apiJson<Session>(`/api/sessions/${encodeURIComponent(id)}`)
 
-export const startSession = (id: string, settings?: unknown) =>
+export const startSession = (id: string) =>
   apiJson<{ sessionId: string; status: string }>(`/api/sessions/${encodeURIComponent(id)}/start`, {
     method: 'POST',
-    body: JSON.stringify(settings === undefined ? {} : { settings }),
+    body: JSON.stringify({}),
   })
 
 export const sendSessionMessage = (id: string, moduleId: string, text: string) =>

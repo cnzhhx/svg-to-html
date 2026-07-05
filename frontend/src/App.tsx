@@ -6,7 +6,6 @@ import {
   setRuntimeWorkspaceRoot,
 } from './utils/artifacts'
 import { STORAGE_KEYS, readStringStorage, writeStringStorage } from './utils/storage'
-import { getRunSettingsPayload } from './utils/settings'
 import {
   getLocalClientId,
   getLocalSessionIds,
@@ -31,7 +30,6 @@ import { RunningWorkspace } from './components/workflow/RunningWorkspace'
 import { ResultPanel } from './components/result/ResultPanel'
 import { ChatDrawer } from './components/chat/ChatDrawer'
 import { UploadDialog } from './components/upload/UploadDialog'
-import { SettingsDialog } from './components/settings/SettingsDialog'
 import { Lightbox } from './components/common/Lightbox'
 import { artifactCacheKeyForSession, type ArtifactCacheMeta } from './utils/artifact-cache'
 import type { Session, SessionMessage } from './types/session'
@@ -42,7 +40,6 @@ import './styles/upload.css'
 import './styles/workflow.css'
 import './styles/result.css'
 import './styles/chat.css'
-import './styles/settings.css'
 
 const getUrlSessionId = () => new URLSearchParams(window.location.search).get('session')
 
@@ -456,12 +453,8 @@ export default function App() {
   const startCurrentSession = async () => {
     if (!state.currentSession?.id) return
     markGeneratedSession(state.currentSession)
-    const settings = getRunSettingsPayload(
-      Boolean(state.runtime?.frontendSettingsEnabled),
-      state.runtime?.frontendSettingsFields,
-    )
     try {
-      await startSession(state.currentSession.id, settings)
+      await startSession(state.currentSession.id)
       const session = restoreGeneratedSessionOwner(await loadSession(state.currentSession.id))
       dispatch({ type: 'session/selected', session, sessionId: session.id })
     } catch (error) {
@@ -521,13 +514,11 @@ export default function App() {
         deleteDisabled={Boolean(state.runtime?.sessionDeleteDisabled)}
         onDelete={deleteCurrentSession}
         onExpandSidebar={() => setSidebarCollapsed(false)}
-        onOpenSettings={() => dispatch({ type: 'settings/open', open: true })}
         onToggleChat={() => dispatch({ type: 'chat/toggle' })}
         onToggleTheme={toggleTheme}
         session={state.currentSession}
         showChatToggle={!showRunningWorkspace}
         sidebarCollapsed={sidebarCollapsed}
-        settingsEnabled={Boolean(state.runtime?.frontendSettingsEnabled)}
       />
       <div className="content-area">
         {state.error ? <div className="url-error app-error">{state.error}</div> : null}
@@ -623,15 +614,11 @@ export default function App() {
             dispatch({ type: 'session/selected', session: first, sessionId: first.id })
             updateUrlSession(first.id)
           }
-          const settings = getRunSettingsPayload(
-            Boolean(state.runtime?.frontendSettingsEnabled),
-            state.runtime?.frontendSettingsFields,
-          )
           void Promise.all(
             uploaded
               .filter((session) => session.status !== 'queued' && session.status !== 'running')
               .map(async (session) => {
-                await startSession(session.id, settings)
+                await startSession(session.id)
                 if (session.id === first?.id) {
                   const fresh = restoreGeneratedSessionOwner(await loadSession(session.id))
                   dispatch({ type: 'session/selected', session: fresh, sessionId: fresh.id })
@@ -640,12 +627,7 @@ export default function App() {
           ).catch((error) => setError(error instanceof Error ? error.message : String(error)))
         }}
         open={state.uploadDialogOpen}
-        settings={getRunSettingsPayload(
-          Boolean(state.runtime?.frontendSettingsEnabled),
-          state.runtime?.frontendSettingsFields,
-        )}
       />
-      <SettingsDialog onClose={() => dispatch({ type: 'settings/open', open: false })} open={state.settingsDialogOpen} runtime={state.runtime} />
       <Lightbox onClose={() => setLightboxSrc(null)} src={lightboxSrc} />
     </>
   )
