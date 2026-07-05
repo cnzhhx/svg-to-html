@@ -25,7 +25,7 @@
 - **模块化生成** — 大型设计稿自动拆分为语义模块，并行生成
 - **智能预处理** — 预提取文本（OCR）、布局框、颜色、图标、背景
 - **还原度闭环** — 模块级 + 全页级视觉对比反馈，自动修复
-- **自动回滚** — 还原度退化时自动回滚到最优快照
+- **验证停损** — 还原度低收益或反弹时提示停止微调
 - **Web UI + CLI** — 提供浏览器界面和完整 CLI 工具集
 
 ## 快速开始
@@ -111,13 +111,12 @@ bash backend/scripts/start-linux.sh foreground  # 前台运行（带自动重启
 
 ### 环境变量
 
-所有配置可通过 `.env` 文件设置，关键变量：
+业务配置可通过 `.env` 文件设置，关键变量：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `PORT` | `80` | HTTP 监听端口 |
 | `WORKSPACE` | `./workspace` | Session 产物根目录 |
-| `NODE_ENV` | `development` | 运行环境 |
 | `MAX_CONCURRENT_AGENTS` | `2` | 同时运行的 session 数 |
 | `MAX_PARALLEL_MODULE_AGENTS` | `5` | 单 session 并行模块数 |
 | `CDP_OPERATION_CONCURRENCY` | `1` | 浏览器截图 / 页面 evaluate 并发上限 |
@@ -161,7 +160,7 @@ flowchart TD
   B --> C[模块规划]
   C --> D[模块 SVG 裁剪 + 语义分析]
   D --> E[模块 Agent 并行还原]
-  E --> F[模块级还原度评估 + 回滚]
+  E --> F[模块级还原度评估 + 停损]
   F --> G[合并全部模块]
   G --> H[全页还原度评估]
   H --> I[最终 HTML/CSS/Vue/React 输出]

@@ -173,10 +173,7 @@ const buildBackendConfig = () => {
 
   return {
     agent: {
-      maxConcurrentAgents: readNumber(
-        "MAX_CONCURRENT_AGENTS",
-        nodeEnv === "production" ? 1 : 2,
-      ),
+      maxConcurrentAgents: readNumber("MAX_CONCURRENT_AGENTS", 2),
       maxParallelModuleAgents,
       semanticVisionConcurrency: readNumber(
         "SEMANTIC_VISION_CONCURRENCY",
@@ -282,7 +279,7 @@ const buildBackendConfig = () => {
       ),
       support: parseReasoningEffort(
         readBackendEnvString("SUPPORT_AGENT_REASONING_EFFORT"),
-        "none",
+        "high",
       ),
     },
     runtime: {
@@ -505,17 +502,8 @@ const BACKEND_CONFIG_FIELDS: BackendConfigFieldDefinition[] = [
     type: "string",
   },
   {
-    configKey: "server.nodeEnv",
-    defaultValue: "development",
-    description: "运行环境，会影响部分默认值，例如 session 并发。",
-    envName: "NODE_ENV",
-    restartRequired: true,
-    section: "server",
-    type: "string",
-  },
-  {
     configKey: "agent.maxConcurrentAgents",
-    defaultValue: "production=1, development=2",
+    defaultValue: 2,
     description: "最多同时执行的 session 数量。",
     envName: "MAX_CONCURRENT_AGENTS",
     section: "agent",
@@ -589,7 +577,7 @@ const BACKEND_CONFIG_FIELDS: BackendConfigFieldDefinition[] = [
   },
   {
     configKey: "agent.supportReasoningEffort",
-    defaultValue: "none",
+    defaultValue: "high",
     description: "辅助、规划和视觉调用使用的推理强度。",
     envName: "SUPPORT_AGENT_REASONING_EFFORT",
     options: SUPPORTED_REASONING_EFFORTS,
@@ -926,10 +914,24 @@ const NON_RUNTIME_FRONTEND_FIELDS = new Set([
   "session.chatDisabled",
 ]);
 
+const FRONTEND_RUNTIME_ADVANCED_FIELDS = new Set([
+  "agent.maxParallelModuleAgents",
+  "agent.moduleTimeoutMs",
+  "browser.cdpReadyTimeoutMs",
+  "browser.cdpSendTimeoutMs",
+  "browser.cdpOperationConcurrency",
+  "diff.diffRatioThreshold",
+  "diff.moduleDiffRatioThreshold",
+  "diff.pngRasterScaleMultiplier",
+  "session.visionTextTimeoutMs",
+]);
+
 const isFrontendRuntimeSettingField = (field: BackendConfigFieldDefinition) =>
   field.envName !== FRONTEND_SETTINGS_ENV_NAME &&
   !field.restartRequired &&
-  !NON_RUNTIME_FRONTEND_FIELDS.has(field.configKey);
+  !NON_RUNTIME_FRONTEND_FIELDS.has(field.configKey) &&
+  (field.section === "model" ||
+    FRONTEND_RUNTIME_ADVANCED_FIELDS.has(field.configKey));
 
 const fieldByEnvName = new Map(
   BACKEND_CONFIG_FIELDS.map((field) => [field.envName, field]),

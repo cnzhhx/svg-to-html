@@ -6,10 +6,10 @@
   "scripts": {
     "build:mcp": "node scripts/build-mcp.mjs",
     "check": "pnpm run lint:types && pnpm test && pnpm run build:mcp",
-    "dev": "tsx src/server.ts",
+    "dev": "NODE_ENV=development tsx src/server.ts",
     "doctor": "node scripts/doctor.mjs",
     "lint:types": "tsc --noEmit",
-    "start": "tsx src/server.ts",
+    "start": "NODE_ENV=production tsx src/server.ts",
     "test": "tsx --test tests/unit/**/*.test.ts",
     "task:generate": "tsx src/cli/generate-design.ts",
     "task:resolve-container-layout": "tsx src/cli/resolve-container-layout.ts",

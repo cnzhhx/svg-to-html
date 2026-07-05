@@ -25,7 +25,7 @@ Below is a visual comparison between the original design render and the generate
 - **Modular generation** — Splits large designs into semantic modules for parallel generation
 - **Smart preprocessing** — Pre-extracts text (OCR), layout boxes, colors, icons, backgrounds
 - **Fidelity loop** — Module-level and full-page visual comparison feedback with auto-repair
-- **Auto rollback** — Automatically rolls back to the best snapshot when fidelity degrades
+- **Verify stop-loss** — Suggests stopping low-return or degraded refinement loops
 - **Web UI + CLI** — Browser interface for uploads and a full set of CLI tools
 
 ## Quick Start
@@ -111,13 +111,12 @@ Edit `backend/config/model-provider.json` (copy from `backend/config/model-provi
 
 ### Environment Variables
 
-All settings can be configured via the `.env` file. Key variables:
+Runtime settings can be configured via the `.env` file. Key variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PORT` | `80` | HTTP listen port |
 | `WORKSPACE` | `./workspace` | Session artifacts root |
-| `NODE_ENV` | `development` | Runtime environment |
 | `MAX_CONCURRENT_AGENTS` | `2` | Concurrent session limit |
 | `MAX_PARALLEL_MODULE_AGENTS` | `5` | Parallel modules per session |
 | `CDP_OPERATION_CONCURRENCY` | `1` | Browser screenshot / page evaluate concurrency limit |
@@ -161,7 +160,7 @@ flowchart TD
   B --> C[Module Planning]
   C --> D[Module SVG Cropping + Semantic Analysis]
   D --> E[Parallel Module Agent Restoration]
-  E --> F[Module-level Fidelity Evaluation + Rollback]
+  E --> F[Module-level Fidelity Evaluation + Stop-loss]
   F --> G[Merge All Modules]
   G --> H[Full-page Fidelity Evaluation]
   H --> I[Final HTML/CSS/Vue/React Output]

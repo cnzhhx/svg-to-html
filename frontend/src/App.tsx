@@ -456,7 +456,10 @@ export default function App() {
   const startCurrentSession = async () => {
     if (!state.currentSession?.id) return
     markGeneratedSession(state.currentSession)
-    const settings = getRunSettingsPayload(Boolean(state.runtime?.frontendSettingsEnabled))
+    const settings = getRunSettingsPayload(
+      Boolean(state.runtime?.frontendSettingsEnabled),
+      state.runtime?.frontendSettingsFields,
+    )
     try {
       await startSession(state.currentSession.id, settings)
       const session = restoreGeneratedSessionOwner(await loadSession(state.currentSession.id))
@@ -620,7 +623,10 @@ export default function App() {
             dispatch({ type: 'session/selected', session: first, sessionId: first.id })
             updateUrlSession(first.id)
           }
-          const settings = getRunSettingsPayload(Boolean(state.runtime?.frontendSettingsEnabled))
+          const settings = getRunSettingsPayload(
+            Boolean(state.runtime?.frontendSettingsEnabled),
+            state.runtime?.frontendSettingsFields,
+          )
           void Promise.all(
             uploaded
               .filter((session) => session.status !== 'queued' && session.status !== 'running')
@@ -634,6 +640,10 @@ export default function App() {
           ).catch((error) => setError(error instanceof Error ? error.message : String(error)))
         }}
         open={state.uploadDialogOpen}
+        settings={getRunSettingsPayload(
+          Boolean(state.runtime?.frontendSettingsEnabled),
+          state.runtime?.frontendSettingsFields,
+        )}
       />
       <SettingsDialog onClose={() => dispatch({ type: 'settings/open', open: false })} open={state.settingsDialogOpen} runtime={state.runtime} />
       <Lightbox onClose={() => setLightboxSrc(null)} src={lightboxSrc} />

@@ -94,21 +94,39 @@ export function getRuntimeFieldBaseline(field?: { defaultValue?: unknown; sensit
   return value === null || value === undefined ? '' : String(value)
 }
 
-export function getRunSettingsPayload(frontendSettingsEnabled = true): Record<string, unknown> {
+const runtimeFieldEnvNames = (fields?: Array<{ envName: string }>) =>
+  fields ? new Set(fields.map((field) => field.envName)) : null
+
+const isEnvNameAllowed = (allowedEnvNames: Set<string> | null, envName: string) =>
+  !allowedEnvNames || allowedEnvNames.has(envName)
+
+export function getRunSettingsPayload(frontendSettingsEnabled = true, fields?: Array<{ envName: string }>): Record<string, unknown> {
   if (!frontendSettingsEnabled) return {}
+  const allowedEnvNames = runtimeFieldEnvNames(fields)
   const payload: Record<string, unknown> = Object.fromEntries(
-    Object.entries(readStoredRunSettings()).filter(([, value]) => value !== '' && value !== null && value !== undefined),
+    Object.entries(readStoredRunSettings()).filter(([envName, value]) =>
+      isEnvNameAllowed(allowedEnvNames, envName) &&
+      value !== '' &&
+      value !== null &&
+      value !== undefined,
+    ),
   )
   const channel = getActiveModelChannel()
   if (channel && channel.baseURL?.trim() && channel.model?.trim()) {
     const provider = channel.provider?.trim() || channel.name?.trim() || 'frontend-model'
-    payload.MODEL_PROVIDER = provider
-    payload.MODEL_PROVIDER_NAME = channel.name?.trim() || provider
-    payload.MODEL_BASE_URL = channel.baseURL.trim()
-    payload.MODEL_ID = channel.model.trim()
-    payload.MODEL_WIRE_API = channel.wireApi || 'chat-completions'
-    if (channel.apiKey?.trim()) payload.MODEL_API_KEY = channel.apiKey.trim()
-    if (channel.reasoningEffort) payload.MODEL_REASONING_EFFORT = channel.reasoningEffort
+    const modelPayload: Record<string, unknown> = {
+      MODEL_BASE_URL: channel.baseURL.trim(),
+      MODEL_ID: channel.model.trim(),
+      MODEL_PROVIDER: provider,
+      MODEL_PROVIDER_NAME: channel.name?.trim() || provider,
+      MODEL_WIRE_API: channel.wireApi || 'chat-completions',
+    }
+    if (channel.apiKey?.trim()) modelPayload.MODEL_API_KEY = channel.apiKey.trim()
+    if (channel.reasoningEffort) modelPayload.MODEL_REASONING_EFFORT = channel.reasoningEffort
+    Object.assign(
+      payload,
+      Object.fromEntries(Object.entries(modelPayload).filter(([envName]) => isEnvNameAllowed(allowedEnvNames, envName))),
+    )
   }
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== '' && value !== null && value !== undefined))
 }

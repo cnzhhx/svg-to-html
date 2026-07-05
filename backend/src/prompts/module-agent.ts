@@ -368,8 +368,8 @@ ${sourceDataContractSection}
 - 空产物比低保真初版更严重：任何时候如果发现自己在同一冲突点上反复权衡，必须停止继续分析，保留/写出当前最佳可运行产物，再用 browser-eval 或 verify 进入修复循环。
 - verify/browser-eval/browser-session_export_svg_node 都只能在三件套产物已经非空后执行；结束前必须确认 preview.fragment.html、module.css、manifest.json 已写齐且不是空文件。
 - 修复优先级用可观察现象判断，不要给问题贴等级标签：先批量修内容缺失、结构层级错、错误资产、明显重叠、明显布局/裁切错误；文本 width/height 度量差、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差不要反复追。不要每个小改动都 verify。
-- **宿主自动回滚机制**：每次 verify 后，如果 diffRatio 比当前最佳值反弹超过 0.5 个百分点，宿主会自动回滚到上一次最佳版本的文件状态，并终止本轮 agent。你不需要手动恢复文件。因此：如果一轮修改后 verify 结果变差，不要慌张，宿主已帮你回滚；你只需要在下一轮重新分析原因、换一种修复策略即可。
-- **browser-eval 阶段无自动回滚**：browser-eval 只返回坐标信息，不产生 diffRatio，因此不会触发自动回滚。如果你在 browser-eval 后发现关键元素位置偏差很大（如 >5px），可以自行撤销最近的修改（重新写入文件），或者继续调整后再 verify——verify 阶段的自动回滚会保护你。
+- **verify 不会自动回滚文件**：每次 verify 后，宿主只记录本轮最佳 diffRatio 和反弹日志；即使 diffRatio 变差，也会保留最新产物。若一轮修改明显走偏，必须自行判断是否撤销最近改动，或停止继续微调并保留当前可运行产物。
+- **browser-eval 阶段也无自动回滚**：browser-eval 只返回坐标信息，不产生 diffRatio。如果你在 browser-eval 后发现关键元素位置偏差很大（如 >5px），可以自行撤销最近的修改（重新写入文件），或者继续调整后再 verify。
 - Verify 后诊断与读图对比：先看 verify stdout 的 \`alignmentDiagnostics\` 摘要和 \`alignment-diagnostics.json\` 的 \`positionIssues\`，只批量修复真正会改变结构结果的布局/资产问题。若 positionIssues 为空或只剩文本 width/height、glyph 度量、抗锯齿、字重/字体渲染或 1-2px 边缘偏差，即使 diffRatio 仍高也必须停止猜字体、阴影、z-index、overflow 等无依据参数。只有诊断缺失/报错，或诊断无法解释区域级问题时，再读取 verify stdout 的 \`artifacts.renderPngPath\`（当前 HTML 渲染）和 \`artifacts.svgPngPath\`（原 SVG 参考），列出区域级差异清单后一次性批量修复。**任何情况下都不要读取 artifacts.diffPngPath / diff.png**（像素差异热力图，对定位问题帮助小且极耗 token）。
 - Verify 螺旋停损：每轮 verify 后先看是否还有结构性问题，再一次性批量修复；禁止一次只改一个元素的 1-3px left/top。若当前最佳 diffRatio 已低于 5%，本轮执行超过 15 分钟，并且相邻两次 verify 的 diffRatio 改善都 < 0.1 个百分点（绝对值降幅 < 0.001），verify stdout 会给出 stopLoss 建议；看到该建议后不要继续微调，保留当前最佳版本停止，转去别处或结束。若出现反弹且诊断没有新的结构性问题，也保留当前最佳版本停止。
 - 低收益小问题停损：当剩余问题只是轻微文本偏移、文本 width/height 度量差、抗锯齿、字重/字体渲染、1-2px 抖动、小面积颜色差时，不论 diffRatio 是否低于 0.05，最多围绕同一问题做一次修复和一次复验；若复验 diffRatio 没有下降至少 0.001，禁止继续实验、查源码、查字体、拆字符、改 font-smoothing/text-rendering 或反复改 DOM 结构，直接保留当前最佳版本并结束。

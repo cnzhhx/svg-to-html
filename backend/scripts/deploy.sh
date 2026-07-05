@@ -53,7 +53,6 @@ Usage:
 Environment variables:
   PORT=80                             HTTP listen port
   WORKSPACE=./workspace               Workspace root directory
-  NODE_ENV=production                 Runtime environment
   SKIP_SYSTEM_DEPS=1                  Skip system dependency installation
   SKIP_BROWSER_INSTALL=1              Skip browser installation
 EOF

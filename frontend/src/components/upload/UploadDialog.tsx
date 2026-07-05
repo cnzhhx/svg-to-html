@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { uploadSvg } from '../../api/upload'
 import type { UploadResponse } from '../../api/upload'
-import { getRunSettingsPayload } from '../../utils/settings'
 import { STORAGE_KEYS, readNumberStorage, readStringStorage, writeStringStorage } from '../../utils/storage'
 
 export function UploadDialog({
@@ -9,11 +8,13 @@ export function UploadDialog({
   initialFile,
   onUploaded,
   open,
+  settings,
 }: {
   onClose: () => void
   initialFile: File | null
   onUploaded: (response: UploadResponse) => void
   open: boolean
+  settings?: Record<string, unknown>
 }) {
   const [file, setFile] = useState<File | null>(null)
   const [format, setFormat] = useState(readStringStorage(STORAGE_KEYS.uploadFormat, 'html') || 'html')
@@ -50,7 +51,7 @@ export function UploadDialog({
         outputFormat: format,
         scale,
         sessionCount,
-        settings: getRunSettingsPayload(),
+        settings,
       })
       onUploaded(response)
       setFile(null)

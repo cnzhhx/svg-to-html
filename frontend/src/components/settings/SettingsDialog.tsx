@@ -13,22 +13,15 @@ import {
 } from '../../utils/settings'
 
 const FIELD_TEXT: Record<string, { description: string; label: string }> = {
-  'agent.defaultReasoningEffort': { description: '默认推理强度，未单独指定时作为 agent 的兜底值。', label: '默认推理强度' },
   'agent.maxParallelModuleAgents': { description: '单个任务内同时运行的模块 agent 数量。', label: '模块并发数' },
   'agent.moduleTimeoutMs': { description: '单个模块 agent 最长执行时间，单位毫秒。', label: '模块超时时间' },
-  'agent.semanticVisionConcurrency': { description: '视觉语义分析的并发上限。', label: '视觉分析并发' },
-  'agent.supportReasoningEffort': { description: '规划、辅助和视觉调用使用的推理强度。', label: '辅助推理强度' },
-  'agent.unitReasoningEffort': { description: '单个模块 agent 回合使用的推理强度。', label: '模块推理强度' },
+  'browser.cdpOperationConcurrency': { description: '跨进程浏览器截图 / 页面 evaluate 的并发上限。', label: 'CDP 操作并发' },
+  'browser.cdpReadyTimeoutMs': { description: '等待浏览器调试端口 ready 的最长时间，单位毫秒。', label: '浏览器 ready 超时' },
+  'browser.cdpSendTimeoutMs': { description: '单个 CDP 命令最长等待时间，单位毫秒。', label: 'CDP 命令超时' },
   'diff.diffRatioThreshold': { description: '整页视觉差异通过阈值，0.05 表示 5%。数值越低，还原度要求越高。', label: '整页视觉差异阈值' },
   'diff.moduleDiffRatioThreshold': { description: '单模块视觉差异通过阈值。', label: '模块视觉差异阈值' },
   'diff.pngRasterScaleMultiplier': { description: '导出 PNG 局部资产时额外放大的倍率。', label: 'PNG 导出倍率' },
-  'logging.maxSessionLogChars': { description: '单条 session 日志最多保留的字符数。', label: '单条日志长度' },
-  'runtime.opencodeCliPath': { description: '启动 opencode CLI 的命令或绝对路径。', label: 'opencode 路径' },
   'session.visionTextTimeoutMs': { description: '视觉文字识别最长等待时间，单位毫秒。', label: '视觉文字识别超时' },
-  'workflow.archiveFullEveryN': { description: '每隔多少轮保存一次完整工作流归档。', label: '完整归档间隔' },
-  'workflow.archiveTextMaxChars': { description: '工作流归档中单段文本最多保留的字符数。', label: '归档文本长度' },
-  'workflow.modelPlannerMockResponse': { description: '开发调试用，填写后规划器跳过真实模型调用。', label: '规划器模拟响应' },
-  'workflow.modelPlannerTurnTimeoutMs': { description: '模型规划器单轮最长等待时间，单位毫秒。', label: '规划器超时' },
 }
 
 const sourceLabel = (source: string) => {
@@ -276,11 +269,11 @@ function ModelSettingsPanel({
               <label className="settings-field model-editor-field">
                 <span className="settings-field-main">
                   <span className="settings-field-name">推理强度</span>
-                  <span className="settings-field-description">留空时使用后端默认推理强度。</span>
+                  <span className="settings-field-description">留空时使用后端模型配置；未配置时默认为 high。</span>
                 </span>
                 <span className="settings-field-control">
                   <select className="settings-input" disabled={disabled} onChange={(event) => onChange({ reasoningEffort: event.target.value })} value={activeChannel.reasoningEffort || ''}>
-                    <option value="">后端默认</option>
+                    <option value="">后端默认（high）</option>
                     {['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].map((value) => <option key={value} value={value}>{value}</option>)}
                   </select>
                 </span>
