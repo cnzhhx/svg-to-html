@@ -212,8 +212,8 @@ const applyLivePreviewFit = ({
     "m",
   );
   const withFitBlock = existingPattern.test(html)
-    ? html.replace(existingPattern, block)
-    : html.replace("</head>", `    ${block}\n  </head>`);
+    ? html.replace(existingPattern, () => block)
+    : html.replace("</head>", () => `    ${block}\n  </head>`);
   return wrapDesignPageForLivePreview(withFitBlock);
 };
 

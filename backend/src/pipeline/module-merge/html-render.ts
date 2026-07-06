@@ -443,12 +443,14 @@ const injectModuleCss = ({ css, html }: { css: string; html: string }) => {
     "m",
   );
 
-  if (existingPattern.test(html)) return html.replace(existingPattern, block);
+  if (existingPattern.test(html)) {
+    return html.replace(existingPattern, () => block);
+  }
   if (!html.includes("</head>")) {
     throw new Error("Unable to locate </head> in scaffold HTML");
   }
 
-  return html.replace("</head>", `    ${block}\n  </head>`);
+  return html.replace("</head>", () => `    ${block}\n  </head>`);
 };
 
 const renderModuleSections = (modules: ModuleMergeResolvedModule[]) =>
@@ -636,7 +638,11 @@ const replaceDesignPageContent = ({
     );
   }
 
-  return html.replace(pattern, `$1\n      ${sections}\n    $4`);
+  return html.replace(
+    pattern,
+    (_match, open: string, _quote: string, _content: string, close: string) =>
+      `${open}\n      ${sections}\n    ${close}`,
+  );
 };
 
 export {
