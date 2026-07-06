@@ -390,6 +390,9 @@ install_project_deps() {
   log "building browser MCP server"
   pnpm -C "$BACKEND_DIR" run build:mcp
 
+  log "building frontend static assets"
+  pnpm -C "$ROOT_DIR/frontend" build
+
   if [ "$RUN_TYPECHECK" = "1" ]; then
     log "running TypeScript type check"
     pnpm -C "$BACKEND_DIR" exec tsc --noEmit
