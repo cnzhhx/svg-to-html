@@ -499,20 +499,74 @@ const collectModuleHits = ({
     })
     .sort((left, right) => right.score - left.score);
 
-const isCrossModuleSharedBackgroundCandidate = ({
+const LOWER_NODE_FULL_COVER_TOLERANCE_AREA = 1;
+
+type SharedBackgroundCandidate = {
+  coveredLowerMatches: NodeMatch[];
+};
+
+const lowerNodeIsFullyCoveredBy = (lower: NodeMatch, upper: NodeMatch) => {
+  const lowerArea = Math.max(1, areaOf(lower.box));
+  return (
+    intersectionArea(lower.box, upper.box) >=
+    Math.max(0, lowerArea - LOWER_NODE_FULL_COVER_TOLERANCE_AREA)
+  );
+};
+
+const collectFullyCoveredLowerMatches = ({
+  acceptedSharedNodePaths,
+  allMatches,
+  match,
+}: {
+  acceptedSharedNodePaths: Set<string>;
+  allMatches: NodeMatch[];
+  match: NodeMatch;
+}): NodeMatch[] | null => {
+  const coveredLowerMatches: NodeMatch[] = [];
+
+  for (const lower of allMatches) {
+    if (lower.order >= match.order) continue;
+    if (acceptedSharedNodePaths.has(lower.node.nodePath)) continue;
+    if (intersectionArea(lower.box, match.box) <= 0) continue;
+    if (!lowerNodeIsFullyCoveredBy(lower, match)) return null;
+    coveredLowerMatches.push(lower);
+  }
+
+  return coveredLowerMatches;
+};
+
+const removeMatchesFromDrafts = (
+  drafts: ModuleOwnershipDraft[],
+  matches: NodeMatch[],
+) => {
+  if (!matches.length) return;
+  const nodePaths = new Set(matches.map((match) => match.node.nodePath));
+  drafts.forEach((draft) => {
+    draft.candidateNodes = draft.candidateNodes.filter(
+      (candidate) => !nodePaths.has(candidate.node.nodePath),
+    );
+    draft.retainedNodes = draft.retainedNodes.filter(
+      (candidate) => !nodePaths.has(candidate.node.nodePath),
+    );
+  });
+};
+
+const getCrossModuleSharedBackgroundCandidate = ({
+  acceptedSharedNodePaths,
+  allMatches,
   hits,
   match,
   modules,
   viewport,
 }: {
+  acceptedSharedNodePaths: Set<string>;
+  allMatches: NodeMatch[];
   hits: ModuleHit[];
   match: NodeMatch;
   modules: ModuleOwnershipDraft[];
   viewport: Box;
-}) => {
-  if (!BACKGROUND_CANDIDATE_TAGS.has(match.node.tag)) return false;
-  if (isPageScaleBox(match.box, viewport.width, viewport.height)) return true;
-
+}): SharedBackgroundCandidate | null => {
+  if (!BACKGROUND_CANDIDATE_TAGS.has(match.node.tag)) return null;
   const nodeArea = Math.max(1, areaOf(match.box));
   const viewportArea = Math.max(1, areaOf(viewport));
   const broadAcrossPage = match.box.width >= viewport.width * 0.72;
@@ -546,13 +600,23 @@ const isCrossModuleSharedBackgroundCandidate = ({
     return hit.intersection / moduleArea >= 0.2;
   }).length >= 2;
 
-  return (
+  const looksLikeSharedBackground =
+    isPageScaleBox(match.box, viewport.width, viewport.height) ||
     (broadAcrossPage && largeEnough && (tallEnough || coversMultipleModuleBands)) ||
     (sectionScaleWidth &&
       largeEnough &&
       tallEnough &&
-      (coversMultipleModuleBands || crossesInternalBoundary))
-  );
+      (coversMultipleModuleBands || crossesInternalBoundary));
+  if (!looksLikeSharedBackground) return null;
+
+  const coveredLowerMatches = collectFullyCoveredLowerMatches({
+    acceptedSharedNodePaths,
+    allMatches,
+    match,
+  });
+  if (!coveredLowerMatches) return null;
+
+  return { coveredLowerMatches };
 };
 
 const clipBoxToViewport = (box: Box, viewport: Box) =>
@@ -625,20 +689,28 @@ const assignNodeOwnership = ({
 }) => {
   const allMatches = collectRenderableNodeMatches({ svgLayout, viewport });
   const sharedMatches: NodeMatch[] = [];
+  const acceptedSharedNodePaths = new Set<string>();
 
   allMatches.forEach((match) => {
     const hits = collectModuleHits({ match, modules: drafts });
     if (!hits.length) return;
 
-    if (
-      isCrossModuleSharedBackgroundCandidate({
-        hits,
-        match,
-        modules: drafts,
-        viewport,
-      })
-    ) {
+    const sharedCandidate = getCrossModuleSharedBackgroundCandidate({
+      acceptedSharedNodePaths,
+      allMatches,
+      hits,
+      match,
+      modules: drafts,
+      viewport,
+    });
+    if (sharedCandidate) {
+      removeMatchesFromDrafts(drafts, sharedCandidate.coveredLowerMatches);
+      for (const lowerMatch of sharedCandidate.coveredLowerMatches) {
+        sharedMatches.push(lowerMatch);
+        acceptedSharedNodePaths.add(lowerMatch.node.nodePath);
+      }
       sharedMatches.push(match);
+      acceptedSharedNodePaths.add(match.node.nodePath);
       return;
     }
 
@@ -697,6 +769,9 @@ const recoverUnownedRenderableNodes = ({
       ...module.retainedNodes.map((match) => match.node.nodePath),
     ]),
   ]);
+  const sharedLayerNodePaths = new Set(
+    sharedLayers.flatMap((layer) => layer.nodePaths),
+  );
   const allMatches = collectRenderableNodeMatches({ svgLayout, viewport });
 
   allMatches.forEach((match) => {
@@ -705,7 +780,9 @@ const recoverUnownedRenderableNodes = ({
     const hits = collectModuleHits({ match, modules: recoveredDrafts });
     if (!hits.length) return;
     if (
-      isCrossModuleSharedBackgroundCandidate({
+      getCrossModuleSharedBackgroundCandidate({
+        acceptedSharedNodePaths: sharedLayerNodePaths,
+        allMatches,
         hits,
         match,
         modules: recoveredDrafts,
