@@ -41,6 +41,8 @@ const DB_VERSION = 2
 const FILE_STORE = 'files'
 const SESSION_STORE = 'sessions'
 const HTML_REFERENCE_PATTERN = /(?:src|href|poster)=["']([^"'<>]+)["']|url\((['"]?)([^)"']+)\2\)/g
+const IMPORT_META_URL_REFERENCE_PATTERN = /new\s+URL\(\s*(["'`])([^"'`]+)\1\s*,\s*import\.meta\.url\s*\)/g
+const LOCAL_ARTIFACT_STRING_PATTERN = /(["'`])((?:\.{1,2}\/)+artifacts\/[^"'`\s)]+)\1/g
 
 let dbPromise: Promise<IDBDatabase> | null = null
 let crc32Table: Uint32Array | null = null
@@ -215,7 +217,7 @@ export async function cacheSessionArtifacts(session: Session): Promise<ArtifactC
       })
       if (isReferenceScannableArtifactFile(item.filePath)) {
         const source = await blob.text()
-        collectLocalHtmlReferences(source).forEach((ref) => {
+        collectLocalArtifactReferences(source).forEach((ref) => {
           if (isExternalReference(ref)) return
           const cleanRef = stripQueryAndHash(ref)
           if (!cleanRef) return
@@ -273,11 +275,11 @@ export async function createCachedArtifactObjectUrl(targetPath: string, records:
     const existing = objectUrls.get(normalized)
     if (existing) return existing
     const record = recordsByPath.get(normalized)
-    if (!record || building.has(normalized)) return workspaceFileUrl(normalized)
+    if (!record || building.has(normalized)) return absoluteBrowserUrl(workspaceFileUrl(normalized))
     building.add(normalized)
     let blob = record.blob
     const contentType = record.contentType || guessContentType(normalized)
-    if (isHtmlArtifactFile(normalized) || isCssArtifactFile(normalized)) {
+    if (isReferenceRewritableArtifactFile(normalized)) {
       const source = await blob.text()
       const rewritten = await rewriteCachedArtifactReferences(source, normalized, makeUrl)
       blob = new Blob([rewritten], { type: contentType })
@@ -333,9 +335,13 @@ function fetchLocalFileBlob(filePath: string, session: Session) {
   })
 }
 
+function absoluteBrowserUrl(url: string) {
+  return new URL(url, window.location.href).href
+}
+
 async function rewriteCachedArtifactReferences(source: string, sourcePath: string, makeUrl: (path: string) => Promise<string>) {
   let next = source
-  const refs = collectLocalHtmlReferences(source)
+  const refs = collectLocalArtifactReferences(source)
   for (const ref of refs) {
     if (isExternalReference(ref)) continue
     const cleanRef = stripQueryAndHash(ref)
@@ -349,10 +355,18 @@ async function rewriteCachedArtifactReferences(source: string, sourcePath: strin
   return next
 }
 
-function collectLocalHtmlReferences(source: string) {
+function collectLocalArtifactReferences(source: string) {
   const refs = new Set<string>()
   for (const match of source.matchAll(HTML_REFERENCE_PATTERN)) {
     const value = match[1] || match[3]
+    if (value) refs.add(value)
+  }
+  for (const match of source.matchAll(IMPORT_META_URL_REFERENCE_PATTERN)) {
+    const value = match[2]
+    if (value) refs.add(value)
+  }
+  for (const match of source.matchAll(LOCAL_ARTIFACT_STRING_PATTERN)) {
+    const value = match[2]
     if (value) refs.add(value)
   }
   return [...refs]
@@ -398,9 +412,18 @@ function isCssArtifactFile(filePath: string) {
   return stripQueryAndHash(filePath).toLowerCase().endsWith('.css')
 }
 
+function isScriptArtifactFile(filePath: string) {
+  const clean = stripQueryAndHash(filePath).toLowerCase()
+  return clean.endsWith('.js') || clean.endsWith('.mjs') || clean.endsWith('.jsx') || clean.endsWith('.ts') || clean.endsWith('.tsx')
+}
+
+function isReferenceRewritableArtifactFile(filePath: string) {
+  return isHtmlArtifactFile(filePath) || isCssArtifactFile(filePath) || isScriptArtifactFile(filePath)
+}
+
 function isReferenceScannableArtifactFile(filePath: string) {
   const clean = stripQueryAndHash(filePath).toLowerCase()
-  return isHtmlArtifactFile(clean) || isCssArtifactFile(clean) || clean.endsWith('.vue') || clean.endsWith('.tsx') || clean.endsWith('.jsx') || clean.endsWith('.ts') || clean.endsWith('.js')
+  return isReferenceRewritableArtifactFile(clean) || clean.endsWith('.vue')
 }
 
 function guessContentType(filePath: string) {
