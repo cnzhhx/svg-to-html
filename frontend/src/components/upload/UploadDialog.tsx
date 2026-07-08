@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { uploadSvg } from '../../api/upload'
-import type { UploadResponse } from '../../api/upload'
+import { uploadSvg } from '../../api/job-upload'
+import type { UploadResponse } from '../../api/job-upload'
 import { STORAGE_KEYS, readNumberStorage, readStringStorage, writeStringStorage } from '../../utils/storage'
 
 export function UploadDialog({
@@ -17,7 +17,7 @@ export function UploadDialog({
   const [file, setFile] = useState<File | null>(null)
   const [format, setFormat] = useState(readStringStorage(STORAGE_KEYS.uploadFormat, 'html') || 'html')
   const [scale, setScale] = useState(readNumberStorage(STORAGE_KEYS.uploadScale, 1))
-  const [sessionCountInput, setSessionCountInput] = useState('1')
+  const [jobCountInput, setJobCountInput] = useState('1')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -41,14 +41,14 @@ export function UploadDialog({
     setBusy(true)
     setError(null)
     try {
-      const parsedSessionCount = Number(sessionCountInput)
-      const sessionCount = Number.isFinite(parsedSessionCount) && parsedSessionCount > 0
-        ? Math.max(1, Math.min(20, Math.floor(parsedSessionCount)))
+      const parsedJobCount = Number(jobCountInput)
+      const jobCount = Number.isFinite(parsedJobCount) && parsedJobCount > 0
+        ? Math.max(1, Math.min(20, Math.floor(parsedJobCount)))
         : 1
       const response = await uploadSvg(file, {
         outputFormat: format,
         scale,
-        sessionCount,
+        jobCount,
       })
       onUploaded(response)
       setFile(null)
@@ -84,15 +84,15 @@ export function UploadDialog({
             </div>
           </div>
           <div className="upload-dialog-field">
-            <label className="upload-dialog-label" htmlFor="uploadSessionCount">并发 Session 数</label>
+            <label className="upload-dialog-label" htmlFor="uploadJobCount">并发 Job 数</label>
             <input
               className="upload-dialog-input"
-              id="uploadSessionCount"
+              id="uploadJobCount"
               max={20}
               min={1}
-              onChange={(event) => setSessionCountInput(event.target.value)}
+              onChange={(event) => setJobCountInput(event.target.value)}
               type="number"
-              value={sessionCountInput}
+              value={jobCountInput}
             />
           </div>
           <div className="upload-dialog-field">

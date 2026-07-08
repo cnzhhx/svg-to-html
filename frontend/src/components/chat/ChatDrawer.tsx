@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { sendSessionMessage } from '../../api/sessions'
+import { sendJobMessage } from '../../api/jobs'
 import { useAutoResizeTextarea } from '../../hooks/useAutoResizeTextarea'
 import type { AgentEvent } from '../../types/events'
-import type { Session, SessionMessage } from '../../types/session'
-import { labelForSessionStatus } from '../../utils/format'
+import type { Job, JobMessage } from '../../types/job'
+import { labelForJobStatus } from '../../utils/format'
 import { ModulePicker } from './ModulePicker'
 
 export function ChatDrawer({
@@ -16,7 +16,7 @@ export function ChatDrawer({
   onSelectModule,
   open,
   selectedModuleId,
-  session,
+  job,
   variant = 'drawer',
 }: {
   agentEvents: AgentEvent[]
@@ -24,11 +24,11 @@ export function ChatDrawer({
   disabled: boolean
   onClose: () => void
   onFilterModule: (moduleId: string | null) => void
-  onMessageQueued?: (message: SessionMessage) => void
+  onMessageQueued?: (message: JobMessage) => void
   onSelectModule: (moduleId: string | null) => void
   open: boolean
   selectedModuleId: string | null
-  session: Session | null
+  job: Job | null
   variant?: 'drawer' | 'embedded'
 }) {
   const [text, setText] = useState('')
@@ -37,14 +37,14 @@ export function ChatDrawer({
   const [notice, setNotice] = useState<string | null>(null)
   const conversationRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useAutoResizeTextarea(text)
-  const canSend = Boolean(session && selectedModuleId && text.trim() && !busy && !disabled && session.status !== 'queued')
+  const canSend = Boolean(job && selectedModuleId && text.trim() && !busy && !disabled && job.status !== 'queued')
   const activeModuleId = selectedModuleId
 
   const messages = useMemo(() => {
-    const items = session?.messages || []
+    const items = job?.messages || []
     if (!activeModuleId) return items
     return items.filter((message) => message.moduleId === activeModuleId)
-  }, [activeModuleId, session?.messages])
+  }, [activeModuleId, job?.messages])
   const filteredAgentEvents = useMemo(() => {
     if (!activeModuleId) return agentEvents
     return agentEvents.filter((event) => getAgentEventModuleId(event) === activeModuleId)
@@ -85,7 +85,7 @@ export function ChatDrawer({
     open,
     scrollConversationToBottom,
     selectedModuleId,
-    session?.id,
+    job?.id,
   ])
 
   const selectModule = (moduleId: string | null) => {
@@ -95,12 +95,12 @@ export function ChatDrawer({
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (!session?.id || !selectedModuleId || !text.trim()) return
+    if (!job?.id || !selectedModuleId || !text.trim()) return
     setBusy(true)
     setError(null)
     setNotice(null)
     try {
-      const result = await sendSessionMessage(session.id, selectedModuleId, text.trim())
+      const result = await sendJobMessage(job.id, selectedModuleId, text.trim())
       if (result.message) onMessageQueued?.(result.message)
       if (result.guidanceStatus === 'queued-for-guidance') {
         setNotice('已发送引导，正在中断当前模块执行')
@@ -121,7 +121,7 @@ export function ChatDrawer({
       <div className="chat-drawer-header">
         <div className="chat-drawer-heading">
           <strong className="chat-drawer-title">聊天调整</strong>
-          <span className="chat-drawer-meta">{disabled ? '聊天功能已关闭' : session ? `${labelForSessionStatus(session)} · 可查看聊天记录` : '选择 session 后可查看聊天'}</span>
+          <span className="chat-drawer-meta">{disabled ? '聊天功能已关闭' : job ? `${labelForJobStatus(job)} · 可查看聊天记录` : '选择 job 后可查看聊天'}</span>
         </div>
         {variant === 'drawer' ? (
           <button className="icon-btn" onClick={onClose} title="关闭聊天" type="button">
@@ -132,7 +132,7 @@ export function ChatDrawer({
           </button>
         ) : null}
       </div>
-      <ModulePicker agentEvents={agentEvents} onSelectModule={selectModule} selectedModuleId={selectedModuleId} session={session} />
+      <ModulePicker agentEvents={agentEvents} onSelectModule={selectModule} selectedModuleId={selectedModuleId} job={job} />
       <div className="conversation-stream" ref={conversationRef}>
         {conversationItems.length ? (
           <>
@@ -151,14 +151,14 @@ export function ChatDrawer({
         onSubmit={submit}
         title={error || notice || undefined}
       >
-        <textarea disabled={disabled || !session || !selectedModuleId} onChange={(event) => setText(event.target.value)} placeholder={selectedModuleId ? '输入调整要求…' : '选择模块后可输入调整要求'} ref={textareaRef} rows={1} value={text} />
+        <textarea disabled={disabled || !job || !selectedModuleId} onChange={(event) => setText(event.target.value)} placeholder={selectedModuleId ? '输入调整要求…' : '选择模块后可输入调整要求'} ref={textareaRef} rows={1} value={text} />
         <button className="send-btn" disabled={!canSend} type="submit">{busy ? '发送中…' : '发送'}</button>
       </form>
     </section>
   )
 }
 
-function MessageBubble({ message }: { message: SessionMessage }) {
+function MessageBubble({ message }: { message: JobMessage }) {
   if (message.agentItemType === 'reasoning') {
     return (
       <ReasoningDisclosure
@@ -190,7 +190,7 @@ function AgentEventRow({ event }: { event: AgentEvent }) {
   return (
     <div className="agent-runtime-item">
       <div className="agent-event-head">
-        {moduleId ? <span className="event-source-badge">模块 {moduleId}</span> : <span className="event-source-badge">Session</span>}
+        {moduleId ? <span className="event-source-badge">模块 {moduleId}</span> : <span className="event-source-badge">Job</span>}
         <span>{title}</span>
       </div>
       {text ? <pre>{text}</pre> : null}
@@ -208,7 +208,7 @@ function getAgentEventTitle(event: AgentEvent) {
   return type
 }
 
-function getMessageToolName(message: SessionMessage) {
+function getMessageToolName(message: JobMessage) {
   const firstLine = String(message.text || '').split(/\r?\n/)[0] || ''
   const match = firstLine.match(/工具(?:\s+\S+)?\s*:\s*(.+)$/)
   return match?.[1]?.trim() || 'mcp_tool_call'

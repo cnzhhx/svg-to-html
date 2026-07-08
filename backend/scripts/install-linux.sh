@@ -7,15 +7,10 @@ OS_NAME="$(uname -s)"
 
 NODE_VERSION="${NODE_VERSION:-22.16.0}"
 PNPM_VERSION="${PNPM_VERSION:-10.11.0}"
-OPENCODE_VERSION="${OPENCODE_VERSION:-1.17.7}"
-GOOGLE_CHROME_DEB_URL="${GOOGLE_CHROME_DEB_URL:-https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb}"
-GOOGLE_CHROME_RPM_URL="${GOOGLE_CHROME_RPM_URL:-https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm}"
 
 SKIP_SYSTEM_DEPS="${SKIP_SYSTEM_DEPS:-0}"
 SKIP_NODE_INSTALL="${SKIP_NODE_INSTALL:-0}"
 SKIP_GLOBAL_TOOLS="${SKIP_GLOBAL_TOOLS:-0}"
-SKIP_BROWSER_INSTALL="${SKIP_BROWSER_INSTALL:-0}"
-SKIP_FONT_INSTALL="${SKIP_FONT_INSTALL:-0}"
 RUN_TYPECHECK="${RUN_TYPECHECK:-0}"
 
 log() {
@@ -111,198 +106,42 @@ node_arch() {
   esac
 }
 
-detect_browser() {
-  if [ -n "${CHROMIUM_PATH:-}" ] || [ -n "${CHROME_PATH:-}" ] || [ -n "${BROWSER_PATH:-}" ]; then
-    return 0
-  fi
-
-  local candidate
-  for candidate in google-chrome-stable google-chrome chrome chromium chromium-browser microsoft-edge microsoft-edge-stable; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-      return 0
-    fi
-  done
-
-  if is_macos; then
-    for candidate in \
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
-      "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
-      [ -x "$candidate" ] && return 0
-    done
-  fi
-
-  return 1
-}
-
 install_linux_system_deps() {
   if command -v apt-get >/dev/null 2>&1; then
-    install_linux_apt_deps
+    log "installing Linux system packages with apt-get"
+    run_as_root apt-get update
+    run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      procps \
+      xz-utils
     return
   fi
 
+  local manager=""
   if command -v dnf >/dev/null 2>&1; then
-    install_linux_rpm_deps dnf
-    return
+    manager="dnf"
+  elif command -v yum >/dev/null 2>&1; then
+    manager="yum"
   fi
 
-  if command -v yum >/dev/null 2>&1; then
-    install_linux_rpm_deps yum
+  if [ -n "$manager" ]; then
+    log "installing Linux system packages with $manager"
+    run_as_root "$manager" install -y ca-certificates curl git gzip procps-ng tar xz
     return
   fi
 
   fail "Linux installer supports apt-get, dnf, or yum; install system deps manually or set SKIP_SYSTEM_DEPS=1"
 }
 
-install_linux_apt_deps() {
-  log "installing Linux system packages"
-  run_as_root apt-get update
-
-  local packages=(
-    ca-certificates
-    curl
-    fontconfig
-    git
-    procps
-    xz-utils
-  )
-
-  if [ "$SKIP_FONT_INSTALL" != "1" ]; then
-    packages+=(fonts-noto-cjk)
-  fi
-
-  run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
-
-  if [ "$SKIP_BROWSER_INSTALL" != "1" ]; then
-    if browser_env_configured; then
-      log "browser path is configured by env; skip browser installation"
-    elif detect_official_chrome; then
-      log "official Google Chrome is already installed"
-    elif [ "$(node_arch)" = "x64" ]; then
-      local chrome_deb
-      chrome_deb="$(mktemp -t google-chrome-stable.XXXXXX.deb)"
-      log "installing official Google Chrome stable"
-      curl -fsSL "$GOOGLE_CHROME_DEB_URL" -o "$chrome_deb"
-      run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$chrome_deb"
-      rm -f "$chrome_deb"
-    elif detect_browser; then
-      log "official Google Chrome stable DEB is only available for x64; using existing browser from PATH"
-    else
-      log "official Google Chrome stable DEB is only available for x64; install Chrome/Chromium manually and set CHROMIUM_PATH"
-    fi
-  fi
-}
-
-rpm_package_available() {
-  local manager="$1"
-  local package="$2"
-
-  "$manager" -q "$package" >/dev/null 2>&1 || "$manager" list --available "$package" >/dev/null 2>&1
-}
-
-browser_env_configured() {
-  [ -n "${CHROMIUM_PATH:-}" ] || [ -n "${CHROME_PATH:-}" ] || [ -n "${BROWSER_PATH:-}" ]
-}
-
-detect_official_chrome() {
-  command -v google-chrome-stable >/dev/null 2>&1 || command -v google-chrome >/dev/null 2>&1
-}
-
-install_linux_rpm_deps() {
-  local manager="$1"
-  local packages=(
-    ca-certificates
-    curl
-    fontconfig
-    git
-    gzip
-    procps-ng
-    tar
-    xz
-  )
-
-  log "installing Linux system packages with $manager"
-
-  if [ "$SKIP_FONT_INSTALL" != "1" ]; then
-    local font_package=""
-    for candidate in google-noto-sans-cjk-fonts google-noto-cjk-fonts google-noto-sans-cjk-ttc-fonts; do
-      if rpm_package_available "$manager" "$candidate"; then
-        font_package="$candidate"
-        break
-      fi
-    done
-
-    if [ -n "$font_package" ]; then
-      packages+=("$font_package")
-    else
-      log "no Noto CJK font package found in $manager repos; install CJK fonts manually if needed"
-    fi
-  fi
-
-  run_as_root "$manager" install -y "${packages[@]}"
-
-  if [ "$SKIP_BROWSER_INSTALL" != "1" ]; then
-    if browser_env_configured; then
-      log "browser path is configured by env; skip browser installation"
-    elif detect_official_chrome; then
-      log "official Google Chrome is already installed"
-    elif [ "$(node_arch)" = "x64" ]; then
-      log "installing official Google Chrome stable"
-      run_as_root "$manager" install -y "$GOOGLE_CHROME_RPM_URL"
-    elif detect_browser; then
-      log "official Google Chrome stable RPM is only available for x64; using existing browser from PATH"
-    else
-      log "official Google Chrome stable RPM is only available for x64; install Chrome/Chromium manually and set CHROMIUM_PATH"
-    fi
-  fi
-}
-
-brew_install_if_missing() {
-  local formula="$1"
-  local command_name="$2"
-
-  if command -v "$command_name" >/dev/null 2>&1; then
-    return
-  fi
-
-  command -v brew >/dev/null 2>&1 || fail "Homebrew is required to install $formula on macOS"
-  log "installing $formula"
-  brew install "$formula"
-}
-
-brew_install_cask_if_missing() {
-  local cask="$1"
-
-  command -v brew >/dev/null 2>&1 || fail "Homebrew is required to install $cask on macOS"
-  if brew list --cask "$cask" >/dev/null 2>&1; then
-    return
-  fi
-
-  log "installing $cask"
-  brew install --cask "$cask"
-}
-
 install_macos_system_deps() {
   command -v curl >/dev/null 2>&1 || fail "curl is required"
 
-  if command -v git >/dev/null 2>&1; then
-    :
-  elif command -v brew >/dev/null 2>&1; then
+  if ! command -v git >/dev/null 2>&1; then
+    command -v brew >/dev/null 2>&1 || fail "git is required; install Xcode Command Line Tools or Homebrew git"
+    log "installing git"
     brew install git
-  else
-    fail "git is required; install Xcode Command Line Tools or Homebrew git"
-  fi
-
-  if [ "$SKIP_BROWSER_INSTALL" != "1" ] && ! detect_browser; then
-    brew_install_cask_if_missing "google-chrome"
-  fi
-
-  if [ "$SKIP_FONT_INSTALL" != "1" ]; then
-    if command -v brew >/dev/null 2>&1; then
-      brew_install_cask_if_missing "font-noto-sans-cjk-sc"
-    else
-      log "Homebrew not found; skip optional Noto CJK font installation"
-    fi
   fi
 }
 
@@ -358,45 +197,52 @@ install_node() {
   log "npm $(npm --version)"
 }
 
-install_global_tools() {
-  if [ "$SKIP_GLOBAL_TOOLS" = "1" ]; then
-    log "skip global pnpm/opencode installation"
+run_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm "$@"
     return
   fi
 
-  log "installing pnpm ${PNPM_VERSION} and opencode-ai ${OPENCODE_VERSION}"
-  if npm install -g "pnpm@${PNPM_VERSION}" "opencode-ai@${OPENCODE_VERSION}"; then
-    :
-  else
-    run_as_root env PATH="$PATH" npm install -g "pnpm@${PNPM_VERSION}" "opencode-ai@${OPENCODE_VERSION}"
+  command -v corepack >/dev/null 2>&1 || fail "pnpm is not installed and corepack is not available"
+  corepack pnpm "$@"
+}
+
+install_package_manager() {
+  if command -v pnpm >/dev/null 2>&1; then
+    log "pnpm $(pnpm --version)"
+    return
   fi
 
-  command -v pnpm >/dev/null 2>&1 || fail "pnpm was not installed"
-  command -v opencode >/dev/null 2>&1 || fail "opencode was not installed"
+  command -v corepack >/dev/null 2>&1 || fail "corepack is required to activate pnpm"
 
-  log "pnpm $(pnpm --version)"
-  log "opencode $(opencode --version)"
+  if [ "$SKIP_GLOBAL_TOOLS" = "1" ]; then
+    log "skip pnpm activation; will use corepack pnpm if already available"
+    corepack pnpm --version >/dev/null 2>&1 || fail "corepack pnpm is not available"
+    return
+  fi
+
+  log "activating pnpm ${PNPM_VERSION} with corepack"
+  corepack enable >/dev/null 2>&1 || true
+  corepack prepare "pnpm@${PNPM_VERSION}" --activate
+  log "pnpm $(corepack pnpm --version)"
 }
 
 install_project_deps() {
   cd "$ROOT_DIR"
 
-  log "creating workspace directory"
-  mkdir -p workspace
-
   log "installing project dependencies"
-  pnpm install --no-frozen-lockfile
-
-  log "building browser MCP server"
-  pnpm -C "$BACKEND_DIR" run build:mcp
+  run_pnpm install --no-frozen-lockfile
 
   log "building frontend static assets"
-  pnpm -C "$ROOT_DIR/frontend" build
+  run_pnpm -C "$ROOT_DIR/frontend" build
 
   if [ "$RUN_TYPECHECK" = "1" ]; then
     log "running TypeScript type check"
-    pnpm -C "$BACKEND_DIR" exec tsc --noEmit
+    run_pnpm -C "$BACKEND_DIR" exec tsc --noEmit
   fi
+
+  log "checking gateway prerequisites"
+  run_pnpm -C "$BACKEND_DIR" run doctor
 }
 
 main() {
@@ -405,7 +251,7 @@ main() {
 
   install_system_deps
   install_node
-  install_global_tools
+  install_package_manager
   install_project_deps
 
   log "done"

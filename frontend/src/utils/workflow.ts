@@ -1,4 +1,4 @@
-import type { Session, WorkflowNodeKey, WorkflowProgress } from '../types/session'
+import type { Job, WorkflowNodeKey, WorkflowProgress } from '../types/job'
 
 export const WORKFLOW_NODE_ORDER: WorkflowNodeKey[] = ['upload', 'analysis', 'agent', 'verify', 'done']
 
@@ -29,8 +29,8 @@ function createWorkflowProgress(): WorkflowProgress {
   }
 }
 
-export function getWorkflowProgress(session?: Session | null): WorkflowProgress {
-  const base = session?.progress || createWorkflowProgress()
+export function getWorkflowProgress(job?: Job | null): WorkflowProgress {
+  const base = job?.progress || createWorkflowProgress()
   const fallback = createWorkflowProgress()
   return {
     ...fallback,

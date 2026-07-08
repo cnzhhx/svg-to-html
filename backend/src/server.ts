@@ -1,16 +1,11 @@
 import path from 'node:path'
 import os from 'node:os'
-import { mkdir, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 
 import express from 'express'
 
-import { detectBrowserBinary } from './core/cdp.js'
-import { setWorkspaceRoot } from './core/paths.js'
-import { processQueuedSessions } from './pipeline/agent-runner/index.js'
-import eventsRouter from './routes/events.js'
-import jobRouter from './routes/job.js'
-import uploadRouter from './routes/upload.js'
-import { sessionStore } from './session-store.js'
+import { assertCoreAvailable, getCoreServiceUrl } from './core-service/client.js'
+import jobsRouter from './routes/jobs.js'
 import { getBackendConfig } from './config/index.js'
 
 const isExpectedConnectionCloseError = (error: unknown) =>
@@ -31,20 +26,20 @@ process.on('uncaughtException', (error) => {
 })
 
 const PORT = getBackendConfig().server.port
-const WORKSPACE = getBackendConfig().server.workspace
 const FRONTEND_PUBLIC_DIR = path.resolve(process.cwd(), '../frontend/public')
 const BASE_PATH = '/transformer'
 const BUILD_TIME = new Date().toISOString()
 const INDEX_HTML_PATH = path.join(FRONTEND_PUBLIC_DIR, 'index.html')
-
-// Initialize workspace root
-setWorkspaceRoot(WORKSPACE)
 
 const app = express()
 
 const handleHealth = (_req: express.Request, res: express.Response) => {
   res.status(200).type('text/plain').send('ok')
 }
+
+app.get('/favicon.ico', (_req, res) => {
+  res.status(204).end()
+})
 
 // Mount business routes under BASE_PATH
 const router = express.Router()
@@ -54,23 +49,7 @@ router.all('/health', handleHealth)
 router.use(express.json())
 
 // API routes
-router.use('/api', uploadRouter)
-router.use('/api', jobRouter)
-router.use('/api', eventsRouter)
-
-// Serve workspace files (SVGs, HTMLs, PNGs, etc.). These artifacts are often
-// overwritten in place during repair/verify loops, so keep browser caches out.
-router.use(
-  '/files',
-  express.static(WORKSPACE, {
-    etag: false,
-    lastModified: false,
-    maxAge: 0,
-    setHeaders: (res) => {
-      res.setHeader('Cache-Control', 'no-store')
-    },
-  }),
-)
+router.use('/api', jobsRouter)
 
 const serveIndexHtml = async (_req: express.Request, res: express.Response) => {
   const template = await readFile(INDEX_HTML_PATH, 'utf8')
@@ -82,6 +61,9 @@ const serveIndexHtml = async (_req: express.Request, res: express.Response) => {
 
 router.get('/', serveIndexHtml)
 router.get('/index.html', serveIndexHtml)
+router.get('/favicon.ico', (_req, res) => {
+  res.status(204).end()
+})
 
 // Serve frontend
 router.use(express.static(FRONTEND_PUBLIC_DIR))
@@ -89,30 +71,23 @@ router.use(express.static(FRONTEND_PUBLIC_DIR))
 app.use(BASE_PATH, router)
 
 const main = async () => {
-  await mkdir(WORKSPACE, { recursive: true })
-  await sessionStore.hydrateFromDisk()
-  processQueuedSessions()
+  await assertCoreAvailable()
 
   app.listen(PORT, () => {
-    const browserBinary = detectBrowserBinary()
-
-    console.log(`Design-to-HTML service running at http://localhost:${PORT}${BASE_PATH || '/'}`)
+    console.log(`Design-to-HTML gateway running at http://localhost:${PORT}${BASE_PATH || '/'}`)
     console.log(`Base Path: ${BASE_PATH || '(none)'}`)
-    console.log(`Workspace: ${WORKSPACE}`)
+    console.log(`SVG Transform Core: ${getCoreServiceUrl()}`)
     console.log(`Platform: ${process.platform} ${os.release()}`)
     console.log(`Node: ${process.version}`)
-    console.log(`Browser Binary: ${browserBinary ?? 'NOT FOUND'}`)
     console.log(`Build Time: ${BUILD_TIME}`)
   })
 }
 
 main().catch((error) => {
-  const browserBinary = detectBrowserBinary()
   const message = error instanceof Error ? error.message : String(error)
 
   console.error('Failed to start service')
-  console.error(`Workspace: ${WORKSPACE}`)
-  console.error(`Browser Binary: ${browserBinary ?? 'NOT FOUND'}`)
+  console.error(`SVG_TRANSFORM_CORE_URL: ${getBackendConfig().core.serviceUrl || '(not configured)'}`)
   console.error(message)
   if (/EACCES|permission denied/i.test(message) && PORT === 80) {
     console.error('Port 80 需要更高权限；请使用 sudo 启动，或改用 PORT 环境变量指定其他端口。')

@@ -1,108 +1,110 @@
-import type { Session, SessionOutputTarget } from '../types/session'
+import type { Job, JobOutputTarget } from '../types/job'
 import { basePath } from '../api/http'
 
-let runtimeWorkspaceRoot = ''
+let runtimeArtifactRoot = ''
 
-export function setRuntimeWorkspaceRoot(root: string | null | undefined) {
-  runtimeWorkspaceRoot = String(root || '')
+export function setRuntimeArtifactRoot(root: string | null | undefined) {
+  runtimeArtifactRoot = String(root || '')
 }
 
 export function normalizeFsPath(value: unknown) {
   return String(value || '').replace(/\\/g, '/')
 }
 
-function workspaceRelativePath(absPath: unknown) {
+function artifactRelativePath(absPath: unknown) {
   const clean = normalizeFsPath(absPath)
   if (!clean) return ''
-  const workspaceRoot = normalizeFsPath(runtimeWorkspaceRoot)
-  if (workspaceRoot && clean.startsWith(`${workspaceRoot}/`)) {
-    return clean.slice(workspaceRoot.length + 1)
+  const artifactRoot = normalizeFsPath(runtimeArtifactRoot)
+  if (artifactRoot && clean.startsWith(`${artifactRoot}/`)) {
+    return clean.slice(artifactRoot.length + 1)
   }
-  const parts = clean.split('workspace/')
-  if (parts.length > 1) return parts[parts.length - 1] || ''
   return clean.replace(/^\/+/, '')
 }
 
-function workspaceFileVersion(session?: Session | null) {
-  return String(session?.updatedAt || Date.now())
+function artifactFileVersion(job?: Job | null) {
+  return String(job?.updatedAt || Date.now())
 }
 
-export function workspaceFileUrl(absPath: unknown, session?: Session | null, versionOverride?: string | number | null) {
-  const relative = workspaceRelativePath(absPath)
-  const version = String(versionOverride ?? workspaceFileVersion(session))
-  return `${basePath}/files/${relative.split('/').map(encodeURIComponent).join('/')}?v=${encodeURIComponent(version)}`
+function jobFileBaseUrl(job?: Job | null) {
+  return job?.id ? `${basePath}/api/jobs/${encodeURIComponent(job.id)}/files` : `${basePath}/api/jobs`
 }
 
-export function resultImageVersion(session?: Session | null) {
-  const result = session?.result
+export function artifactFileUrl(absPath: unknown, job?: Job | null, versionOverride?: string | number | null) {
+  const relative = artifactRelativePath(absPath)
+  const version = String(versionOverride ?? artifactFileVersion(job))
+  return `${jobFileBaseUrl(job)}/${relative.split('/').map(encodeURIComponent).join('/')}?v=${encodeURIComponent(version)}`
+}
+
+export function resultImageVersion(job?: Job | null) {
+  const result = job?.result
   const version = [
-    session?.id || '',
+    job?.id || '',
     result?.artifactUpdatedAt ?? '',
-    workspaceRelativePath(result?.renderPngPath || ''),
-    workspaceRelativePath(result?.svgPngPath || ''),
+    artifactRelativePath(result?.renderPngPath || ''),
+    artifactRelativePath(result?.svgPngPath || ''),
     result?.diffRatio ?? '',
     result?.verifyMode || '',
-    workspaceRelativePath(result?.outputTarget?.renderEntryPath || result?.renderEntryPath || ''),
+    artifactRelativePath(result?.outputTarget?.renderEntryPath || result?.renderEntryPath || ''),
   ].filter(Boolean).join('|')
   return version || 'stable'
 }
 
-export function getOutputTarget(session?: Session | null): SessionOutputTarget | null {
-  const rootTarget = session?.outputTarget
-  const resultTarget = session?.result?.outputTarget
-  if (rootTarget || resultTarget) return { ...(rootTarget || {}), ...(resultTarget || {}) } as SessionOutputTarget
+export function getOutputTarget(job?: Job | null): JobOutputTarget | null {
+  const rootTarget = job?.outputTarget
+  const resultTarget = job?.result?.outputTarget
+  if (rootTarget || resultTarget) return { ...(rootTarget || {}), ...(resultTarget || {}) } as JobOutputTarget
   return null
 }
 
-export function getSessionOutputFormat(session?: Session | null) {
-  return session?.outputFormat || getOutputTarget(session)?.format || ''
+export function getJobOutputFormat(job?: Job | null) {
+  return job?.outputFormat || getOutputTarget(job)?.format || ''
 }
 
-export function getSessionSourceEntryPath(session?: Session | null) {
-  const target = getOutputTarget(session)
-  return String(session?.result?.sourceEntryPath || target?.sourceEntryPath || '')
+export function getJobSourceEntryPath(job?: Job | null) {
+  const target = getOutputTarget(job)
+  return String(job?.result?.sourceEntryPath || target?.sourceEntryPath || '')
 }
 
-export function getSessionRenderEntryPath(session?: Session | null) {
-  const target = getOutputTarget(session)
-  return String(session?.result?.renderEntryPath || target?.renderEntryPath || '')
+export function getJobRenderEntryPath(job?: Job | null) {
+  const target = getOutputTarget(job)
+  return String(job?.result?.renderEntryPath || target?.renderEntryPath || '')
 }
 
-export function getSessionCompareEntryPath(session?: Session | null) {
-  const target = getOutputTarget(session)
-  return String(session?.result?.compareEntryPath || target?.compareEntryPath || '')
+export function getJobCompareEntryPath(job?: Job | null) {
+  const target = getOutputTarget(job)
+  return String(job?.result?.compareEntryPath || target?.compareEntryPath || '')
 }
 
-export function getSessionRenderPngPath(session?: Session | null) {
-  return String(session?.result?.renderPngPath || '')
+export function getJobRenderPngPath(job?: Job | null) {
+  return String(job?.result?.renderPngPath || '')
 }
 
-export function getSessionSourceStylePath(session?: Session | null) {
-  const target = getOutputTarget(session)
-  return String(session?.result?.sourceStylePath || target?.sourceStylePath || '')
+export function getJobSourceStylePath(job?: Job | null) {
+  const target = getOutputTarget(job)
+  return String(job?.result?.sourceStylePath || target?.sourceStylePath || '')
 }
 
-export function getSessionSvgPngPath(session?: Session | null) {
-  return String(session?.result?.svgPngPath || '')
+export function getJobSvgPngPath(job?: Job | null) {
+  return String(job?.result?.svgPngPath || '')
 }
 
-function getSessionLivePreviewEntryPath(session?: Session | null) {
-  return String(session?.result?.livePreviewEntryPath || '')
+function getJobLivePreviewEntryPath(job?: Job | null) {
+  return String(job?.result?.livePreviewEntryPath || '')
 }
 
-export function livePreviewUrl(session?: Session | null, selectedModuleId?: string | null) {
-  const path = getSessionLivePreviewEntryPath(session)
+export function livePreviewUrl(job?: Job | null, selectedModuleId?: string | null) {
+  const path = getJobLivePreviewEntryPath(job)
   if (!path) return ''
-  const relative = workspaceRelativePath(path)
-  const version = String(session?.result?.livePreviewVersion ?? session?.result?.livePreviewUpdatedAt ?? 'stable')
+  const relative = artifactRelativePath(path)
+  const version = String(job?.result?.livePreviewVersion ?? job?.result?.livePreviewUpdatedAt ?? 'stable')
   const params = new URLSearchParams({ v: version })
   if (selectedModuleId) params.set('module', selectedModuleId)
-  return `${basePath}/files/${relative.split('/').map(encodeURIComponent).join('/')}?${params.toString()}`
+  return `${jobFileBaseUrl(job)}/${relative.split('/').map(encodeURIComponent).join('/')}?${params.toString()}`
 }
 
-export function hasPrimaryResults(session?: Session | null) {
-  const result = session?.result
-  const renderPngPath = result?.renderPngPath || getSessionRenderPngPath(session)
+export function hasPrimaryResults(job?: Job | null) {
+  const result = job?.result
+  const renderPngPath = result?.renderPngPath || getJobRenderPngPath(job)
   return Boolean(
     result &&
       result.finalOutputReady !== false &&

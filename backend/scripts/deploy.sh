@@ -11,6 +11,7 @@ set -euo pipefail
 #   bash backend/scripts/deploy.sh start    # Start only (assumes installed)
 #
 # Copy the project to a server first, then run this script on that server.
+# The standalone svg-transform-core service is started through local Docker.
 # ============================================================
 
 BACKEND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -50,11 +51,13 @@ Usage:
   bash backend/scripts/deploy.sh foreground   Run in foreground
 
 Environment variables:
-  PORT=80                             HTTP listen port
-  WORKSPACE=./workspace               Workspace root directory
+  PORT=80                             Gateway HTTP listen port
+  SVG_TRANSFORM_CORE_URL=http://127.0.0.1:4310
+  SVG_TRANSFORM_CORE_REPO=../svg-transform-core
+  SVG_TRANSFORM_CORE_MODEL_CONFIG=<core repo>/.runtime/model-provider.json
   ENV_FILE=./.env                     Env file path
   SKIP_SYSTEM_DEPS=1                  Skip system dependency installation
-  SKIP_BROWSER_INSTALL=1              Skip browser installation
+  SKIP_GLOBAL_TOOLS=1                 Skip corepack pnpm activation
 EOF
 }
 

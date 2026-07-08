@@ -1,5 +1,5 @@
-import type { Session } from '../../types/session'
-import { getSessionCompareEntryPath, getSessionRenderEntryPath, getSessionSourceEntryPath, hasPrimaryResults } from '../../utils/artifacts'
+import type { Job } from '../../types/job'
+import { getJobCompareEntryPath, getJobRenderEntryPath, getJobSourceEntryPath, hasPrimaryResults } from '../../utils/artifacts'
 import { formatBytes, formatTokenCount, toPercent } from '../../utils/format'
 import type { ResultViewMode } from '../../state/app-state'
 import { ResultImageComparison } from './ResultImageComparison'
@@ -10,7 +10,7 @@ const readPositiveNumber = (value: unknown) => {
   return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : 0
 }
 
-const tokenBadgesForResult = (result: Session['result'] | undefined) => {
+const tokenBadgesForResult = (result: Job['result'] | undefined) => {
   const outputTokens = readPositiveNumber(result?.outputTokens)
   const cachedInputTokens = readPositiveNumber(result?.cachedInputTokens)
   const uncachedInputTokens = readPositiveNumber(result?.uncachedInputTokens)
@@ -39,7 +39,7 @@ export function ResultPanel({
   onViewModeChange,
   previewWidth,
   selectedModuleId,
-  session,
+  job,
   viewMode,
 }: {
   cacheBusy: boolean
@@ -56,14 +56,14 @@ export function ResultPanel({
   onViewModeChange: (mode: ResultViewMode) => void
   previewWidth: number
   selectedModuleId: string | null
-  session: Session | null
+  job: Job | null
   viewMode: ResultViewMode
 }) {
-  const show = hasPrimaryResults(session)
-  const result = session?.result
-  const sourceEntryPath = getSessionSourceEntryPath(session)
-  const renderEntryPath = getSessionRenderEntryPath(session)
-  const compareEntryPath = getSessionCompareEntryPath(session)
+  const show = hasPrimaryResults(job)
+  const result = job?.result
+  const sourceEntryPath = getJobSourceEntryPath(job)
+  const renderEntryPath = getJobRenderEntryPath(job)
+  const compareEntryPath = getJobCompareEntryPath(job)
   const tokenBadges = tokenBadgesForResult(result)
 
   if (!show) return null
@@ -110,14 +110,14 @@ export function ResultPanel({
         onSelectModule={onSelectModule}
         previewWidth={previewWidth}
         selectedModuleId={selectedModuleId}
-        session={session}
+        job={job}
         viewMode={viewMode}
       />
       <div className="result-actions">
         {compareEntryPath ? <button className="link-btn" onClick={() => onOpenArtifact('compare')} type="button">打开对照页</button> : null}
         {sourceEntryPath && sourceEntryPath !== renderEntryPath ? <button className="link-btn" onClick={() => onOpenArtifact('source')} type="button">打开源码</button> : null}
         {renderEntryPath ? <button className="link-btn" onClick={() => onOpenArtifact('render')} type="button">{sourceEntryPath === renderEntryPath ? '打开源码/渲染预览' : '打开渲染预览'}</button> : null}
-        {session?.id ? <button className="link-btn download-btn" onClick={onDownloadZip} type="button">下载 ZIP</button> : null}
+        {job?.id ? <button className="link-btn download-btn" onClick={onDownloadZip} type="button">下载 ZIP</button> : null}
       </div>
     </section>
   )

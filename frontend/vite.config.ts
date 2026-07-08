@@ -61,10 +61,6 @@ export default defineConfig({
           target: backendTarget,
           changeOrigin: true,
         },
-        '/transformer/files': {
-          target: backendTarget,
-          changeOrigin: true,
-        },
       }
     })(),
   },

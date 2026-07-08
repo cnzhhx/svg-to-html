@@ -2,7 +2,9 @@
 
 简体中文 | [English](README.en.md)
 
-面向企业前端团队的高还原度设计稿转代码工具。将 SVG 设计稿还原为真实、可维护的 HTML/CSS 页面（同时支持 Vue / React 输出），并生成可量化的还原度报告。
+这是 `svg-transform-core` 的前端和 API 网关项目。当前仓库负责上传入口、任务列表、进度流、预览、下载和聊天修复 UI；真正的 SVG 转换、模型调用、浏览器渲染、产物写入和 Docker 部署由独立的 `svg-transform-core` 服务负责。
+
+当前仓库不再创建或读取本地 session 产物，不启动本地 pipeline，也不直接依赖模型、浏览器或 opencode 执行转换。旧 session 数据不迁移、不展示、不兼容。
 
 ## 效果预览
 
@@ -16,169 +18,155 @@
 
 > 完整交互对比页面：[`example/comparison-4.33.html`](example/comparison-4.33.html)
 
-## 特性
+## 架构
 
-- **高还原度输出** — 通过设计稿对比报告量化原始设计稿与生成页面的视觉差异，并驱动自动修复
-- **真实 HTML/CSS 输出** — 还原为语义化 DOM 结构，而非嵌入 SVG
-- **多格式输出** — 支持 HTML、Vue、React 组件输出
-- **DOM 文本保留** — 可读文本保留为真实 DOM 文本节点
-- **模块化生成** — 大型设计稿自动拆分为语义模块，并行生成
-- **智能预处理** — 预提取文本（OCR）、布局框、颜色、图标、背景
-- **还原度闭环** — 模块级 + 全页级视觉对比反馈，自动修复
-- **验证停损** — 还原度低收益或反弹时提示停止微调
-- **Web UI + CLI** — 提供浏览器界面和完整 CLI 工具集
+```mermaid
+flowchart LR
+  UI["/transformer 前端"] --> GW["当前项目后端网关"]
+  GW --> CORE["svg-transform-core"]
+  CORE --> JOBS["jobs / events / preview / files / download"]
+```
+
+当前后端对外提供 `/transformer/api/jobs/*`，并转发到 core 的 `/api/jobs/*`：
+
+- `GET /transformer/api/jobs`
+- `POST /transformer/api/jobs`
+- `GET /transformer/api/jobs/:id`
+- `POST /transformer/api/jobs/:id/start`
+- `POST /transformer/api/jobs/:id/messages`
+- `GET /transformer/api/jobs/:id/events`
+- `GET /transformer/api/jobs/:id/preview`
+- `GET /transformer/api/jobs/:id/files/*`
+- `GET /transformer/api/jobs/:id/download`
+- `DELETE /transformer/api/jobs/:id`
+
+预览、文件、下载和 SSE 中的 URL 会被重写为 `/transformer/api/jobs/...`，前端不会接触 core 内网地址或 Docker 内部路径。
 
 ## 快速开始
 
-### 一键部署（Linux / macOS）
+### 1. 启动 core Docker
+
+当前项目开发和启动都要求 `svg-transform-core` 走 Docker，不再使用本地 `apps/server dev` 跑 core。默认要求 `svg-transform-core` 仓库与当前仓库同级：
 
 ```bash
-bash backend/scripts/deploy.sh
+corepack pnpm install
+corepack pnpm core:start
+corepack pnpm core:health
 ```
 
-该脚本自动完成：系统依赖安装、Node.js、pnpm、浏览器、项目依赖和服务启动。
-
-### 手动部署
+`corepack pnpm core:start` 会调用 `../svg-transform-core/scripts/docker-core.sh start`，复用已有容器；如果修改过 core 端口、环境变量、挂载、镜像或 model config 路径，使用：
 
 ```bash
-# 1. 安装依赖
-pnpm install
-
-# 2. 环境检查
-pnpm run doctor
-
-# 3. 配置模型
-cp backend/config/model-provider.example.json backend/config/model-provider.json
-# 编辑 backend/config/model-provider.json 填入 provider 信息
-
-# 4. 构建 MCP server（浏览器验证所需）
-pnpm run build:mcp
-
-# 5. 构建前端静态资源
-pnpm run build:frontend
-
-# 6. 启动服务
-pnpm start
-# 访问 http://localhost:80/transformer
+corepack pnpm core:recreate
 ```
 
-### 服务管理
+如果 core 仓库不在当前仓库同级，设置：
 
 ```bash
+SVG_TRANSFORM_CORE_REPO=/absolute/path/to/svg-transform-core corepack pnpm core:start
+```
+
+core Docker 默认对外提供 `http://127.0.0.1:4310/health`。
+
+### 2. 配置当前网关
+
+```bash
+cp .env.example .env
+```
+
+确保 `.env` 或环境变量中存在：
+
+```bash
+PORT=81
+SVG_TRANSFORM_CORE_URL=http://127.0.0.1:4310
+```
+
+`SVG_TRANSFORM_CORE_URL` 是必填项。当前后端启动时会请求 `${SVG_TRANSFORM_CORE_URL}/health`，未配置或不可达会直接退出。
+
+### 3. 构建并启动当前项目
+
+```bash
+corepack pnpm install
+corepack pnpm -C frontend build
+corepack pnpm start
+```
+
+访问：
+
+```text
+http://localhost:81/transformer
+```
+
+## 服务管理
+
+```bash
+corepack pnpm core:start                            # 启动 core Docker
+corepack pnpm core:recreate                         # 重建 core Docker 容器
+corepack pnpm core:status                           # 查看 core Docker 状态
+corepack pnpm core:logs                             # 查看 core Docker 日志
+corepack pnpm core:stop                             # 停止 core Docker
+
 bash backend/scripts/start-linux.sh start       # 后台启动
 bash backend/scripts/start-linux.sh stop        # 停止
 bash backend/scripts/start-linux.sh restart     # 重启
 bash backend/scripts/start-linux.sh status      # 查看状态
 bash backend/scripts/start-linux.sh logs        # 查看日志
-bash backend/scripts/start-linux.sh foreground  # 前台运行（带自动重启保护）
+bash backend/scripts/start-linux.sh foreground  # 前台运行
 ```
+
+`corepack pnpm dev`、`corepack pnpm start` 和 `backend/scripts/start-linux.sh start` 都会先确保 core Docker 已启动，再启动当前网关。
+
+`backend/scripts/deploy.sh` 仍然是本地脚本：先把代码复制到目标机器，再在目标机器运行。它不会做 SSH/SCP 编排；启动当前网关前会通过本地 Docker 拉起 core。
 
 ## 环境要求
 
 | 依赖 | 版本 | 说明 |
 | --- | --- | --- |
-| Node.js | 20+（推荐 22+） | |
-| pnpm | 10.11+ | 项目 `packageManager` 字段指定 |
-| Chrome / Chromium / Edge | 最新版 | 用于渲染和截图 |
-| opencode CLI | 可选 | 用于 `opencode` runtime |
+| Node.js | 20+（推荐 22+） | 当前网关运行时 |
+| pnpm via Corepack | 10.11+ | 项目 `packageManager` 字段指定 |
+| Docker Desktop / Docker Engine | 可用 | core 必须通过 Docker 启动 |
+| svg-transform-core | 同级仓库或 `SVG_TRANSFORM_CORE_REPO` 指定路径 | 当前项目会调用它的 Docker helper |
 
-安装脚本 `backend/scripts/install-linux.sh` 可在 Linux 和 macOS 上自动安装以上全部依赖。
+浏览器、模型 provider、opencode、CDP、workspace、并发和 diff 阈值都属于 `svg-transform-core` 的运行配置，不属于当前网关配置。
 
-## 配置
+## 环境变量
 
-### 模型配置
-
-编辑 `backend/config/model-provider.json`（从 `backend/config/model-provider.example.json` 复制）：
-
-```json
-{
-  "moduleAgentModel": "your-model",
-  "otherModel": "your-model",
-  "models": {
-    "your-model": {
-      "runtime": "opencode",
-      "wireApi": "chat-completions",
-      "provider": "your-provider",
-      "baseURL": "https://api.example.com/v1",
-      "apiKeyEnv": "YOUR_PROVIDER_API_KEY",
-      "model": "your-model-id"
-    }
-  }
-}
-```
-
-`wireApi` 可选值：`chat-completions`（默认，OpenAI-compatible）、`responses`（OpenAI Responses）、`anthropic`（Anthropic）。
-
-### 环境变量
-
-业务配置可通过 `.env` 文件设置，关键变量：
+当前 Web 网关关键变量：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `PORT` | `80` | HTTP 监听端口 |
-| `WORKSPACE` | `./workspace` | Session 产物根目录 |
-| `MAX_CONCURRENT_AGENTS` | `2` | 同时运行的 session 数 |
-| `MAX_PARALLEL_MODULE_AGENTS` | `5` | 单 session 并行模块数 |
-| `CDP_OPERATION_CONCURRENCY` | `1` | 浏览器截图 / 页面 evaluate 并发上限 |
-| `DIFF_RATIO_THRESHOLD` | `0.05` | 全页视觉差异通过阈值（5%，数值越低还原度越高） |
-| `CHROMIUM_PATH` | 自动检测 | 浏览器二进制路径 |
-| `SESSION_CHAT_DISABLED` | `1` | 禁用聊天修复入口和后端消息接口 |
-| `SESSION_DELETE_DISABLED` | `0` | 禁用删除 session |
+| `PORT` | `80` | 当前网关 HTTP 监听端口 |
+| `SVG_TRANSFORM_CORE_URL` | 无 | 必填，core 服务地址，例如 `http://127.0.0.1:4310` |
+| `SVG_TRANSFORM_CORE_REPO` | `../svg-transform-core` | core 仓库路径 |
+| `SVG_TRANSFORM_CORE_MODEL_CONFIG` | core 仓库内 `.runtime/model-provider.json` | core Docker 挂载的模型配置 |
 
-完整列表见 `.env` 文件。
+当前网关不会读取浏览器、模型 provider、opencode、CDP、workspace、并发或 diff 阈值变量；这些变量应配置在 `svg-transform-core`。
 
-## CLI 工具
+## 验证
 
 ```bash
-# 生成（preflight：布局分析 + scaffold + 模块规划）
-pnpm run task:generate -- <svg-path> --format html|vue|react
-
-# 生成页面级还原度报告
-pnpm run task:verify -- <svg-path>
-
-# 生成模块级还原度报告
-pnpm run task:verify-module -- --module-dir <dir> --module-id <id> ...
-
-# 拆分模块
-pnpm run task:split-svg-modules -- <svg-path>
-
-# 环境诊断
-pnpm run doctor
-
-# 类型检查
-pnpm run lint:types
-
-# 前端 React 构建
-pnpm run build:frontend
+corepack pnpm -C backend run lint:types
+corepack pnpm -C frontend build
+corepack pnpm build
 ```
 
-## 工作原理
+core 启动后可以直接检查：
 
-```mermaid
-flowchart TD
-  A[SVG 设计稿] --> B[布局预处理]
-  B --> C[模块规划]
-  C --> D[模块 SVG 裁剪 + 语义分析]
-  D --> E[模块 Agent 并行还原]
-  E --> F[模块级还原度评估 + 停损]
-  F --> G[合并全部模块]
-  G --> H[全页还原度评估]
-  H --> I[最终 HTML/CSS/Vue/React 输出]
+```bash
+curl http://127.0.0.1:81/transformer/health
+curl http://127.0.0.1:81/transformer/api/jobs
 ```
 
 ## 项目结构
 
 ```
 backend/
-  src/                    Express 后端、CLI、生成流水线和 Agent 编排
-  config/                 模型配置
-  scripts/                安装、部署和诊断脚本
-  tests/                  后端单元测试
+  src/                    Express 网关源码
+  scripts/                 本地安装、启动和部署脚本
 frontend/
   src/                    React 18 前端源码
-  public/                 React build 后的静态产物，供后端直接服务
+  public/                 React build 后的静态产物，供后端服务
 example/                  可发布的还原度对比示例
-workspace/                生成的 session 和产物（git 忽略）
 ```
 
 ## License

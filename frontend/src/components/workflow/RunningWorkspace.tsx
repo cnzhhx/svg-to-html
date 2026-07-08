@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AgentEvent } from '../../types/events'
-import type { Session, SessionMessage } from '../../types/session'
+import type { Job, JobMessage } from '../../types/job'
 import { livePreviewUrl } from '../../utils/artifacts'
 import { STORAGE_KEYS, readJsonStorage, writeJsonStorage } from '../../utils/storage'
 import { ChatDrawer } from '../chat/ChatDrawer'
@@ -19,8 +19,8 @@ const isPreviewFitMode = (value: unknown): value is PreviewFitMode =>
 const readStoredPreviewFitModes = () => {
   const stored = readJsonStorage<Record<string, unknown>>(STORAGE_KEYS.runningPreviewFitModes, {})
   return Object.fromEntries(
-    Object.entries(stored).flatMap(([sessionId, value]) =>
-      sessionId && isPreviewFitMode(value) ? [[sessionId, value]] : [],
+    Object.entries(stored).flatMap(([jobId, value]) =>
+      jobId && isPreviewFitMode(value) ? [[jobId, value]] : [],
     ),
   ) as Record<string, PreviewFitMode>
 }
@@ -33,23 +33,23 @@ export function RunningWorkspace({
   onMessageQueued,
   onSelectModule,
   selectedModuleId,
-  session,
+  job,
 }: {
   agentEvents: AgentEvent[]
   chatDisabled: boolean
   chatFilterModuleId: string | null
   onFilterModule: (moduleId: string | null) => void
-  onMessageQueued?: (message: SessionMessage) => void
+  onMessageQueued?: (message: JobMessage) => void
   onSelectModule: (moduleId: string | null) => void
   selectedModuleId: string | null
-  session: Session | null
+  job: Job | null
 }) {
-  const sessionId = session?.id || ''
-  const [previewFitModesBySession, setPreviewFitModesBySession] = useState<Record<string, PreviewFitMode>>(readStoredPreviewFitModes)
-  const storedPreviewFitMode = sessionId ? (previewFitModesBySession[sessionId] || 'width') : 'width'
-  const [heightFitFrameWidth, setHeightFitFrameWidth] = useState<{ sessionId: string; width: number } | null>(null)
-  const rawPreviewUrl = livePreviewUrl(session)
-  const [previewCommit, setPreviewCommit] = useState<{ sessionId: string; url: string }>(() => ({ sessionId: '', url: '' }))
+  const jobId = job?.id || ''
+  const [previewFitModesByJob, setPreviewFitModesByJob] = useState<Record<string, PreviewFitMode>>(readStoredPreviewFitModes)
+  const storedPreviewFitMode = jobId ? (previewFitModesByJob[jobId] || 'width') : 'width'
+  const [heightFitFrameWidth, setHeightFitFrameWidth] = useState<{ jobId: string; width: number } | null>(null)
+  const rawPreviewUrl = livePreviewUrl(job)
+  const [previewCommit, setPreviewCommit] = useState<{ jobId: string; url: string }>(() => ({ jobId: '', url: '' }))
   const previewCommitRef = useRef(previewCommit)
   const frameRefs = useRef<Record<PreviewSlot, HTMLIFrameElement | null>>({
     primary: null,
@@ -60,38 +60,38 @@ export function RunningWorkspace({
     activeSlot: PreviewSlot
     pendingSlot: PreviewSlot | null
     readySlot: PreviewSlot | null
-    sessionId: string
+    jobId: string
     urls: Record<PreviewSlot, string>
   }>(() => ({
     activeSlot: 'primary',
     pendingSlot: null,
     readySlot: null,
-    sessionId: '',
+    jobId: '',
     urls: { primary: '', secondary: '' },
   }))
   const previewAspectRatio = useMemo(() => {
-    const width = Number(session?.result?.designWidth || 0)
-    const height = Number(session?.result?.designHeight || 0)
+    const width = Number(job?.result?.designWidth || 0)
+    const height = Number(job?.result?.designHeight || 0)
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null
     return width / height
-  }, [session?.result?.designHeight, session?.result?.designWidth])
+  }, [job?.result?.designHeight, job?.result?.designWidth])
   const previewFitMode = storedPreviewFitMode === 'height' && !previewAspectRatio ? 'width' : storedPreviewFitMode
-  const activeHeightFitFrameWidth = heightFitFrameWidth?.sessionId === sessionId ? heightFitFrameWidth.width : null
-  const previewUrl = previewCommit.sessionId === sessionId ? previewCommit.url : ''
-  const renderedPreviewFrames = previewFrames.sessionId === sessionId
+  const activeHeightFitFrameWidth = heightFitFrameWidth?.jobId === jobId ? heightFitFrameWidth.width : null
+  const previewUrl = previewCommit.jobId === jobId ? previewCommit.url : ''
+  const renderedPreviewFrames = previewFrames.jobId === jobId
     ? previewFrames
     : {
         activeSlot: 'primary' as PreviewSlot,
         pendingSlot: null,
         readySlot: null,
-        sessionId,
+        jobId,
         urls: { primary: previewUrl, secondary: '' },
       }
 
-  const commitPreviewUrl = useCallback((next: { sessionId: string; url: string }) => {
+  const commitPreviewUrl = useCallback((next: { jobId: string; url: string }) => {
     previewCommitRef.current = next
     setPreviewCommit((previous) => (
-      previous.sessionId === next.sessionId && previous.url === next.url ? previous : next
+      previous.jobId === next.jobId && previous.url === next.url ? previous : next
     ))
   }, [])
 
@@ -102,36 +102,36 @@ export function RunningWorkspace({
   useEffect(() => {
     const current = previewCommitRef.current
     if (!rawPreviewUrl) {
-      commitPreviewUrl({ sessionId, url: '' })
+      commitPreviewUrl({ jobId, url: '' })
       return undefined
     }
-    if (current.sessionId === sessionId && current.url === rawPreviewUrl) return undefined
-    if (current.sessionId !== sessionId) {
-      commitPreviewUrl({ sessionId, url: '' })
+    if (current.jobId === jobId && current.url === rawPreviewUrl) return undefined
+    if (current.jobId !== jobId) {
+      commitPreviewUrl({ jobId, url: '' })
     }
-    const delay = current.sessionId === sessionId && current.url
+    const delay = current.jobId === jobId && current.url
       ? previewUpdateCommitDelayMs
       : previewInitialCommitDelayMs
     const timer = window.setTimeout(() => {
-      commitPreviewUrl({ sessionId, url: rawPreviewUrl })
+      commitPreviewUrl({ jobId, url: rawPreviewUrl })
     }, delay)
     return () => window.clearTimeout(timer)
-  }, [commitPreviewUrl, rawPreviewUrl, sessionId])
+  }, [commitPreviewUrl, rawPreviewUrl, jobId])
 
   const updatePreviewFitMode = useCallback((mode: PreviewFitMode) => {
-    if (!sessionId) return
-    setPreviewFitModesBySession((previous) => {
-      if (previous[sessionId] === mode) return previous
-      const next = { ...previous, [sessionId]: mode }
+    if (!jobId) return
+    setPreviewFitModesByJob((previous) => {
+      if (previous[jobId] === mode) return previous
+      const next = { ...previous, [jobId]: mode }
       writeJsonStorage(STORAGE_KEYS.runningPreviewFitModes, next)
       return next
     })
-  }, [sessionId])
+  }, [jobId])
 
   useLayoutEffect(() => {
     const shell = frameShellRef.current
     if (!shell || previewFitMode !== 'height' || !previewAspectRatio) {
-      setHeightFitFrameWidth((previous) => (previous?.sessionId === sessionId ? null : previous))
+      setHeightFitFrameWidth((previous) => (previous?.jobId === jobId ? null : previous))
       return undefined
     }
     const updateFrameWidth = () => {
@@ -139,28 +139,28 @@ export function RunningWorkspace({
       const nextWidth = Math.min(rect.width, rect.height * previewAspectRatio)
       setHeightFitFrameWidth((previous) => {
         if (!Number.isFinite(nextWidth) || nextWidth <= 0) {
-          return previous?.sessionId === sessionId ? null : previous
+          return previous?.jobId === jobId ? null : previous
         }
-        if (previous?.sessionId === sessionId && Math.abs(previous.width - nextWidth) < 0.5) {
+        if (previous?.jobId === jobId && Math.abs(previous.width - nextWidth) < 0.5) {
           return previous
         }
-        return { sessionId, width: nextWidth }
+        return { jobId, width: nextWidth }
       })
     }
     updateFrameWidth()
     const observer = new ResizeObserver(updateFrameWidth)
     observer.observe(shell)
     return () => observer.disconnect()
-  }, [previewAspectRatio, previewFitMode, sessionId])
+  }, [previewAspectRatio, previewFitMode, jobId])
 
   useLayoutEffect(() => {
     setPreviewFrames((previous) => {
-      if (previous.sessionId !== sessionId) {
+      if (previous.jobId !== jobId) {
         return {
           activeSlot: 'primary',
           pendingSlot: null,
           readySlot: null,
-          sessionId,
+          jobId,
           urls: { primary: previewUrl, secondary: '' },
         }
       }
@@ -170,7 +170,7 @@ export function RunningWorkspace({
           activeSlot: 'primary',
           pendingSlot: null,
           readySlot: null,
-          sessionId,
+          jobId,
           urls: { primary: '', secondary: '' },
         }
       }
@@ -182,7 +182,7 @@ export function RunningWorkspace({
           ...previous,
           pendingSlot: null,
           readySlot: null,
-          sessionId,
+          jobId,
           urls: {
             ...previous.urls,
             [previous.activeSlot]: previewUrl,
@@ -194,14 +194,14 @@ export function RunningWorkspace({
         ...previous,
         pendingSlot,
         readySlot: null,
-        sessionId,
+        jobId,
         urls: {
           ...previous.urls,
           [pendingSlot]: previewUrl,
         },
       }
     })
-  }, [previewUrl, sessionId])
+  }, [previewUrl, jobId])
 
   useEffect(() => {
     const pendingSlot = previewFrames.pendingSlot
@@ -215,7 +215,7 @@ export function RunningWorkspace({
           activeSlot: nextActiveSlot,
           pendingSlot: null,
           readySlot: null,
-          sessionId: previous.sessionId,
+          jobId: previous.jobId,
           urls: {
             ...previous.urls,
             [previousActiveSlot]: '',
@@ -365,7 +365,7 @@ export function RunningWorkspace({
           onSelectModule={onSelectModule}
           open
           selectedModuleId={selectedModuleId}
-          session={session}
+          job={job}
           variant="embedded"
         />
       </div>
@@ -411,7 +411,7 @@ export function RunningWorkspace({
                       isPending ? 'is-pending' : '',
                       isReady ? 'is-ready' : '',
                     ].filter(Boolean).join(' ')}
-                    key={`${renderedPreviewFrames.sessionId}:${slot}`}
+                    key={`${renderedPreviewFrames.jobId}:${slot}`}
                     onLoad={() => handleFrameLoad(slot, url)}
                     ref={(element) => {
                       frameRefs.current[slot] = element

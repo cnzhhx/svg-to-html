@@ -1,20 +1,20 @@
-import type { SessionSummary } from '../../types/session'
-import { SessionList } from './SessionList'
+import type { JobSummary } from '../../types/job'
+import { JobList } from './JobList'
 
 export function Sidebar({
-  currentSessionId,
+  currentJobId,
   onCollapse,
   onOpenUpload,
   onUploadFile,
-  onSelectSession,
-  sessions,
+  onSelectJob,
+  jobs,
 }: {
-  currentSessionId: string | null
+  currentJobId: string | null
   onCollapse: () => void
   onOpenUpload: () => void
   onUploadFile: (file: File) => void
-  onSelectSession: (id: string) => void
-  sessions: SessionSummary[]
+  onSelectJob: (id: string) => void
+  jobs: JobSummary[]
 }) {
   const handleDrop = (event: React.DragEvent) => {
     event.preventDefault()
@@ -62,7 +62,7 @@ export function Sidebar({
         <span>上传 SVG</span>
       </button>
 
-      <SessionList currentSessionId={currentSessionId} onSelectSession={onSelectSession} sessions={sessions} />
+      <JobList currentJobId={currentJobId} onSelectJob={onSelectJob} jobs={jobs} />
     </aside>
   )
 }

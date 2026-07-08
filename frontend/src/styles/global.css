@@ -17,7 +17,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 .module-picker-option:focus-visible,
-.session-item:focus-visible,
+.job-item:focus-visible,
 .link-btn:focus-visible {
   outline: 2px solid rgba(56, 189, 248, 0.58);
   outline-offset: 2px;
@@ -440,7 +440,7 @@ body {
   pointer-events: none;
 }
 
-.session-list {
+.job-list {
   flex: 1;
   overflow-y: auto;
   overflow-anchor: none;
@@ -451,21 +451,21 @@ body {
   min-height: 0;
 }
 
-.session-list::-webkit-scrollbar,
+.job-list::-webkit-scrollbar,
 .conversation-stream::-webkit-scrollbar,
 .result-grid::-webkit-scrollbar,
 .result-panel::-webkit-scrollbar {
   width: 6px;
 }
 
-.session-list::-webkit-scrollbar-track,
+.job-list::-webkit-scrollbar-track,
 .conversation-stream::-webkit-scrollbar-track,
 .result-grid::-webkit-scrollbar-track,
 .result-panel::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.session-list::-webkit-scrollbar-thumb,
+.job-list::-webkit-scrollbar-thumb,
 .conversation-stream::-webkit-scrollbar-thumb,
 .result-grid::-webkit-scrollbar-thumb,
 .result-panel::-webkit-scrollbar-thumb {
@@ -480,7 +480,7 @@ body {
   padding: 28px 12px;
 }
 
-.session-item {
+.job-item {
   display: flex;
   align-items: flex-start;
   gap: 9px;
@@ -498,24 +498,24 @@ body {
   transition: background-color var(--motion) var(--ease-standard), border-color var(--motion) var(--ease-standard), color var(--motion) var(--ease-standard), box-shadow var(--motion) var(--ease-standard);
 }
 
-.session-item:hover {
+.job-item:hover {
   background: rgba(255, 255, 255, 0.04);
   border-color: rgba(148, 163, 184, 0.12);
 }
 
-.session-item.active {
+.job-item.active {
   background: rgba(56, 189, 248, 0.08);
   border-color: rgba(56, 189, 248, 0.18);
   color: var(--ink);
   box-shadow: none;
 }
 
-.session-item-body {
+.job-item-body {
   flex: 1;
   min-width: 0;
 }
 
-.session-item-title {
+.job-item-title {
   display: block;
   flex: 1;
   min-width: 0;
@@ -527,7 +527,7 @@ body {
   text-overflow: ellipsis;
 }
 
-.session-item-meta {
+.job-item-meta {
   display: block;
   margin-top: 6px;
   font-size: 11px;
@@ -538,7 +538,7 @@ body {
   text-overflow: ellipsis;
 }
 
-.session-status-dot {
+.job-status-dot {
   width: 8px;
   height: 8px;
   margin-top: 5px;
@@ -547,17 +547,17 @@ body {
   background: var(--ink-3);
 }
 
-.session-status-dot.status-running,
-.session-status-dot.status-queued {
+.job-status-dot.status-running,
+.job-status-dot.status-queued {
   background: var(--accent);
   box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.12);
   animation: pulse 1.5s ease infinite;
 }
 
-.session-status-dot.status-completed,
-.session-status-dot.status-best-effort,
-.session-status-dot.status-failed-gate { background: var(--good); }
-.session-status-dot.status-failed { background: var(--bad); }
+.job-status-dot.status-completed,
+.job-status-dot.status-best-effort,
+.job-status-dot.status-failed-gate { background: var(--good); }
+.job-status-dot.status-failed { background: var(--bad); }
 
 .main-panel {
   display: flex;

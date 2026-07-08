@@ -1,5 +1,5 @@
 import type { AgentEvent } from '../../types/events'
-import type { Session } from '../../types/session'
+import type { Job } from '../../types/job'
 import { collectSelectableModules } from '../../utils/modules'
 
 type ModuleState = {
@@ -74,22 +74,22 @@ export function ModulePicker({
   agentEvents,
   onSelectModule,
   selectedModuleId,
-  session,
+  job,
 }: {
   agentEvents: AgentEvent[]
   onSelectModule: (id: string | null) => void
   selectedModuleId: string | null
-  session: Session | null
+  job: Job | null
 }) {
-  const modules = collectSelectableModules(session)
+  const modules = collectSelectableModules(job)
   const activeModuleIds = collectActiveModuleIds(agentEvents)
   const seenModuleIds = collectSeenModuleIds(agentEvents)
-  const sessionActiveModuleIds = session?.result?.moduleActiveIds || []
-  sessionActiveModuleIds.forEach((moduleId) => {
+  const jobActiveModuleIds = job?.result?.moduleActiveIds || []
+  jobActiveModuleIds.forEach((moduleId) => {
     const normalized = String(moduleId || '').trim()
     if (normalized) activeModuleIds.add(normalized)
   })
-  Object.keys(session?.result?.moduleAgentThreadIds || {}).forEach((moduleId) => {
+  Object.keys(job?.result?.moduleAgentThreadIds || {}).forEach((moduleId) => {
     const normalized = String(moduleId || '').trim()
     if (normalized) seenModuleIds.add(normalized)
   })

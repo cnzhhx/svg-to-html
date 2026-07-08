@@ -16,12 +16,9 @@ fi
 
 export NODE_ENV="${NODE_ENV:-production}"
 export PORT="${PORT:-80}"
-export WORKSPACE="${WORKSPACE:-$ROOT_DIR/workspace}"
-export CDP_SEND_TIMEOUT_MS="${CDP_SEND_TIMEOUT_MS:-120000}"
-export CDP_READY_TIMEOUT_MS="${CDP_READY_TIMEOUT_MS:-60000}"
 
-RUNTIME_DIR="${RUNTIME_DIR:-$WORKSPACE/.runtime}"
-LOG_DIR="${LOG_DIR:-$WORKSPACE/logs}"
+RUNTIME_DIR="${RUNTIME_DIR:-$ROOT_DIR/.runtime}"
+LOG_DIR="${LOG_DIR:-$RUNTIME_DIR/logs}"
 PID_FILE="${PID_FILE:-$RUNTIME_DIR/server.pid}"
 LOG_FILE="${LOG_FILE:-$LOG_DIR/server.log}"
 MAX_RESTARTS="${MAX_RESTARTS:-10}"
@@ -49,61 +46,38 @@ require_supported_os() {
   is_linux || is_macos || fail "unsupported OS: $OS_NAME (only Linux and macOS are supported)"
 }
 
-detect_browser() {
-  if [ -n "${CHROMIUM_PATH:-}" ] || [ -n "${CHROME_PATH:-}" ] || [ -n "${BROWSER_PATH:-}" ]; then
+run_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm "$@"
     return
   fi
 
-  local candidate
-  for candidate in google-chrome-stable google-chrome chrome chromium chromium-browser microsoft-edge microsoft-edge-stable; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-      export CHROMIUM_PATH="$(command -v "$candidate")"
-      return
-    fi
-  done
-
-  if is_macos; then
-    for candidate in \
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
-      "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
-      if [ -x "$candidate" ]; then
-        export CHROMIUM_PATH="$candidate"
-        return
-      fi
-    done
-  fi
+  command -v corepack >/dev/null 2>&1 || fail "pnpm is not installed and corepack is not available; run backend/scripts/install-linux.sh first"
+  corepack pnpm "$@"
 }
 
 prepare_runtime() {
   require_supported_os
   cd "$ROOT_DIR"
-  mkdir -p "$WORKSPACE" "$RUNTIME_DIR" "$LOG_DIR"
+  mkdir -p "$RUNTIME_DIR" "$LOG_DIR"
 
   command -v node >/dev/null 2>&1 || fail "node is not installed; run backend/scripts/install-linux.sh first"
-  command -v pnpm >/dev/null 2>&1 || fail "pnpm is not installed; run backend/scripts/install-linux.sh first"
-  command -v opencode >/dev/null 2>&1 || fail "opencode is not installed; run backend/scripts/install-linux.sh first"
 
   if [ ! -d "$ROOT_DIR/node_modules" ]; then
     fail "node_modules is missing; run backend/scripts/install-linux.sh first"
   fi
 
-  if [ ! -f "$BACKEND_DIR/dist/browser-mcp-server.mjs" ]; then
-    log "dist/browser-mcp-server.mjs is missing; building it now"
-    pnpm -C "$BACKEND_DIR" run build:mcp
-  fi
-
   if [ ! -f "$ROOT_DIR/frontend/public/index.html" ]; then
     log "frontend/public/index.html is missing; building frontend now"
-    pnpm -C "$ROOT_DIR/frontend" build
+    run_pnpm -C "$ROOT_DIR/frontend" build
   fi
 
-  detect_browser
-  if [ -z "${CHROMIUM_PATH:-}" ] && [ -z "${CHROME_PATH:-}" ] && [ -z "${BROWSER_PATH:-}" ]; then
-    log "warning: no Chrome/Chromium binary found; visual verification will fail until CHROMIUM_PATH is set"
-  else
-    log "browser: ${CHROMIUM_PATH:-${CHROME_PATH:-${BROWSER_PATH:-unknown}}}"
+  if [ -z "${SVG_TRANSFORM_CORE_URL:-}" ]; then
+    fail "SVG_TRANSFORM_CORE_URL is required, for example http://127.0.0.1:4310"
   fi
+
+  log "ensuring svg-transform-core Docker service is running"
+  bash "$ROOT_DIR/scripts/core-docker.sh" start
 }
 
 is_running() {
@@ -159,7 +133,7 @@ run_foreground() {
   prepare_runtime
 
   log "service URL: http://0.0.0.0:${PORT}/transformer"
-  log "workspace: $WORKSPACE"
+  log "core service: $SVG_TRANSFORM_CORE_URL"
   log "log file: $LOG_FILE"
 
   local restarts=0
@@ -180,7 +154,7 @@ run_foreground() {
   while true; do
     log "starting server (restart count: $restarts)"
     cd "$BACKEND_DIR"
-    pnpm start &
+    run_pnpm start &
     child_pid="$!"
 
     set +e
@@ -285,15 +259,14 @@ Commands:
 
 Common env:
   PORT=80
-  WORKSPACE=$ROOT_DIR/workspace
+  SVG_TRANSFORM_CORE_URL=http://127.0.0.1:4310
+  SVG_TRANSFORM_CORE_REPO=$ROOT_DIR/../svg-transform-core
+  SVG_TRANSFORM_CORE_MODEL_CONFIG=<core repo>/.runtime/model-provider.json
   ENV_FILE=$ROOT_DIR/.env
-  CHROMIUM_PATH=/usr/bin/google-chrome-stable
-  MAX_CONCURRENT_AGENTS=2
-  MAX_PARALLEL_MODULE_AGENTS=3
+  RUNTIME_DIR=$ROOT_DIR/.runtime
   MAX_RESTARTS=10
   RESTART_DELAY=3
   STARTUP_TIMEOUT_SECONDS=30
-  SESSION_LOCAL_STORAGE_ENABLED=0   # 前端是否本地存储 session（默认关闭）
 EOF
 }
 
