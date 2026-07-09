@@ -53,7 +53,9 @@ cp .env.example .env
 cp backend/config/model-provider.example.json backend/config/model-provider.json
 ```
 
-然后编辑 `backend/config/model-provider.json`，填入真实模型 provider、baseURL、apiKey 或 apiKeyEnv。
+然后编辑 `backend/config/model-provider.json`，为 `models` 中的每个条目填入真实模型 provider、baseURL、模型 id、apiKey 或 apiKeyEnv。
+
+上传时可以选择模型配置 ID，对应 `backend/config/model-provider.json` 里的 `models.<key>`。首次默认使用第一项，之后会记住上次选择，若配置中找不到该项则回到第一项。
 
 `backend/config/model-provider.json` 被 `.gitignore` 忽略，可以放本地密钥；提交到仓库的只有 `backend/config/model-provider.example.json` 模板。
 
@@ -120,7 +122,7 @@ pnpm core:recreate
 | pnpm | 10.11+ | 用 npm、Homebrew、nvm、Volta 等方式安装均可 |
 | Docker Desktop / Docker Engine | 可用 | core 必须通过 Docker 启动 |
 | svg-transform-core 镜像 | `ghcr.io/cnzhhx/svg-transform-core:latest` | 当前项目直接拉取并运行已发布镜像 |
-| @svg-transform/core-client | `0.1.0` | 当前网关使用 npm 线上包，不依赖本地 core 仓库 |
+| @svg-transform/core-client | `0.2.0` | 当前网关使用 npm 线上包，不依赖本地 core 仓库 |
 
 浏览器、模型 provider、opencode、CDP、workspace、并发和 diff 阈值都属于 `svg-transform-core` 的运行配置，不属于当前网关代码。
 

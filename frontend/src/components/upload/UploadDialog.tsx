@@ -6,16 +6,19 @@ import { STORAGE_KEYS, readNumberStorage, readStringStorage, writeStringStorage 
 export function UploadDialog({
   onClose,
   initialFile,
+  modelOptions,
   onUploaded,
   open,
 }: {
   onClose: () => void
   initialFile: File | null
+  modelOptions: string[]
   onUploaded: (response: UploadResponse) => void
   open: boolean
 }) {
   const [file, setFile] = useState<File | null>(null)
   const [format, setFormat] = useState(readStringStorage(STORAGE_KEYS.uploadFormat, 'html') || 'html')
+  const [model, setModel] = useState(readStringStorage(STORAGE_KEYS.uploadModel, ''))
   const [scale, setScale] = useState(readNumberStorage(STORAGE_KEYS.uploadScale, 1))
   const [jobCountInput, setJobCountInput] = useState('1')
   const [busy, setBusy] = useState(false)
@@ -24,6 +27,17 @@ export function UploadDialog({
   useEffect(() => {
     writeStringStorage(STORAGE_KEYS.uploadFormat, format)
   }, [format])
+
+  useEffect(() => {
+    writeStringStorage(STORAGE_KEYS.uploadModel, model)
+  }, [model])
+
+  useEffect(() => {
+    const firstModel = modelOptions[0] || ''
+    if (modelOptions.length > 0 && (!model || !modelOptions.includes(model))) {
+      setModel(firstModel)
+    }
+  }, [model, modelOptions])
 
   useEffect(() => {
     writeStringStorage(STORAGE_KEYS.uploadScale, String(scale))
@@ -46,6 +60,7 @@ export function UploadDialog({
         ? Math.max(1, Math.min(20, Math.floor(parsedJobCount)))
         : 1
       const response = await uploadSvg(file, {
+        model: model.trim(),
         outputFormat: format,
         scale,
         jobCount,
@@ -82,6 +97,19 @@ export function UploadDialog({
                 </label>
               ))}
             </div>
+          </div>
+          <div className="upload-dialog-field">
+            <label className="upload-dialog-label" htmlFor="uploadModelSelect">模型配置 ID</label>
+            <select
+              className="upload-dialog-select"
+              id="uploadModelSelect"
+              onChange={(event) => setModel(event.target.value)}
+              value={model}
+            >
+              {modelOptions.map((item) => (
+                <option key={item} value={item}>{item}</option>
+              ))}
+            </select>
           </div>
           <div className="upload-dialog-field">
             <label className="upload-dialog-label" htmlFor="uploadJobCount">并发 Job 数</label>

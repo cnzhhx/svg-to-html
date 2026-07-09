@@ -29,8 +29,9 @@ export function Toolbar({
 }) {
   const progress = getWorkflowProgress(job)
   const title = job?.designName || '选择一个 job'
+  const modelMeta = job?.model ? ` · 模型: ${job.model}` : ''
   const meta = job
-    ? `${job.id} · ${labelForJobStatus(job)} · ${Number(job.scale || 1)}x · ${labelForOutputFormat(getJobOutputFormat(job))} · ${formatJobDuration(job)} · ${progress.detail || labelForWorkflowNode(progress.currentNode)}`
+    ? `${job.id} · ${labelForJobStatus(job)} · ${Number(job.scale || 1)}x · ${labelForOutputFormat(getJobOutputFormat(job))}${modelMeta} · ${formatJobDuration(job)} · ${progress.detail || labelForWorkflowNode(progress.currentNode)}`
     : '上传 SVG 开始'
 
   return (

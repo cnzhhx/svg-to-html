@@ -125,6 +125,7 @@ export type Job = {
   executionStartedAt?: number
   threadId?: string
   svgPath?: string
+  model?: string
   scale?: number
   jobDir?: string
   artifactDir?: string

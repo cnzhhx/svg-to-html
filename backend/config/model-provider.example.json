@@ -1,6 +1,4 @@
 {
-  "moduleAgentModel": "your-model",
-  "otherModel": "your-model",
   "models": {
     "your-model": {
       "runtime": "opencode",

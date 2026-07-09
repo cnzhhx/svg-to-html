@@ -616,6 +616,7 @@ export default function App() {
       />
       <UploadDialog
         initialFile={uploadFile}
+        modelOptions={state.runtime?.modelOptions || []}
         onClose={() => dispatch({ type: 'upload/open', open: false })}
         onUploaded={(response) => {
           const uploaded = (response.jobs || (response.job ? [response.job] : [])).map((job) => {

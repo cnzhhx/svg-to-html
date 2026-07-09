@@ -48,6 +48,9 @@ const readNumber = (envName: string, fallback: number) => {
 const buildBackendConfig = () =>
   ({
     core: {
+      modelConfigPath:
+        readBackendEnvString("SVG_TRANSFORM_CORE_MODEL_CONFIG") ??
+        path.resolve(repoRoot(), "backend/config/model-provider.json"),
       serviceUrl: readBackendEnvString("SVG_TRANSFORM_CORE_URL"),
     },
     server: {

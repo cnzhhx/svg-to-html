@@ -9,6 +9,7 @@ export const STORAGE_KEYS = {
   jobs: 'svg2html:jobs',
   theme: 'svg2html:theme',
   uploadFormat: 'svg2html:uploadFormat',
+  uploadModel: 'svg2html:uploadModel',
   uploadScale: 'svg2html:uploadScale',
 } as const
 

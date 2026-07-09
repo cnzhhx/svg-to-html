@@ -6,5 +6,6 @@ export type RuntimeInfo = {
   release: string
   jobChatDisabled: boolean
   jobDeleteDisabled: boolean
+  modelOptions: string[]
   artifactRoot: string
 }

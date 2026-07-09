@@ -30,6 +30,7 @@ export function JobList({
       {jobs.map((job) => {
         const active = job.id === currentJobId
         const outputFormat = labelForOutputFormat(getJobOutputFormat(job))
+        const modelMeta = job.model ? ` · 模型: ${job.model}` : ''
         return (
           <button
             className={`job-item${active ? ' active' : ''}`}
@@ -42,7 +43,7 @@ export function JobList({
             <span className="job-item-body">
               <span className="job-item-title">{job.designName || job.id}</span>
               <span className="job-item-meta">
-                {formatJobDuration(job, now)} · {outputFormat} · {labelForJobStatus(job)}
+                {formatJobDuration(job, now)} · {outputFormat}{modelMeta} · {labelForJobStatus(job)}
               </span>
             </span>
           </button>

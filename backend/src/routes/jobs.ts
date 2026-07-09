@@ -1,5 +1,6 @@
 import path from "node:path";
 import os from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 
 import { Router } from "express";
 import multer from "multer";
@@ -11,6 +12,7 @@ import {
   rewriteCoreUrls,
   sendCoreError,
 } from "../core-service/client.js";
+import { getBackendConfig } from "../config/index.js";
 
 const router = Router();
 
@@ -41,6 +43,7 @@ const parseJobCount = (value: unknown) => {
 const JOB_CREATE_FIELD_KEYS = new Set([
   "dryRun",
   "jobCount",
+  "model",
   "outputFormat",
   "scale",
 ]);
@@ -72,11 +75,26 @@ const appendIfPresent = (form: FormData, key: string, value: unknown) => {
   form.append(key, String(value));
 };
 
+const readRuntimeModelOptions = () => {
+  const configPath = getBackendConfig().core.modelConfigPath;
+  try {
+    if (!existsSync(configPath)) return [];
+    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    const models = (parsed as { models?: unknown }).models;
+    if (!models || typeof models !== "object" || Array.isArray(models)) return [];
+    return Object.keys(models).filter((key) => key.trim());
+  } catch {
+    return [];
+  }
+};
+
 const createCoreJob = async (file: Express.Multer.File, body: Record<string, unknown>) => {
   const form = new FormData();
   const bytes = new Uint8Array(file.buffer.byteLength);
   bytes.set(file.buffer);
   form.append("svg", new Blob([bytes.buffer], { type: file.mimetype || "image/svg+xml" }), decodeOriginalName(file.originalname));
+  appendIfPresent(form, "model", body["model"]);
   appendIfPresent(form, "outputFormat", body["outputFormat"]);
   appendIfPresent(form, "scale", body["scale"]);
   appendIfPresent(form, "dryRun", body["dryRun"]);
@@ -92,6 +110,7 @@ router.get("/runtime", (_req, res) => {
     enableJobLocalStorage: true,
     jobChatDisabled: false,
     jobDeleteDisabled: false,
+    modelOptions: readRuntimeModelOptions(),
     nodeVersion: process.version,
     platform: process.platform,
     release: os.release(),

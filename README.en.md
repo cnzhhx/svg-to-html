@@ -53,7 +53,9 @@ cp .env.example .env
 cp backend/config/model-provider.example.json backend/config/model-provider.json
 ```
 
-Then edit `backend/config/model-provider.json` and fill in your real model provider, baseURL, apiKey, or apiKeyEnv.
+Then edit `backend/config/model-provider.json` and fill in the real model provider, baseURL, provider model id, apiKey, or apiKeyEnv for each entry in `models`.
+
+When uploading, you can select a model config ID that matches `models.<key>` in `backend/config/model-provider.json`. The first entry is used initially; later uploads keep the last selected model unless it no longer exists, in which case the first entry is used again.
 
 `backend/config/model-provider.json` is ignored by Git and can contain local secrets. Only `backend/config/model-provider.example.json` is committed as the template.
 
@@ -120,7 +122,7 @@ Recreate is needed for changes to `SVG_TRANSFORM_CORE_IMAGE`, `SVG_TRANSFORM_COR
 | pnpm | 10.11+ | Install with npm, Homebrew, nvm, Volta, or your preferred tool |
 | Docker Desktop / Docker Engine | available | Core must run through Docker |
 | svg-transform-core image | `ghcr.io/cnzhhx/svg-transform-core:latest` | This project pulls and runs the published image |
-| @svg-transform/core-client | `0.1.0` | The gateway uses the published npm package, not a local core checkout |
+| @svg-transform/core-client | `0.2.0` | The gateway uses the published npm package, not a local core checkout |
 
 Browser, model provider, opencode, CDP, workspace, concurrency, and diff settings belong to `svg-transform-core`, not this gateway code.
 
