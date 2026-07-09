@@ -11,8 +11,8 @@ importers:
   backend:
     dependencies:
       '@svg-transform/core-client':
-        specifier: file:../../svg-transform-core/packages/client
-        version: file:../svg-transform-core/packages/client
+        specifier: 0.1.0
+        version: 0.1.0
       express:
         specifier: ^5.1.0
         version: 5.2.1
@@ -326,8 +326,8 @@ packages:
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
 
-  '@svg-transform/core-client@file:../svg-transform-core/packages/client':
-    resolution: {directory: ../svg-transform-core/packages/client, type: directory}
+  '@svg-transform/core-client@0.1.0':
+    resolution: {integrity: sha512-00mkXI8nJOb8PimYPXYOgkZ8wXlT6PyoT8/WO1AL21x/t5SCW1kI1i5/lz4GffsKtwh9n7/6lQbMBRwtkxWdgA==}
 
   '@tybys/wasm-util@0.10.2':
     resolution: {integrity: sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg==}
@@ -1093,7 +1093,7 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
-  '@svg-transform/core-client@file:../svg-transform-core/packages/client': {}
+  '@svg-transform/core-client@0.1.0': {}
 
   '@tybys/wasm-util@0.10.2':
     dependencies:

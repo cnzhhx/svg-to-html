@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const backendDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -60,22 +60,13 @@ const addCommandCheck = (label, command, required = true) => {
 const addPnpmCheck = () => {
   const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
   const pnpmVersion = commandVersion(pnpmCommand);
-  if (pnpmVersion) {
-    addCheck("pnpm", true, pnpmVersion);
-    return;
-  }
-
-  const corepackPnpmVersion = commandVersion("corepack", ["pnpm", "--version"]);
-  addCheck(
-    "pnpm",
-    Boolean(corepackPnpmVersion),
-    corepackPnpmVersion
-      ? `corepack pnpm ${corepackPnpmVersion}`
-      : "pnpm not found; install pnpm or enable corepack",
-  );
+  addCheck("pnpm", Boolean(pnpmVersion), pnpmVersion || "pnpm not found; install with: npm install -g pnpm@10.11.0");
 };
 
 loadRootEnvFile();
+
+const resolveRootPath = (value) =>
+  isAbsolute(value) ? value : resolve(rootDir, value);
 
 addCommandCheck("Node", "node");
 addPnpmCheck();
@@ -98,19 +89,41 @@ try {
   await access(join(rootDir, "frontend/public/index.html"));
   addCheck("Frontend build", true, "frontend/public/index.html");
 } catch {
-  addCheck("Frontend build", false, "run corepack pnpm -C frontend build");
+  addCheck(
+    "Frontend build",
+    false,
+    "not required for pnpm dev; run pnpm -C frontend build for production static preview",
+    false,
+  );
 }
 
 const coreUrl = process.env.SVG_TRANSFORM_CORE_URL?.trim()?.replace(/\/+$/, "");
-const coreRepo =
-  process.env.SVG_TRANSFORM_CORE_REPO?.trim() || resolve(rootDir, "../svg-transform-core");
-const coreDockerScript = join(coreRepo, "scripts/docker-core.sh");
+const coreImage =
+  process.env.SVG_TRANSFORM_CORE_IMAGE?.trim() || "ghcr.io/cnzhhx/svg-transform-core:latest";
+const coreModelConfig =
+  resolveRootPath(
+    process.env.SVG_TRANSFORM_CORE_MODEL_CONFIG?.trim() ||
+      "backend/config/model-provider.json",
+  );
+const coreDockerScript = join(rootDir, "scripts/core-docker.sh");
 addCheck(
   "Core Docker helper",
   existsSync(coreDockerScript),
   existsSync(coreDockerScript)
     ? coreDockerScript
-    : `missing ${coreDockerScript}; set SVG_TRANSFORM_CORE_REPO if needed`,
+    : `missing ${coreDockerScript}`,
+);
+addCheck(
+  "Core Docker image",
+  Boolean(coreImage),
+  coreImage,
+);
+addCheck(
+  "Core model config",
+  existsSync(coreModelConfig),
+  existsSync(coreModelConfig)
+    ? coreModelConfig
+    : `missing ${coreModelConfig}; copy backend/config/model-provider.example.json and fill provider credentials`,
 );
 
 if (!coreUrl) {

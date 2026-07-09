@@ -2,9 +2,9 @@
 
 简体中文 | [English](README.en.md)
 
-这是 `svg-transform-core` 的前端和 API 网关项目。当前仓库负责上传入口、任务列表、进度流、预览、下载和聊天修复 UI；真正的 SVG 转换、模型调用、浏览器渲染、产物写入和 Docker 部署由独立的 `svg-transform-core` 服务负责。
+这是一个基于 `svg-transform-core` 的功能展示项目。当前仓库负责 Web UI 和 API 网关：上传 SVG、查看任务、进度流、预览、下载和聊天修复；真正的 SVG 转换、模型调用、浏览器渲染和产物写入由已发布的 `svg-transform-core` Docker 镜像负责。
 
-当前仓库不再创建或读取本地 session 产物，不启动本地 pipeline，也不直接依赖模型、浏览器或 opencode 执行转换。旧 session 数据不迁移、不展示、不兼容。
+当前仓库不做部署系统，不内置本地转换 pipeline，也不要求本机存在 `svg-transform-core` 仓库。
 
 ## 效果预览
 
@@ -23,149 +23,130 @@
 ```mermaid
 flowchart LR
   UI["/transformer 前端"] --> GW["当前项目后端网关"]
-  GW --> CORE["svg-transform-core"]
+  GW --> CORE["svg-transform-core Docker"]
   CORE --> JOBS["jobs / events / preview / files / download"]
 ```
 
-当前后端对外提供 `/transformer/api/jobs/*`，并转发到 core 的 `/api/jobs/*`：
-
-- `GET /transformer/api/jobs`
-- `POST /transformer/api/jobs`
-- `GET /transformer/api/jobs/:id`
-- `POST /transformer/api/jobs/:id/start`
-- `POST /transformer/api/jobs/:id/messages`
-- `GET /transformer/api/jobs/:id/events`
-- `GET /transformer/api/jobs/:id/preview`
-- `GET /transformer/api/jobs/:id/files/*`
-- `GET /transformer/api/jobs/:id/download`
-- `DELETE /transformer/api/jobs/:id`
-
-预览、文件、下载和 SSE 中的 URL 会被重写为 `/transformer/api/jobs/...`，前端不会接触 core 内网地址或 Docker 内部路径。
+后端对外提供 `/transformer/api/jobs/*`，并转发到 core 的 `/api/jobs/*`。预览、文件、下载和 SSE 中的 URL 会被重写为 `/transformer/api/jobs/...`，前端不会接触 core 内网地址或 Docker 内部路径。
 
 ## 快速开始
 
-### 1. 启动 core Docker
+### 1. 安装依赖
 
-当前项目开发和启动都要求 `svg-transform-core` 走 Docker，不再使用本地 `apps/server dev` 跑 core。默认要求 `svg-transform-core` 仓库与当前仓库同级：
-
-```bash
-corepack pnpm install
-corepack pnpm core:start
-corepack pnpm core:health
-```
-
-`corepack pnpm core:start` 会调用 `../svg-transform-core/scripts/docker-core.sh start`，复用已有容器；如果修改过 core 端口、环境变量、挂载、镜像或 model config 路径，使用：
+先安装 pnpm（任选一种方式）：
 
 ```bash
-corepack pnpm core:recreate
+npm install -g pnpm@10.11.0
+# 或者使用 Homebrew / nvm / Volta 等你习惯的方式安装 pnpm
 ```
 
-如果 core 仓库不在当前仓库同级，设置：
+然后安装项目依赖：
 
 ```bash
-SVG_TRANSFORM_CORE_REPO=/absolute/path/to/svg-transform-core corepack pnpm core:start
+pnpm install
 ```
 
-core Docker 默认对外提供 `http://127.0.0.1:4310/health`。
-
-### 2. 配置当前网关
+### 2. 配置模型
 
 ```bash
 cp .env.example .env
+cp backend/config/model-provider.example.json backend/config/model-provider.json
 ```
 
-确保 `.env` 或环境变量中存在：
+然后编辑 `backend/config/model-provider.json`，填入真实模型 provider、baseURL、apiKey 或 apiKeyEnv。
+
+`backend/config/model-provider.json` 被 `.gitignore` 忽略，可以放本地密钥；提交到仓库的只有 `backend/config/model-provider.example.json` 模板。
+
+### 3. 启动展示项目
 
 ```bash
-PORT=81
-SVG_TRANSFORM_CORE_URL=http://127.0.0.1:4310
+pnpm dev
 ```
 
-`SVG_TRANSFORM_CORE_URL` 是必填项。当前后端启动时会请求 `${SVG_TRANSFORM_CORE_URL}/health`，未配置或不可达会直接退出。
 
-### 3. 构建并启动当前项目
+开发启动会自动：
 
-```bash
-corepack pnpm install
-corepack pnpm -C frontend build
-corepack pnpm start
-```
+- 确保 `.env` 和 `backend/config/model-provider.json` 存在，缺失时从模板创建
+- 拉起 `ghcr.io/cnzhhx/svg-transform-core:latest`
+- 启动后端网关
+- 启动 Vite 前端开发服务
 
 访问：
+
+```text
+http://localhost:5173/transformer
+```
+
+后端网关默认在：
 
 ```text
 http://localhost:81/transformer
 ```
 
-## 服务管理
+## 常用命令
 
 ```bash
-corepack pnpm core:start                            # 启动 core Docker
-corepack pnpm core:recreate                         # 重建 core Docker 容器
-corepack pnpm core:status                           # 查看 core Docker 状态
-corepack pnpm core:logs                             # 查看 core Docker 日志
-corepack pnpm core:stop                             # 停止 core Docker
-
-bash backend/scripts/start-linux.sh start       # 后台启动
-bash backend/scripts/start-linux.sh stop        # 停止
-bash backend/scripts/start-linux.sh restart     # 重启
-bash backend/scripts/start-linux.sh status      # 查看状态
-bash backend/scripts/start-linux.sh logs        # 查看日志
-bash backend/scripts/start-linux.sh foreground  # 前台运行
+pnpm dev                 # 启动展示项目
+pnpm doctor              # 检查 Node、pnpm、Docker、core health 等
+pnpm build               # 构建前端并检查后端类型
+pnpm core:status         # 查看 core Docker 容器
+pnpm core:logs           # 查看 core Docker 日志
+pnpm core:recreate       # 使用本地镜像重建 core 容器
+pnpm core:update         # 拉取最新镜像并重建 core 容器
+pnpm core:stop           # 停止 core Docker 容器
 ```
 
-`corepack pnpm dev`、`corepack pnpm start` 和 `backend/scripts/start-linux.sh start` 都会先确保 core Docker 已启动，再启动当前网关。
+如果要锁定首个发布版本，可以在 `.env` 中改为：
 
-`backend/scripts/deploy.sh` 仍然是本地脚本：先把代码复制到目标机器，再在目标机器运行。它不会做 SSH/SCP 编排；启动当前网关前会通过本地 Docker 拉起 core。
+```dotenv
+SVG_TRANSFORM_CORE_IMAGE=ghcr.io/cnzhhx/svg-transform-core:0.1.0
+```
+
+改 core 启动参数时，先改 `.env`，再重建 core 容器：
+
+```bash
+pnpm core:recreate
+```
+
+需要重建的典型情况包括修改 `SVG_TRANSFORM_CORE_IMAGE`、`SVG_TRANSFORM_CORE_URL` / `SVG_TRANSFORM_CORE_PORT`、`SVG_TRANSFORM_CORE_WORKSPACE`、`SVG_TRANSFORM_CORE_MODEL_CONFIG` 或 `SVG_TRANSFORM_CORE_ENV_FILE`。只改 `backend/config/model-provider.json` 内容时，文件路径没变，Docker 挂载仍然有效；如果不确定 core 是否重新读取了配置，也执行一次 `pnpm core:recreate` 最稳。
+
+`pnpm core:recreate` 会优先复用本机已有的 `SVG_TRANSFORM_CORE_IMAGE`，只有本机没有这个 tag 时才会下载。想主动更新 `latest` 或重新拉取远端镜像时，再执行 `pnpm core:update`。
 
 ## 环境要求
 
 | 依赖 | 版本 | 说明 |
 | --- | --- | --- |
-| Node.js | 20+（推荐 22+） | 当前网关运行时 |
-| pnpm via Corepack | 10.11+ | 项目 `packageManager` 字段指定 |
+| Node.js | 20+（推荐 22+） | 当前网关和前端开发服务运行时 |
+| pnpm | 10.11+ | 用 npm、Homebrew、nvm、Volta 等方式安装均可 |
 | Docker Desktop / Docker Engine | 可用 | core 必须通过 Docker 启动 |
-| svg-transform-core | 同级仓库或 `SVG_TRANSFORM_CORE_REPO` 指定路径 | 当前项目会调用它的 Docker helper |
+| svg-transform-core 镜像 | `ghcr.io/cnzhhx/svg-transform-core:latest` | 当前项目直接拉取并运行已发布镜像 |
+| @svg-transform/core-client | `0.1.0` | 当前网关使用 npm 线上包，不依赖本地 core 仓库 |
 
-浏览器、模型 provider、opencode、CDP、workspace、并发和 diff 阈值都属于 `svg-transform-core` 的运行配置，不属于当前网关配置。
+浏览器、模型 provider、opencode、CDP、workspace、并发和 diff 阈值都属于 `svg-transform-core` 的运行配置，不属于当前网关代码。
 
 ## 环境变量
 
-当前 Web 网关关键变量：
-
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `PORT` | `80` | 当前网关 HTTP 监听端口 |
-| `SVG_TRANSFORM_CORE_URL` | 无 | 必填，core 服务地址，例如 `http://127.0.0.1:4310` |
-| `SVG_TRANSFORM_CORE_REPO` | `../svg-transform-core` | core 仓库路径 |
-| `SVG_TRANSFORM_CORE_MODEL_CONFIG` | core 仓库内 `.runtime/model-provider.json` | core Docker 挂载的模型配置 |
-
-当前网关不会读取浏览器、模型 provider、opencode、CDP、workspace、并发或 diff 阈值变量；这些变量应配置在 `svg-transform-core`。
-
-## 验证
-
-```bash
-corepack pnpm -C backend run lint:types
-corepack pnpm -C frontend build
-corepack pnpm build
-```
-
-core 启动后可以直接检查：
-
-```bash
-curl http://127.0.0.1:81/transformer/health
-curl http://127.0.0.1:81/transformer/api/jobs
-```
+| `PORT` | `81` | 当前网关 HTTP 监听端口 |
+| `SVG_TRANSFORM_CORE_URL` | `http://127.0.0.1:4310` | core 服务地址 |
+| `SVG_TRANSFORM_CORE_IMAGE` | `ghcr.io/cnzhhx/svg-transform-core:latest` | core Docker 镜像 |
+| `SVG_TRANSFORM_CORE_MODEL_CONFIG` | `./backend/config/model-provider.json` | core Docker 挂载的模型配置 |
+| `SVG_TRANSFORM_CORE_WORKSPACE` | `./workspace/core` | core Docker 挂载的任务和产物目录 |
+| `SVG_TRANSFORM_CORE_CONTAINER` | `svg-transform-core` | core Docker 容器名 |
+| `SVG_TRANSFORM_CORE_PORT` | 从 `SVG_TRANSFORM_CORE_URL` 推断或 `4310` | core Docker 映射到宿主机的端口 |
 
 ## 项目结构
 
 ```
 backend/
   src/                    Express 网关源码
-  scripts/                 本地安装、启动和部署脚本
+  scripts/                 doctor 检查脚本
 frontend/
   src/                    React 18 前端源码
-  public/                 React build 后的静态产物，供后端服务
+scripts/
+  dev.sh                  pnpm dev 入口
+  core-docker.sh          core Docker 生命周期管理
 example/                  可发布的还原度对比示例
 ```
 
