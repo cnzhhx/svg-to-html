@@ -106,7 +106,7 @@ SVG_TRANSFORM_CORE_IMAGE=ghcr.io/cnzhhx/svg-transform-core:0.1.0
 
 改 core 启动参数时只需修改 `.env`，下次 `pnpm core:start`（包括 `pnpm dev`）会检测镜像、端口、挂载目录等配置变化并自动重建容器；想立即重建时仍可用 `pnpm core:recreate`。
 
-会触发自动重建的修改包括 `SVG_TRANSFORM_CORE_IMAGE`、`SVG_TRANSFORM_CORE_URL` / `SVG_TRANSFORM_CORE_PORT`、`SVG_TRANSFORM_CORE_WORKSPACE`、`SVG_TRANSFORM_CORE_MODEL_CONFIG` 和 `SVG_TRANSFORM_CORE_ENV_FILE`。只改 `backend/config/model-provider.json` 内容时，文件路径没变，Docker 挂载仍然有效；如果不确定 core 是否重新读取了配置，执行一次 `pnpm core:recreate` 最稳。
+会触发自动重建的修改包括 `SVG_TRANSFORM_CORE_IMAGE`、`SVG_TRANSFORM_CORE_URL` / `SVG_TRANSFORM_CORE_PORT`、`SVG_TRANSFORM_CORE_WORKSPACE`、`SVG_TRANSFORM_CORE_MODEL_CONFIG`、`SVG_TRANSFORM_CORE_ENV_FILE` 和 `MAX_PARALLEL_MODULE_AGENTS`。只改 `backend/config/model-provider.json` 内容时，文件路径没变，Docker 挂载仍然有效；如果不确定 core 是否重新读取了配置，执行一次 `pnpm core:recreate` 最稳。
 
 容器默认带 `--restart unless-stopped`，Docker 或机器重启后会自动恢复。
 
@@ -135,6 +135,7 @@ SVG_TRANSFORM_CORE_IMAGE=ghcr.io/cnzhhx/svg-transform-core:0.1.0
 | `SVG_TRANSFORM_CORE_WORKSPACE` | `./workspace/core` | core Docker 挂载的任务和产物目录 |
 | `SVG_TRANSFORM_CORE_CONTAINER` | `svg-transform-core` | core Docker 容器名 |
 | `SVG_TRANSFORM_CORE_PORT` | 从 `SVG_TRANSFORM_CORE_URL` 推断或 `4310` | core Docker 映射到宿主机的端口 |
+| `MAX_PARALLEL_MODULE_AGENTS` | core 默认 `5` | 单个任务同时运行的模块 Agent 数；当前示例配置为 `4` |
 
 ## 项目结构
 

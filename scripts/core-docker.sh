@@ -58,7 +58,7 @@ spec_hash() {
     env_file_hash="$(cksum <"$CORE_ENV_FILE" | awk '{print $1}')"
   fi
   # Bump the leading version when docker run flags change so old containers get recreated.
-  printf '%s\n' "3|$IMAGE_NAME|$CORE_PORT|$WORKSPACE_DIR|$MODEL_CONFIG|$CORE_ENV_FILE|$env_file_hash" | cksum | awk '{print $1}'
+  printf '%s\n' "4|$IMAGE_NAME|$CORE_PORT|$WORKSPACE_DIR|$MODEL_CONFIG|$CORE_ENV_FILE|$env_file_hash|${MAX_PARALLEL_MODULE_AGENTS:-}" | cksum | awk '{print $1}'
 }
 
 health_url() {
@@ -147,6 +147,9 @@ run_container() {
   )
   if [ -n "$CORE_ENV_FILE" ]; then
     args+=(--env-file "$CORE_ENV_FILE")
+  fi
+  if [ -n "${MAX_PARALLEL_MODULE_AGENTS:-}" ]; then
+    args+=(-e "MAX_PARALLEL_MODULE_AGENTS=$MAX_PARALLEL_MODULE_AGENTS")
   fi
   docker run "${args[@]}" "$IMAGE_NAME"
 }
@@ -258,6 +261,7 @@ Environment:
   SVG_TRANSFORM_CORE_WORKSPACE      Host workspace dir, default ./workspace/core
   SVG_TRANSFORM_CORE_MODEL_CONFIG   Host model config, default ./backend/config/model-provider.json
   SVG_TRANSFORM_CORE_ENV_FILE       Optional env file passed to docker run
+  MAX_PARALLEL_MODULE_AGENTS        Maximum module agents per session, core default 5
 USAGE
 }
 
