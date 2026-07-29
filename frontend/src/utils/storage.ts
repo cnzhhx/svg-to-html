@@ -48,6 +48,8 @@ export function writeStringStorage(key: string, value: string) {
 }
 
 export function readNumberStorage(key: string, fallback: number) {
-  const value = Number(readStringStorage(key, ''))
+  const raw = readStringStorage(key, '')
+  if (!raw) return fallback
+  const value = Number(raw)
   return Number.isFinite(value) ? value : fallback
 }

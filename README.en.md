@@ -104,15 +104,13 @@ To pin the first published release, set this in `.env`:
 SVG_TRANSFORM_CORE_IMAGE=ghcr.io/cnzhhx/svg-transform-core:0.1.0
 ```
 
-When changing core startup parameters, edit `.env` and recreate the core container:
+To change core startup parameters, just edit `.env`. The next `pnpm core:start` (including `pnpm dev`) detects image, port, mount, and env changes and recreates the container automatically; use `pnpm core:recreate` when you want an immediate rebuild.
 
-```bash
-pnpm core:recreate
-```
+Changes that trigger automatic recreation include `SVG_TRANSFORM_CORE_IMAGE`, `SVG_TRANSFORM_CORE_URL` / `SVG_TRANSFORM_CORE_PORT`, `SVG_TRANSFORM_CORE_WORKSPACE`, `SVG_TRANSFORM_CORE_MODEL_CONFIG`, and `SVG_TRANSFORM_CORE_ENV_FILE`. If you only edit the contents of `backend/config/model-provider.json`, the mounted file path stays the same; if you are not sure whether core has reloaded it, `pnpm core:recreate` is the safest option.
 
-Recreate is needed for changes to `SVG_TRANSFORM_CORE_IMAGE`, `SVG_TRANSFORM_CORE_URL` / `SVG_TRANSFORM_CORE_PORT`, `SVG_TRANSFORM_CORE_WORKSPACE`, `SVG_TRANSFORM_CORE_MODEL_CONFIG`, or `SVG_TRANSFORM_CORE_ENV_FILE`. If you only edit the contents of `backend/config/model-provider.json`, the mounted file path stays the same; if you are not sure whether core has reloaded it, `pnpm core:recreate` is the safest option.
+The container runs with `--restart unless-stopped`, so it comes back after a Docker or machine restart.
 
-`pnpm core:recreate` reuses the local `SVG_TRANSFORM_CORE_IMAGE` first and only downloads when that tag is missing locally. Use `pnpm core:update` when you want to pull the remote image again, especially for `latest`.
+`pnpm core:recreate` reuses the local `SVG_TRANSFORM_CORE_IMAGE` first and only downloads when that tag is missing locally. Use `pnpm core:update` when you want to pull the remote image again, especially for `latest`; after a pull, a plain `core:start` also notices the new image ID and recreates the container.
 
 ## Requirements
 

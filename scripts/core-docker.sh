@@ -17,6 +17,7 @@ PORT="${SVG_TRANSFORM_CORE_PORT:-}"
 WORKSPACE_DIR="${SVG_TRANSFORM_CORE_WORKSPACE:-$ROOT_DIR/workspace/core}"
 MODEL_CONFIG="${SVG_TRANSFORM_CORE_MODEL_CONFIG:-$ROOT_DIR/backend/config/model-provider.json}"
 CORE_ENV_FILE="${SVG_TRANSFORM_CORE_ENV_FILE:-}"
+SPEC_LABEL="svg-to-html.core-spec"
 
 log() {
   printf '[core-docker] %s\n' "$*"
@@ -36,34 +37,6 @@ resolve_host_path() {
   esac
 }
 
-read_env_value() {
-  local key="$1"
-  [ -f "$ENV_FILE" ] || return 0
-
-  local line env_key value
-  while IFS= read -r line || [ -n "$line" ]; do
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
-    [ -n "$line" ] || continue
-    case "$line" in \#*) continue ;; esac
-
-    env_key="${line%%=*}"
-    [ "$env_key" != "$line" ] || continue
-    env_key="${env_key%"${env_key##*[![:space:]]}"}"
-    [ "$env_key" = "$key" ] || continue
-
-    value="${line#*=}"
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-    value="${value%\"}"
-    value="${value#\"}"
-    value="${value%\'}"
-    value="${value#\'}"
-    printf '%s\n' "$value"
-    return 0
-  done <"$ENV_FILE"
-}
-
 resolve_core_port() {
   if [ -n "$PORT" ]; then
     printf '%s\n' "$PORT"
@@ -71,10 +44,6 @@ resolve_core_port() {
   fi
 
   local core_url="${SVG_TRANSFORM_CORE_URL:-}"
-  if [ -z "$core_url" ]; then
-    core_url="$(read_env_value SVG_TRANSFORM_CORE_URL || true)"
-  fi
-
   if [[ "$core_url" =~ :([0-9]+)(/.*)?$ ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
     return
@@ -83,9 +52,26 @@ resolve_core_port() {
   printf '4310\n'
 }
 
+spec_hash() {
+  local env_file_hash="-"
+  if [ -n "$CORE_ENV_FILE" ] && [ -f "$CORE_ENV_FILE" ]; then
+    env_file_hash="$(cksum <"$CORE_ENV_FILE" | awk '{print $1}')"
+  fi
+  # Bump the leading version when docker run flags change so old containers get recreated.
+  printf '%s\n' "3|$IMAGE_NAME|$CORE_PORT|$WORKSPACE_DIR|$MODEL_CONFIG|$CORE_ENV_FILE|$env_file_hash" | cksum | awk '{print $1}'
+}
+
+health_url() {
+  printf 'http://127.0.0.1:%s/health\n' "$CORE_PORT"
+}
+
 ensure_docker() {
   command -v docker >/dev/null 2>&1 || fail "docker command not found"
   docker info >/dev/null 2>&1 || fail "Docker daemon is not running"
+}
+
+ensure_curl() {
+  command -v curl >/dev/null 2>&1 || fail "curl is required for health checks"
 }
 
 ensure_image() {
@@ -108,6 +94,9 @@ Create and fill it first, for example:
   mkdir -p \"$ROOT_DIR/backend/config\"
   cp \"$ROOT_DIR/backend/config/model-provider.example.json\" \"$MODEL_CONFIG\""
   fi
+  if command -v node >/dev/null 2>&1 && ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$MODEL_CONFIG" >/dev/null 2>&1; then
+    fail "model config is not valid JSON: $MODEL_CONFIG"
+  fi
   if [ -n "$CORE_ENV_FILE" ] && [ ! -f "$CORE_ENV_FILE" ]; then
     fail "core env file not found: $CORE_ENV_FILE"
   fi
@@ -129,28 +118,43 @@ container_uses_target_image() {
   [ "$(container_image_name)" = "$IMAGE_NAME" ]
 }
 
-run_container() {
-  if [ -n "$CORE_ENV_FILE" ]; then
-    docker run -d \
-      --name "$CONTAINER_NAME" \
-      -p "$CORE_PORT:4310" \
-      -v "$WORKSPACE_DIR:/app/workspace" \
-      -v "$MODEL_CONFIG:/app/config/model-provider.json:ro" \
-      --env-file "$CORE_ENV_FILE" \
-      "$IMAGE_NAME"
-    return
-  fi
+container_image_is_stale() {
+  local target_id current_id
+  target_id="$(docker image inspect "$IMAGE_NAME" --format '{{.Id}}' 2>/dev/null || true)"
+  current_id="$(docker inspect -f '{{.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+  [ -n "$target_id" ] && [ -n "$current_id" ] && [ "$target_id" != "$current_id" ]
+}
 
-  docker run -d \
-    --name "$CONTAINER_NAME" \
-    -p "$CORE_PORT:4310" \
-    -v "$WORKSPACE_DIR:/app/workspace" \
-    -v "$MODEL_CONFIG:/app/config/model-provider.json:ro" \
-    "$IMAGE_NAME"
+container_spec_hash() {
+  docker inspect -f "{{ index .Config.Labels \"$SPEC_LABEL\" }}" "$CONTAINER_NAME" 2>/dev/null || true
+}
+
+container_filter() {
+  printf 'name=^%s$\n' "$CONTAINER_NAME"
+}
+
+run_container() {
+  local args=(
+    -d
+    --name "$CONTAINER_NAME"
+    --restart unless-stopped
+    --label "$SPEC_LABEL=$SPEC_HASH"
+    --log-opt max-size=10m
+    --log-opt max-file=3
+    -p "$CORE_PORT:4310"
+    -v "$WORKSPACE_DIR:/app/workspace"
+    -v "$MODEL_CONFIG:/app/config/model-provider.json:ro"
+  )
+  if [ -n "$CORE_ENV_FILE" ]; then
+    args+=(--env-file "$CORE_ENV_FILE")
+  fi
+  docker run "${args[@]}" "$IMAGE_NAME"
 }
 
 wait_health() {
-  local url="http://127.0.0.1:$CORE_PORT/health"
+  ensure_curl
+  local url
+  url="$(health_url)"
   for _ in $(seq 1 30); do
     if curl --max-time 2 -fsS "$url" >/dev/null 2>&1; then
       log "health ok: $url"
@@ -162,6 +166,12 @@ wait_health() {
   fail "health check timed out: $url"
 }
 
+recreate_existing() {
+  docker rm -f "$CONTAINER_NAME" >/dev/null
+  log "creating container from $IMAGE_NAME: $CONTAINER_NAME"
+  run_container >/dev/null
+}
+
 start_container() {
   ensure_docker
   ensure_image
@@ -170,9 +180,13 @@ start_container() {
   if container_exists; then
     if ! container_uses_target_image; then
       log "existing container uses $(container_image_name), recreating with $IMAGE_NAME"
-      docker rm -f "$CONTAINER_NAME" >/dev/null
-      log "creating container from $IMAGE_NAME: $CONTAINER_NAME"
-      run_container >/dev/null
+      recreate_existing
+    elif container_image_is_stale; then
+      log "image $IMAGE_NAME was updated since the container was created, recreating"
+      recreate_existing
+    elif [ "$(container_spec_hash)" != "$SPEC_HASH" ]; then
+      log "container settings differ from current configuration, recreating"
+      recreate_existing
     elif container_running; then
       log "$CONTAINER_NAME is already running"
     else
@@ -184,7 +198,7 @@ start_container() {
     run_container >/dev/null
   fi
 
-  docker ps --filter "name=$CONTAINER_NAME" --format 'table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}'
+  docker ps --filter "$(container_filter)" --format 'table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}'
   wait_health
 }
 
@@ -198,7 +212,7 @@ recreate_container() {
   fi
   log "creating container from $IMAGE_NAME: $CONTAINER_NAME"
   run_container >/dev/null
-  docker ps --filter "name=$CONTAINER_NAME" --format 'table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}'
+  docker ps --filter "$(container_filter)" --format 'table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}'
   wait_health
 }
 
@@ -220,7 +234,7 @@ stop_container() {
 
 status_container() {
   ensure_docker
-  docker ps -a --filter "name=$CONTAINER_NAME" --format 'table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}'
+  docker ps -a --filter "$(container_filter)" --format 'table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}'
 }
 
 usage() {
@@ -228,14 +242,14 @@ usage() {
 Usage: scripts/core-docker.sh <command>
 
 Commands:
-  start       Start existing container or create it when missing
+  start       Start the container, recreating it when the image or settings changed
   recreate    Remove and recreate the container with the local/current image
   update      Pull the image, then recreate the container
   stop        Stop the container
   restart     Stop then start the container
   status      Show container status
   logs        Follow container logs
-  health      Check http://127.0.0.1:\$SVG_TRANSFORM_CORE_PORT/health
+  health      Check the container health endpoint
 
 Environment:
   SVG_TRANSFORM_CORE_IMAGE          Image name, default ghcr.io/cnzhhx/svg-transform-core:latest
@@ -253,6 +267,7 @@ MODEL_CONFIG="$(resolve_host_path "$MODEL_CONFIG")"
 if [ -n "$CORE_ENV_FILE" ]; then
   CORE_ENV_FILE="$(resolve_host_path "$CORE_ENV_FILE")"
 fi
+SPEC_HASH="$(spec_hash)"
 
 command="${1:-start}"
 case "$command" in
@@ -280,7 +295,8 @@ case "$command" in
     docker logs -f "$CONTAINER_NAME"
     ;;
   health)
-    curl --max-time 3 -fsS "http://127.0.0.1:$CORE_PORT/health"
+    ensure_curl
+    curl --max-time 3 -fsS "$(health_url)"
     printf '\n'
     ;;
   help | --help | -h)

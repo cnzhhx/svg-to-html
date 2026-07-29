@@ -63,6 +63,14 @@ const assertCoreAvailable = async () => {
   }
 };
 
+// Core may return absolute job paths like /app/workspace/jobs/<id>/Cover.html.
+// Frontend /files APIs expect job-relative paths (Cover.html).
+const toJobRelativePathText = (value: string) =>
+  value.replace(
+    /(?:file:\/\/)?\/app\/workspace\/jobs\/[^/\s"'`<>),\]}]+\/([^\s"'`<>),\]}]+)/g,
+    "$1",
+  );
+
 const rewriteCoreUrlValue = (value: string) => {
   const base = getCoreServiceUrl();
   let rewritten = value;
@@ -71,16 +79,8 @@ const rewriteCoreUrlValue = (value: string) => {
   } else if (value.startsWith("/api/jobs")) {
     rewritten = `/transformer${value}`;
   }
-  return sanitizeCorePathText(rewritten);
+  return toJobRelativePathText(rewritten);
 };
-
-const sanitizeCorePathText = (value: string) =>
-  value
-    .replace(
-      /(?:file:\/\/)?\/(?:Users|private\/tmp|tmp|var\/folders|app\/workspace|workspace|home|root|opt)\/[^\s"'`<>),\]}]*/g,
-      "[core-path]",
-    )
-    .replace(/\b[A-Za-z]:\\[^"'`<>),\]\s]+/g, "[core-path]");
 
 const rewriteCoreUrls = (value: unknown): unknown => {
   if (typeof value === "string") return rewriteCoreUrlValue(value);
@@ -96,10 +96,10 @@ const rewriteCoreUrls = (value: unknown): unknown => {
 
 const rewriteCoreText = (value: string) => {
   const base = getCoreServiceUrl();
-  return sanitizeCorePathText(
+  return toJobRelativePathText(
     value
-    .split(`${base}/api/jobs`)
-    .join("/transformer/api/jobs")
+      .split(`${base}/api/jobs`)
+      .join("/transformer/api/jobs")
       .split('"/api/jobs')
       .join('"/transformer/api/jobs'),
   );

@@ -104,15 +104,13 @@ pnpm core:stop           # 停止 core Docker 容器
 SVG_TRANSFORM_CORE_IMAGE=ghcr.io/cnzhhx/svg-transform-core:0.1.0
 ```
 
-改 core 启动参数时，先改 `.env`，再重建 core 容器：
+改 core 启动参数时只需修改 `.env`，下次 `pnpm core:start`（包括 `pnpm dev`）会检测镜像、端口、挂载目录等配置变化并自动重建容器；想立即重建时仍可用 `pnpm core:recreate`。
 
-```bash
-pnpm core:recreate
-```
+会触发自动重建的修改包括 `SVG_TRANSFORM_CORE_IMAGE`、`SVG_TRANSFORM_CORE_URL` / `SVG_TRANSFORM_CORE_PORT`、`SVG_TRANSFORM_CORE_WORKSPACE`、`SVG_TRANSFORM_CORE_MODEL_CONFIG` 和 `SVG_TRANSFORM_CORE_ENV_FILE`。只改 `backend/config/model-provider.json` 内容时，文件路径没变，Docker 挂载仍然有效；如果不确定 core 是否重新读取了配置，执行一次 `pnpm core:recreate` 最稳。
 
-需要重建的典型情况包括修改 `SVG_TRANSFORM_CORE_IMAGE`、`SVG_TRANSFORM_CORE_URL` / `SVG_TRANSFORM_CORE_PORT`、`SVG_TRANSFORM_CORE_WORKSPACE`、`SVG_TRANSFORM_CORE_MODEL_CONFIG` 或 `SVG_TRANSFORM_CORE_ENV_FILE`。只改 `backend/config/model-provider.json` 内容时，文件路径没变，Docker 挂载仍然有效；如果不确定 core 是否重新读取了配置，也执行一次 `pnpm core:recreate` 最稳。
+容器默认带 `--restart unless-stopped`，Docker 或机器重启后会自动恢复。
 
-`pnpm core:recreate` 会优先复用本机已有的 `SVG_TRANSFORM_CORE_IMAGE`，只有本机没有这个 tag 时才会下载。想主动更新 `latest` 或重新拉取远端镜像时，再执行 `pnpm core:update`。
+`pnpm core:recreate` 会优先复用本机已有的 `SVG_TRANSFORM_CORE_IMAGE`，只有本机没有这个 tag 时才会下载。想主动更新 `latest` 或重新拉取远端镜像时，再执行 `pnpm core:update`；拉取新镜像后直接 `core:start` 也会发现镜像 ID 变化并自动重建。
 
 ## 环境要求
 

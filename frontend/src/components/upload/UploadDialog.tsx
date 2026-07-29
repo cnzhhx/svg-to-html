@@ -19,7 +19,7 @@ export function UploadDialog({
   const [file, setFile] = useState<File | null>(null)
   const [format, setFormat] = useState(readStringStorage(STORAGE_KEYS.uploadFormat, 'html') || 'html')
   const [model, setModel] = useState(readStringStorage(STORAGE_KEYS.uploadModel, ''))
-  const [scale, setScale] = useState(readNumberStorage(STORAGE_KEYS.uploadScale, 1))
+  const [scale, setScale] = useState(() => (readNumberStorage(STORAGE_KEYS.uploadScale, 1) === 2 ? 2 : 1))
   const [jobCountInput, setJobCountInput] = useState('1')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
