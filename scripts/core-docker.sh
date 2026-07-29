@@ -58,7 +58,7 @@ spec_hash() {
     env_file_hash="$(cksum <"$CORE_ENV_FILE" | awk '{print $1}')"
   fi
   # Bump the leading version when docker run flags change so old containers get recreated.
-  printf '%s\n' "4|$IMAGE_NAME|$CORE_PORT|$WORKSPACE_DIR|$MODEL_CONFIG|$CORE_ENV_FILE|$env_file_hash|${MAX_PARALLEL_MODULE_AGENTS:-}" | cksum | awk '{print $1}'
+  printf '%s\n' "5|$IMAGE_NAME|$CORE_PORT|$WORKSPACE_DIR|$MODEL_CONFIG|$CORE_ENV_FILE|$env_file_hash|${MAX_PARALLEL_MODULE_AGENTS:-}" | cksum | awk '{print $1}'
 }
 
 health_url() {
@@ -141,7 +141,7 @@ run_container() {
     --label "$SPEC_LABEL=$SPEC_HASH"
     --log-opt max-size=10m
     --log-opt max-file=3
-    -p "$CORE_PORT:4310"
+    -p "127.0.0.1:$CORE_PORT:4310"
     -v "$WORKSPACE_DIR:/app/workspace"
     -v "$MODEL_CONFIG:/app/config/model-provider.json:ro"
   )

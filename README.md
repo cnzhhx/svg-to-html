@@ -82,8 +82,10 @@ http://localhost:5173/transformer
 后端网关默认在：
 
 ```text
-http://localhost:81/transformer
+http://localhost:8081/transformer
 ```
+
+Core、后端网关和前端开发服务默认只监听 `127.0.0.1`。任务接口没有内置鉴权，不应直接暴露到局域网或公网。
 
 ## 常用命令
 
@@ -128,7 +130,7 @@ SVG_TRANSFORM_CORE_IMAGE=ghcr.io/cnzhhx/svg-transform-core:0.1.0
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `PORT` | `81` | 当前网关 HTTP 监听端口 |
+| `PORT` | `8081` | 当前网关 HTTP 监听端口 |
 | `SVG_TRANSFORM_CORE_URL` | `http://127.0.0.1:4310` | core 服务地址 |
 | `SVG_TRANSFORM_CORE_IMAGE` | `ghcr.io/cnzhhx/svg-transform-core:latest` | core Docker 镜像 |
 | `SVG_TRANSFORM_CORE_MODEL_CONFIG` | `./backend/config/model-provider.json` | core Docker 挂载的模型配置 |

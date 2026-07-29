@@ -82,8 +82,10 @@ http://localhost:5173/transformer
 The backend gateway defaults to:
 
 ```text
-http://localhost:81/transformer
+http://localhost:8081/transformer
 ```
+
+The core service, backend gateway, and frontend dev server bind to `127.0.0.1` by default. The job APIs do not include authentication and must not be exposed directly to a LAN or the public internet.
 
 ## Common Commands
 
@@ -128,7 +130,7 @@ Browser, model provider, opencode, CDP, workspace, concurrency, and diff setting
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `81` | Gateway HTTP listen port |
+| `PORT` | `8081` | Gateway HTTP listen port |
 | `SVG_TRANSFORM_CORE_URL` | `http://127.0.0.1:4310` | Core service URL |
 | `SVG_TRANSFORM_CORE_IMAGE` | `ghcr.io/cnzhhx/svg-transform-core:latest` | Core Docker image |
 | `SVG_TRANSFORM_CORE_MODEL_CONFIG` | `./backend/config/model-provider.json` | Model config mounted into core Docker |

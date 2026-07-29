@@ -55,7 +55,7 @@ const buildBackendConfig = () =>
     },
     server: {
       nodeEnv: readBackendEnvString("NODE_ENV") ?? "development",
-      port: readNumber("PORT", 80),
+      port: readNumber("PORT", 8081),
     },
   }) as const;
 

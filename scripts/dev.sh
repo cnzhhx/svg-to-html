@@ -73,7 +73,7 @@ main() {
   bash "$ROOT_DIR/scripts/core-docker.sh" start
 
   log "frontend: http://localhost:5173/transformer"
-  log "backend:  http://localhost:${PORT:-81}/transformer"
+  log "backend:  http://localhost:${PORT:-8081}/transformer"
 
   command -v pnpm >/dev/null 2>&1 || fail "pnpm is required. Install it first: npm install -g pnpm@10.11.0"
   exec pnpm --parallel --stream --filter @svg-to-html/backend --filter @svg-to-html/frontend run dev

@@ -73,13 +73,20 @@ app.use(BASE_PATH, router)
 const main = async () => {
   await assertCoreAvailable()
 
-  app.listen(PORT, () => {
-    console.log(`Design-to-HTML gateway running at http://localhost:${PORT}${BASE_PATH || '/'}`)
-    console.log(`Base Path: ${BASE_PATH || '(none)'}`)
-    console.log(`SVG Transform Core: ${getCoreServiceUrl()}`)
-    console.log(`Platform: ${process.platform} ${os.release()}`)
-    console.log(`Node: ${process.version}`)
-    console.log(`Build Time: ${BUILD_TIME}`)
+  await new Promise<void>((resolve, reject) => {
+    app.listen(PORT, '127.0.0.1', (error?: Error) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      console.log(`Design-to-HTML gateway running at http://localhost:${PORT}${BASE_PATH || '/'}`)
+      console.log(`Base Path: ${BASE_PATH || '(none)'}`)
+      console.log(`SVG Transform Core: ${getCoreServiceUrl()}`)
+      console.log(`Platform: ${process.platform} ${os.release()}`)
+      console.log(`Node: ${process.version}`)
+      console.log(`Build Time: ${BUILD_TIME}`)
+      resolve()
+    })
   })
 }
 
@@ -89,8 +96,8 @@ main().catch((error) => {
   console.error('Failed to start service')
   console.error(`SVG_TRANSFORM_CORE_URL: ${getBackendConfig().core.serviceUrl || '(not configured)'}`)
   console.error(message)
-  if (/EACCES|permission denied/i.test(message) && PORT === 80) {
-    console.error('Port 80 需要更高权限；请使用 sudo 启动，或改用 PORT 环境变量指定其他端口。')
+  if (/EACCES|permission denied/i.test(message) && PORT < 1024) {
+    console.error(`Port ${PORT} 需要更高权限；请改用 PORT 环境变量指定 1024 以上的端口。`)
   }
   process.exitCode = 1
 })
