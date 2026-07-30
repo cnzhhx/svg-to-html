@@ -2,184 +2,93 @@
 
 [简体中文](README.md) | English
 
-High-fidelity design-to-code for enterprise frontend teams. Convert design SVGs into real, maintainable HTML/CSS (with Vue / React support) and produce a measurable fidelity report.
+An SVG-to-web-page tool powered by `svg-transform-core`. This repository provides the Web UI and API gateway. Conversion runs in the published Core Docker image, so a Core source checkout is not required.
 
 ## Preview
 
-Below is a visual comparison between the original design render and the generated page render. This run has a **4.33% visual difference**, or roughly **95.67% fidelity**.
+This example has a **4.33% visual difference**, or roughly **95.67% fidelity**.
 
 ![SVG vs HTML comparison](example/comparison-4.33.png)
 
-| Original Design Render | Generated Page Render | Visual Difference |
-| --- | --- | --- |
-| ![Original design render](example/assets/comparison-4.33-source.png) | ![Generated page render](example/assets/comparison-4.33-html.png) | ![Visual difference map](example/assets/comparison-4.33-diff.png) |
+> [Open the interactive comparison](example/comparison-4.33.html)
 
-> Full interactive comparison page: [`example/comparison-4.33.html`](example/comparison-4.33.html)
+## Local Development
 
-## Features
-
-- **High-fidelity output** — Quantifies visual differences between the original design and generated page, then uses that report to drive auto-repair
-- **Real HTML/CSS output** — Produces semantic DOM structure, not embedded SVGs
-- **Multiple output formats** — HTML, Vue, and React component output
-- **DOM text preservation** — Keeps visible text as real DOM text nodes
-- **Modular generation** — Splits large designs into semantic modules for parallel generation
-- **Smart preprocessing** — Pre-extracts text (OCR), layout boxes, colors, icons, backgrounds
-- **Fidelity loop** — Module-level and full-page visual comparison feedback with auto-repair
-- **Verify stop-loss** — Suggests stopping low-return or degraded refinement loops
-- **Web UI + CLI** — Browser interface for uploads and a full set of CLI tools
-
-## Quick Start
-
-### One-click Deploy (Linux / macOS)
+Requires Node.js 20+, pnpm 10.11+, and Docker:
 
 ```bash
-bash backend/scripts/deploy.sh
+npm install -g pnpm@10.11.0
+pnpm dev
 ```
 
-This script handles everything: system dependencies, Node.js, pnpm, browser, project setup, and service startup.
+The first start installs dependencies and creates `.env` and the model configuration automatically. Open `http://localhost:5173/transformer`.
 
-### Manual Setup
+## Model Configuration (Required)
 
-```bash
-# 1. Install dependencies
-pnpm install
+Services can start with the placeholder configuration, but a real model is required before converting an SVG:
 
-# 2. Check environment
-pnpm run doctor
+| Environment | Configuration file |
+| --- | --- |
+| Local development | `backend/config/model-provider.json` |
+| Ubuntu deployment | `/etc/svg-to-html/model-provider.json` |
 
-# 3. Configure model provider
-cp backend/config/model-provider.example.json backend/config/model-provider.json
-# Edit backend/config/model-provider.json with your provider details
-
-# 4. Build MCP server (required for browser-based verification)
-pnpm run build:mcp
-
-# 5. Build frontend static assets
-pnpm run build:frontend
-
-# 6. Start the service
-pnpm start
-# Open http://localhost:80/transformer
-```
-
-### Service Management
-
-```bash
-bash backend/scripts/start-linux.sh start     # Start in background
-bash backend/scripts/start-linux.sh stop      # Stop
-bash backend/scripts/start-linux.sh restart   # Restart
-bash backend/scripts/start-linux.sh status    # Show status
-bash backend/scripts/start-linux.sh logs      # Follow logs
-bash backend/scripts/start-linux.sh foreground  # Run in foreground with auto-restart
-```
-
-## Requirements
-
-| Dependency | Version | Notes |
-| --- | --- | --- |
-| Node.js | 20+ (recommended 22+) | |
-| pnpm | 10.11+ | Specified in `packageManager` field |
-| Chrome / Chromium / Edge | Latest | For rendering & screenshots |
-| opencode CLI | Optional | For `opencode` runtime |
-
-The install script (`backend/scripts/install-linux.sh`) can automatically install all of the above on Linux and macOS.
-
-## Configuration
-
-### Model Provider
-
-Edit `backend/config/model-provider.json` (copy from `backend/config/model-provider.example.json`):
+Minimal example:
 
 ```json
 {
-  "moduleAgentModel": "your-model",
-  "otherModel": "your-model",
   "models": {
-    "your-model": {
+    "my-model": {
       "runtime": "opencode",
-      "wireApi": "chat-completions",
-      "provider": "your-provider",
+      "provider": "openai",
       "baseURL": "https://api.example.com/v1",
-      "apiKeyEnv": "YOUR_PROVIDER_API_KEY",
-      "model": "your-model-id"
+      "apiKey": "your-api-key",
+      "model": "your-model-id",
+      "modalities": {
+        "input": ["text", "image"],
+        "output": ["text"]
+      }
     }
   }
 }
 ```
 
-`wireApi` accepts `chat-completions` (default, OpenAI-compatible), `responses` (OpenAI Responses), or `anthropic` (Anthropic).
+- `my-model`: model configuration ID shown and submitted by the UI; choose any unique name.
+- `provider`: API protocol provider. Use `openai` for an OpenAI-compatible endpoint.
+- `baseURL`: model API base URL.
+- `apiKey`: model credential.
+- `model`: model ID expected by the provider.
 
-### Environment Variables
-
-Runtime settings can be configured via the `.env` file. Key variables:
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `PORT` | `80` | HTTP listen port |
-| `WORKSPACE` | `./workspace` | Session artifacts root |
-| `MAX_CONCURRENT_AGENTS` | `2` | Concurrent session limit |
-| `MAX_PARALLEL_MODULE_AGENTS` | `5` | Parallel modules per session |
-| `CDP_OPERATION_CONCURRENCY` | `1` | Browser screenshot / page evaluate concurrency limit |
-| `DIFF_RATIO_THRESHOLD` | `0.05` | Full-page visual-difference pass threshold (5%; lower means higher fidelity) |
-| `CHROMIUM_PATH` | auto-detect | Browser binary path |
-| `SESSION_CHAT_DISABLED` | `1` | Disable the chat repair UI and backend message endpoint |
-| `SESSION_DELETE_DISABLED` | `0` | Disable session deletion |
-
-See `.env` for the full list.
-
-## CLI Tools
+Reload Core after editing the file:
 
 ```bash
-# Generate (preflight: layout analysis + scaffold + module plan)
-pnpm run task:generate -- <svg-path> --format html|vue|react
-
-# Generate a page-level fidelity report
-pnpm run task:verify -- <svg-path>
-
-# Generate a module-level fidelity report
-pnpm run task:verify-module -- --module-dir <dir> --module-id <id> ...
-
-# Split design into modules
-pnpm run task:split-svg-modules -- <svg-path>
-
-# Environment check
-pnpm run doctor
-
-# Type check
-pnpm run lint:types
-
-# Build the React frontend
-pnpm run build:frontend
+pnpm core:recreate                          # Local
+sudo bash scripts/service-ubuntu.sh restart # Ubuntu
 ```
 
-## How It Works
+The local model configuration is ignored by Git. The Ubuntu configuration lives outside the repository and is preserved during updates.
 
-```mermaid
-flowchart TD
-  A[SVG Design] --> B[Layout Preprocessing]
-  B --> C[Module Planning]
-  C --> D[Module SVG Cropping + Semantic Analysis]
-  D --> E[Parallel Module Agent Restoration]
-  E --> F[Module-level Fidelity Evaluation + Stop-loss]
-  F --> G[Merge All Modules]
-  G --> H[Full-page Fidelity Evaluation]
-  H --> I[Final HTML/CSS/Vue/React Output]
+## Ubuntu Deployment
+
+```bash
+sudo bash scripts/deploy-ubuntu.sh
 ```
 
-## Project Structure
+The script installs Node.js, pnpm, Docker, and Nginx, creates external configuration files, and starts the services. Fill in `/etc/svg-to-html/model-provider.json`, restart the service, then open `http://SERVER_IP/transformer/`.
 
+After updating the source checkout, re-run the deployment command to redeploy without overwriting existing configuration. The installer exposes port 80 without built-in authentication; add TLS and access control in front of Nginx for public use.
+
+## Common Commands
+
+```bash
+pnpm dev                 # Start locally
+pnpm doctor              # Check the environment
+pnpm core:logs           # Follow Core logs
+pnpm core:recreate       # Recreate Core
+pnpm core:update         # Update the Core image
+pnpm core:stop           # Stop Core
 ```
-backend/
-  src/                    Express backend, CLI, generation pipeline, and agent orchestration
-  config/                 Model provider configuration
-  scripts/                Install, deploy, and diagnostic scripts
-  tests/                  Backend unit tests
-frontend/
-  src/                    React 18 frontend source
-  public/                 Built static assets served directly by the backend
-example/                  Publishable fidelity comparison examples
-workspace/                Generated sessions and artifacts (git-ignored)
-```
+
+The job APIs do not include authentication. Do not expose local development ports directly.
 
 ## License
 

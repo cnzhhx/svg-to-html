@@ -1,25 +1,27 @@
-import type { PipelineStep, Session, SessionMessage } from './session'
+import type { PipelineStep, Job, JobMessage } from './job'
 
-export type SessionEvent =
+export type JobEvent =
   | {
       type: 'init'
-      session: Session
+      job: Job
       timestamp: number
     }
   | {
-      type: 'session:updated'
-      sessionId: string
-      data: Partial<Session>
+      type: 'job:updated'
+      jobId: string
+      data?: Partial<Job>
+      job?: Job
+      patch?: Partial<Job>
       timestamp: number
     }
   | {
-      type: 'session:deleted'
-      sessionId: string
+      type: 'job:deleted'
+      jobId: string
       timestamp: number
     }
   | {
       type: 'step:start' | 'step:complete' | 'step:error'
-      sessionId: string
+      jobId: string
       step: PipelineStep
       message?: string
       data?: Record<string, unknown>
@@ -27,25 +29,25 @@ export type SessionEvent =
     }
   | {
       type: 'message'
-      sessionId: string
-      message: SessionMessage
+      jobId: string
+      message: JobMessage
       timestamp: number
     }
   | {
       type: 'log'
-      sessionId: string
+      jobId: string
       message: string
       timestamp: number
     }
   | {
       type: 'agent:event'
-      sessionId: string
+      jobId: string
       event: AgentEvent
       timestamp: number
     }
   | {
       type: 'pipeline:complete' | 'pipeline:error'
-      sessionId: string
+      jobId: string
       message?: string
       timestamp: number
     }

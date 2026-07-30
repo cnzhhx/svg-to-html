@@ -1,26 +1,26 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import { loadSession, loadSessions, startSession, deleteSession } from './api/sessions'
-import type { SessionEvent } from './types/events'
+import { loadJob, loadJobs, startJob, deleteJob } from './api/jobs'
+import type { JobEvent } from './types/events'
 import {
   hasPrimaryResults,
-  setRuntimeWorkspaceRoot,
+  setRuntimeArtifactRoot,
 } from './utils/artifacts'
 import { STORAGE_KEYS, readStringStorage, writeStringStorage } from './utils/storage'
 import {
   getLocalClientId,
-  getLocalSessionIds,
-  getLocalSessionSnapshot,
-  isSessionOwnedByCurrentClient,
-  markSessionOwnedByCurrentClient,
-  removeLocalSessionId,
-  reviveLocalSessionSnapshot,
-  saveServerSessionsToLocal,
-  setLocalSessionStorageEnabled,
-} from './utils/local-session'
+  getLocalJobIds,
+  getLocalJobSnapshot,
+  isJobOwnedByCurrentClient,
+  markJobOwnedByCurrentClient,
+  removeLocalJobId,
+  reviveLocalJobSnapshot,
+  saveServerJobsToLocal,
+  setLocalJobStorageEnabled,
+} from './utils/local-job'
 import { appReducer } from './state/app-reducer'
 import { initialAppState } from './state/app-state'
 import { useRuntimeInfo } from './hooks/useRuntimeInfo'
-import { useSessionEvents } from './hooks/useSessionEvents'
+import { useJobEvents } from './hooks/useJobEvents'
 import { useArtifactCache } from './hooks/useArtifactCache'
 import { AppShell } from './components/app-shell/AppShell'
 import { Sidebar } from './components/sidebar/Sidebar'
@@ -31,8 +31,8 @@ import { ResultPanel } from './components/result/ResultPanel'
 import { ChatDrawer } from './components/chat/ChatDrawer'
 import { UploadDialog } from './components/upload/UploadDialog'
 import { Lightbox } from './components/common/Lightbox'
-import { artifactCacheKeyForSession, type ArtifactCacheMeta } from './utils/artifact-cache'
-import type { Session, SessionMessage } from './types/session'
+import { artifactCacheKeyForJob, type ArtifactCacheMeta } from './utils/artifact-cache'
+import type { Job, JobMessage } from './types/job'
 import './styles/global.css'
 import './styles/layout.css'
 import './styles/sidebar.css'
@@ -41,12 +41,12 @@ import './styles/workflow.css'
 import './styles/result.css'
 import './styles/chat.css'
 
-const getUrlSessionId = () => new URLSearchParams(window.location.search).get('session')
+const getUrlJobId = () => new URLSearchParams(window.location.search).get('job')
 
-const updateUrlSession = (sessionId: string | null) => {
+const updateUrlJob = (jobId: string | null) => {
   const url = new URL(window.location.href)
-  if (sessionId) url.searchParams.set('session', sessionId)
-  else url.searchParams.delete('session')
+  if (jobId) url.searchParams.set('job', jobId)
+  else url.searchParams.delete('job')
   window.history.replaceState(null, '', url)
 }
 
@@ -55,40 +55,40 @@ const defaultSteps = {
   verify: { status: 'pending' as const },
 }
 
-const isLiveSessionStatus = (status: unknown) => status === 'running' || status === 'queued'
+const isLiveJobStatus = (status: unknown) => status === 'running' || status === 'queued'
 
-const sessionLivePreviewVersion = (session: Session | null | undefined) => {
-  const value = Number(session?.result?.livePreviewVersion ?? session?.result?.livePreviewUpdatedAt ?? 0)
+const jobLivePreviewVersion = (job: Job | null | undefined) => {
+  const value = Number(job?.result?.livePreviewVersion ?? job?.result?.livePreviewUpdatedAt ?? 0)
   return Number.isFinite(value) ? value : 0
 }
 
-const shouldDeferSummaryPreview = (session: Session | null | undefined) =>
-  Boolean(session?.__summary && isLiveSessionStatus(session.status) && session.result?.livePreviewEntryPath)
+const shouldDeferSummaryPreview = (job: Job | null | undefined) =>
+  Boolean(job?.__summary && isLiveJobStatus(job.status) && job.result?.livePreviewEntryPath)
 
-const withoutLivePreview = (session: Session): Session => {
+const withoutLivePreview = (job: Job): Job => {
   const {
     livePreviewEntryPath: _livePreviewEntryPath,
     livePreviewUpdatedAt: _livePreviewUpdatedAt,
     livePreviewVersion: _livePreviewVersion,
     ...result
-  } = session.result || {}
-  return { ...session, result }
+  } = job.result || {}
+  return { ...job, result }
 }
 
-const withoutLivePreviewFromSummary = (session: Session): Session =>
-  shouldDeferSummaryPreview(session) ? withoutLivePreview(session) : session
+const withoutLivePreviewFromSummary = (job: Job): Job =>
+  shouldDeferSummaryPreview(job) ? withoutLivePreview(job) : job
 
-const immediateSessionForSelection = (session: Session): Session =>
-  isLiveSessionStatus(session.status) && session.result?.livePreviewEntryPath
-    ? withoutLivePreview(session)
-    : withoutLivePreviewFromSummary(session)
+const immediateJobForSelection = (job: Job): Job =>
+  isLiveJobStatus(job.status) && job.result?.livePreviewEntryPath
+    ? withoutLivePreview(job)
+    : withoutLivePreviewFromSummary(job)
 
-const mergeSessionIfNewerPreview = (current: Session | null, incoming: Session) => {
-  if (current?.id !== incoming.id || !isLiveSessionStatus(current.status) || !isLiveSessionStatus(incoming.status)) {
+const mergeJobIfNewerPreview = (current: Job | null, incoming: Job) => {
+  if (current?.id !== incoming.id || !isLiveJobStatus(current.status) || !isLiveJobStatus(incoming.status)) {
     return incoming
   }
-  const currentPreviewVersion = sessionLivePreviewVersion(current)
-  const incomingPreviewVersion = sessionLivePreviewVersion(incoming)
+  const currentPreviewVersion = jobLivePreviewVersion(current)
+  const incomingPreviewVersion = jobLivePreviewVersion(incoming)
   if (currentPreviewVersion > incomingPreviewVersion) {
     return {
       ...incoming,
@@ -103,7 +103,7 @@ const mergeSessionIfNewerPreview = (current: Session | null, incoming: Session) 
   return incoming
 }
 
-const sanitizeSessionUpdateForPreview = (current: Session | null, data: Partial<Session>) => {
+const sanitizeJobUpdateForPreview = (current: Job | null, data: Partial<Job> = {}) => {
   const result = data.result
   const hasPreviewPatch = Boolean(
     result &&
@@ -111,8 +111,8 @@ const sanitizeSessionUpdateForPreview = (current: Session | null, data: Partial<
         'livePreviewUpdatedAt' in result ||
         'livePreviewVersion' in result),
   )
-  if (!current || !hasPreviewPatch || !isLiveSessionStatus(current.status)) return data
-  const currentPreviewVersion = sessionLivePreviewVersion(current)
+  if (!current || !hasPreviewPatch || !isLiveJobStatus(current.status)) return data
+  const currentPreviewVersion = jobLivePreviewVersion(current)
   const incomingPreviewVersion = Number(result?.livePreviewVersion ?? result?.livePreviewUpdatedAt ?? 0)
   if (!Number.isFinite(incomingPreviewVersion) || incomingPreviewVersion >= currentPreviewVersion) return data
   return {
@@ -131,29 +131,29 @@ export default function App() {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
-  const currentSessionRef = useRef(state.currentSession)
-  const currentSessionIdRef = useRef(state.currentSessionId)
+  const currentJobRef = useRef(state.currentJob)
+  const currentJobIdRef = useRef(state.currentJobId)
   const autoCacheKeysRef = useRef<Map<string, string>>(new Map())
-  const ownedSessionIdsRef = useRef<Set<string>>(new Set())
-  const sessionDetailsRef = useRef<Map<string, Session>>(new Map())
+  const ownedJobIdsRef = useRef<Set<string>>(new Set())
+  const jobDetailsRef = useRef<Map<string, Job>>(new Map())
 
   useEffect(() => {
-    currentSessionRef.current = state.currentSession
-    if (state.currentSession?.id && !state.currentSession.__summary) {
-      sessionDetailsRef.current.set(state.currentSession.id, state.currentSession)
+    currentJobRef.current = state.currentJob
+    if (state.currentJob?.id && !state.currentJob.__summary) {
+      jobDetailsRef.current.set(state.currentJob.id, state.currentJob)
     }
-  }, [state.currentSession])
+  }, [state.currentJob])
 
   useEffect(() => {
-    currentSessionIdRef.current = state.currentSessionId
-  }, [state.currentSessionId])
+    currentJobIdRef.current = state.currentJobId
+  }, [state.currentJobId])
 
-  const handleSessionCached = useCallback((session: NonNullable<typeof state.currentSession>, meta: ArtifactCacheMeta) => {
-    const localOwnerId = session.localOwnerId || (ownedSessionIdsRef.current.has(session.id) ? getLocalClientId() : undefined)
-    const currentSession = currentSessionRef.current?.id === session.id
-      ? currentSessionRef.current
-      : session
-    const resultPatch: Session['result'] = {
+  const handleJobCached = useCallback((job: NonNullable<typeof state.currentJob>, meta: ArtifactCacheMeta) => {
+    const localOwnerId = job.localOwnerId || (ownedJobIdsRef.current.has(job.id) ? getLocalClientId() : undefined)
+    const currentJob = currentJobRef.current?.id === job.id
+      ? currentJobRef.current
+      : job
+    const resultPatch: Job['result'] = {
       localArtifactCacheAt: meta.cachedAt,
       localArtifactCacheByteSize: meta.byteSize,
       localArtifactCacheError: meta.error,
@@ -162,54 +162,54 @@ export default function App() {
       localArtifactCachePaths: meta.paths,
       localArtifactCacheStatus: meta.status,
     }
-    if (!currentSession.result?.compareEntryPath && meta.compareEntryPath) resultPatch.compareEntryPath = meta.compareEntryPath
-    if (!currentSession.result?.renderEntryPath && meta.renderEntryPath) resultPatch.renderEntryPath = meta.renderEntryPath
-    if (!currentSession.result?.sourceEntryPath && meta.sourceEntryPath) resultPatch.sourceEntryPath = meta.sourceEntryPath
-    const currentUpdatedAt = currentSessionRef.current?.id === session.id
-      ? currentSessionRef.current.updatedAt
-      : session.updatedAt
+    if (!currentJob.result?.compareEntryPath && meta.compareEntryPath) resultPatch.compareEntryPath = meta.compareEntryPath
+    if (!currentJob.result?.renderEntryPath && meta.renderEntryPath) resultPatch.renderEntryPath = meta.renderEntryPath
+    if (!currentJob.result?.sourceEntryPath && meta.sourceEntryPath) resultPatch.sourceEntryPath = meta.sourceEntryPath
+    const currentUpdatedAt = currentJobRef.current?.id === job.id
+      ? currentJobRef.current.updatedAt
+      : job.updatedAt
     dispatch({
-      type: 'session/updated',
+      type: 'job/updated',
       data: {
         ...(localOwnerId ? { localOwnerId } : {}),
         result: resultPatch,
       },
-      sessionId: session.id,
+      jobId: job.id,
       timestamp: currentUpdatedAt || Date.now(),
     })
   }, [])
-  const artifactCache = useArtifactCache(handleSessionCached)
+  const artifactCache = useArtifactCache(handleJobCached)
 
-  const markGeneratedSession = useCallback((session: Session) => {
-    ownedSessionIdsRef.current.add(session.id)
-    const localOwnerId = markSessionOwnedByCurrentClient(session.id) || getLocalClientId()
-    return { ...session, localOwnerId }
+  const markGeneratedJob = useCallback((job: Job) => {
+    ownedJobIdsRef.current.add(job.id)
+    const localOwnerId = markJobOwnedByCurrentClient(job.id) || getLocalClientId()
+    return { ...job, localOwnerId }
   }, [])
 
-  const restoreGeneratedSessionOwner = useCallback((session: Session) => {
-    if (isSessionOwnedByCurrentClient(session) || !ownedSessionIdsRef.current.has(session.id)) return session
-    return { ...session, localOwnerId: getLocalClientId() }
+  const restoreGeneratedJobOwner = useCallback((job: Job) => {
+    if (isJobOwnedByCurrentClient(job) || !ownedJobIdsRef.current.has(job.id)) return job
+    return { ...job, localOwnerId: getLocalClientId() }
   }, [])
 
   useEffect(() => {
-    const session = state.currentSession
-    if (!session?.id || session.__localOnly) return
-    if (!isSessionOwnedByCurrentClient(session) && !ownedSessionIdsRef.current.has(session.id)) return
-    if (!hasPrimaryResults(session)) return
-    const cacheKey = artifactCacheKeyForSession(session)
-    const localCacheKey = typeof session.result?.localArtifactCacheKey === 'string' ? session.result.localArtifactCacheKey : ''
+    const job = state.currentJob
+    if (!job?.id || job.__localOnly) return
+    if (!isJobOwnedByCurrentClient(job) && !ownedJobIdsRef.current.has(job.id)) return
+    if (!hasPrimaryResults(job)) return
+    const cacheKey = artifactCacheKeyForJob(job)
+    const localCacheKey = typeof job.result?.localArtifactCacheKey === 'string' ? job.result.localArtifactCacheKey : ''
     if (
-      (session.result?.localArtifactCacheStatus === 'cached' || session.result?.localArtifactCacheStatus === 'caching') &&
+      (job.result?.localArtifactCacheStatus === 'cached' || job.result?.localArtifactCacheStatus === 'caching') &&
       localCacheKey === cacheKey
     ) return
-    if (autoCacheKeysRef.current.get(session.id) === cacheKey) return
-    autoCacheKeysRef.current.set(session.id, cacheKey)
-    void artifactCache.cacheSessionArtifacts(session)
-  }, [artifactCache, state.currentSession])
+    if (autoCacheKeysRef.current.get(job.id) === cacheKey) return
+    autoCacheKeysRef.current.set(job.id, cacheKey)
+    void artifactCache.cacheJobArtifacts(job)
+  }, [artifactCache, state.currentJob])
 
   const runtimeLoaded = useCallback((runtime: NonNullable<typeof state.runtime>) => {
-    setRuntimeWorkspaceRoot(runtime.workspaceRoot)
-    setLocalSessionStorageEnabled(Boolean(runtime.enableSessionLocalStorage))
+    setRuntimeArtifactRoot(runtime.artifactRoot)
+    setLocalJobStorageEnabled(Boolean(runtime.enableJobLocalStorage))
     dispatch({ type: 'runtime/loaded', runtime })
   }, [])
   const setError = useCallback((error: string | null) => dispatch({ type: 'error/set', error }), [])
@@ -218,43 +218,43 @@ export default function App() {
   useEffect(() => {
     if (!state.runtime) return undefined
     let cancelled = false
-    const enableLocalSessionStorage = Boolean(state.runtime.enableSessionLocalStorage)
-    loadSessions()
-      .then(async (sessions) => {
+    const enableLocalJobStorage = Boolean(state.runtime.enableJobLocalStorage)
+    loadJobs()
+      .then(async (jobs) => {
         if (cancelled) return
-        const restoredSessions = enableLocalSessionStorage
-          ? getLocalSessionIds()
-              .filter((id) => !sessions.some((session) => session.id === id))
+        const restoredJobs = enableLocalJobStorage
+          ? getLocalJobIds()
+              .filter((id) => !jobs.some((job) => job.id === id))
               .flatMap((id) => {
-                const snapshot = getLocalSessionSnapshot(id)
-                const restored = snapshot ? reviveLocalSessionSnapshot(snapshot, 'server-reset') : null
+                const snapshot = getLocalJobSnapshot(id)
+                const restored = snapshot ? reviveLocalJobSnapshot(snapshot, 'server-reset') : null
                 return restored ? [restored] : []
               })
           : []
-        const mergedSessions = [...sessions, ...restoredSessions]
-        saveServerSessionsToLocal(mergedSessions)
-        dispatch({ type: 'sessions/loaded', sessions: mergedSessions })
-        const targetId = getUrlSessionId() || mergedSessions[0]?.id || null
-        if (targetId && !currentSessionIdRef.current) {
+        const mergedJobs = [...jobs, ...restoredJobs]
+        saveServerJobsToLocal(mergedJobs)
+        dispatch({ type: 'jobs/loaded', jobs: mergedJobs })
+        const targetId = getUrlJobId() || mergedJobs[0]?.id || null
+        if (targetId && !currentJobIdRef.current) {
           try {
-            const restored = restoredSessions.find((session) => session.id === targetId)
-            const session = restored || await loadSession(targetId)
-            if (!cancelled && !currentSessionIdRef.current) {
-              currentSessionIdRef.current = session.id
-              currentSessionRef.current = session
-              dispatch({ type: 'session/selected', session, sessionId: session.id })
-              updateUrlSession(session.id)
+            const restored = restoredJobs.find((job) => job.id === targetId)
+            const job = restored || await loadJob(targetId)
+            if (!cancelled && !currentJobIdRef.current) {
+              currentJobIdRef.current = job.id
+              currentJobRef.current = job
+              dispatch({ type: 'job/selected', job, jobId: job.id })
+              updateUrlJob(job.id)
             }
           } catch {
-            const snapshot = getLocalSessionSnapshot(targetId)
-            const restored = snapshot ? reviveLocalSessionSnapshot(snapshot, 'server-reset') : null
-            if (!cancelled && !currentSessionIdRef.current) {
+            const snapshot = getLocalJobSnapshot(targetId)
+            const restored = snapshot ? reviveLocalJobSnapshot(snapshot, 'server-reset') : null
+            if (!cancelled && !currentJobIdRef.current) {
               if (restored) {
-                currentSessionIdRef.current = restored.id
-                currentSessionRef.current = restored
-                dispatch({ type: 'session/selected', session: restored, sessionId: restored.id })
+                currentJobIdRef.current = restored.id
+                currentJobRef.current = restored
+                dispatch({ type: 'job/selected', job: restored, jobId: restored.id })
               } else {
-                dispatch({ type: 'session/selected', session: null, sessionId: null })
+                dispatch({ type: 'job/selected', job: null, jobId: null })
               }
             }
           }
@@ -266,50 +266,63 @@ export default function App() {
     }
   }, [setError, state.runtime])
 
-  const hasLiveSessionSummaries = state.sessions.some((session) => session.status === 'running' || session.status === 'queued')
+  const hasLiveJobSummaries = state.jobs.some((job) => job.status === 'running' || job.status === 'queued')
 
   useEffect(() => {
     if (!state.runtime) return undefined
-    if (!hasLiveSessionSummaries) return undefined
+    if (!hasLiveJobSummaries) return undefined
     let cancelled = false
-    const refreshSessions = () => {
-      loadSessions()
-        .then((sessions) => {
-          if (!cancelled) dispatch({ type: 'sessions/refreshed', sessions })
+    const refreshJobs = () => {
+      loadJobs()
+        .then((jobs) => {
+          if (!cancelled) dispatch({ type: 'jobs/refreshed', jobs })
         })
         .catch(() => {})
     }
-    refreshSessions()
-    const timer = window.setInterval(refreshSessions, 2000)
+    refreshJobs()
+    const timer = window.setInterval(refreshJobs, 2000)
     return () => {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [hasLiveSessionSummaries, state.runtime])
+  }, [hasLiveJobSummaries, state.runtime])
 
-  const handleSessionEvent = useCallback((event: SessionEvent) => {
-    const eventSessionId = event.type === 'init' ? event.session.id : event.sessionId
-    const currentSessionId = currentSessionIdRef.current
-    if (currentSessionId && eventSessionId !== currentSessionId) return
-    const currentSession = currentSessionRef.current
+  const handleJobEvent = useCallback((event: JobEvent) => {
+    const eventJobId = event.type === 'init' ? event.job.id : event.jobId
+    const currentJobId = currentJobIdRef.current
+    if (currentJobId && eventJobId !== currentJobId) return
+    const currentJob = currentJobRef.current
     switch (event.type) {
       case 'init': {
-        const session = mergeSessionIfNewerPreview(currentSessionRef.current, restoreGeneratedSessionOwner(event.session))
-        currentSessionIdRef.current = session.id
-        currentSessionRef.current = session
-        dispatch({ type: 'session/init', session })
+        const job = mergeJobIfNewerPreview(currentJobRef.current, restoreGeneratedJobOwner(event.job))
+        currentJobIdRef.current = job.id
+        currentJobRef.current = job
+        dispatch({ type: 'job/init', job })
         break
       }
-      case 'session:updated':
-        dispatch({
-          type: 'session/updated',
-          data: sanitizeSessionUpdateForPreview(currentSessionRef.current, event.data),
-          sessionId: event.sessionId,
-          timestamp: event.timestamp,
-        })
+      case 'job:updated':
+        if (event.job) {
+          const job = mergeJobIfNewerPreview(currentJobRef.current, restoreGeneratedJobOwner(event.job))
+          currentJobRef.current = job
+          dispatch({
+            type: 'job/updated',
+            data: job,
+            jobId: job.id,
+            timestamp: event.timestamp,
+          })
+        } else {
+          const data = event.data || event.patch
+          if (!data) break
+          dispatch({
+            type: 'job/updated',
+            data: sanitizeJobUpdateForPreview(currentJobRef.current, data),
+            jobId: event.jobId,
+            timestamp: event.timestamp,
+          })
+        }
         break
-      case 'session:deleted':
-        dispatch({ type: 'session/deleted', sessionId: event.sessionId })
+      case 'job:deleted':
+        dispatch({ type: 'job/deleted', jobId: event.jobId })
         break
       case 'message':
         dispatch({ type: 'message/upserted', message: event.message, timestamp: event.timestamp })
@@ -318,64 +331,64 @@ export default function App() {
         dispatch({ type: 'agent/event', event: { ...event.event, timestamp: event.timestamp } })
         break
       case 'pipeline:complete':
-        dispatch({ type: 'pipeline/completed', sessionId: event.sessionId, timestamp: event.timestamp })
+        dispatch({ type: 'pipeline/completed', jobId: event.jobId, timestamp: event.timestamp })
         break
       case 'pipeline:error':
-        dispatch({ type: 'pipeline/failed', message: event.message, sessionId: event.sessionId, timestamp: event.timestamp })
+        dispatch({ type: 'pipeline/failed', message: event.message, jobId: event.jobId, timestamp: event.timestamp })
         break
       case 'step:start':
         dispatch({
-          type: 'session/updated',
+          type: 'job/updated',
           data: {
             activeStep: event.step,
             status: 'running',
             steps: {
               ...defaultSteps,
-              ...(currentSession?.steps || {}),
-              [event.step]: { ...(currentSession?.steps?.[event.step] || {}), status: 'running' },
+              ...(currentJob?.steps || {}),
+              [event.step]: { ...(currentJob?.steps?.[event.step] || {}), status: 'running' },
             },
           },
-          sessionId: event.sessionId,
+          jobId: event.jobId,
           timestamp: event.timestamp,
         })
         break
       case 'step:complete':
         dispatch({
-          type: 'session/updated',
+          type: 'job/updated',
           data: {
             activeStep: null,
-            result: { ...(currentSession?.result || {}), ...(event.data || {}) },
+            result: { ...(currentJob?.result || {}), ...(event.data || {}) },
             steps: {
               ...defaultSteps,
-              ...(currentSession?.steps || {}),
-              [event.step]: { ...(currentSession?.steps?.[event.step] || {}), status: 'completed' },
+              ...(currentJob?.steps || {}),
+              [event.step]: { ...(currentJob?.steps?.[event.step] || {}), status: 'completed' },
             },
           },
-          sessionId: event.sessionId,
+          jobId: event.jobId,
           timestamp: event.timestamp,
         })
         break
       case 'step:error':
         dispatch({
-          type: 'session/updated',
+          type: 'job/updated',
           data: {
             activeStep: null,
             steps: {
               ...defaultSteps,
-              ...(currentSession?.steps || {}),
-              [event.step]: { ...(currentSession?.steps?.[event.step] || {}), status: 'failed', error: event.message },
+              ...(currentJob?.steps || {}),
+              [event.step]: { ...(currentJob?.steps?.[event.step] || {}), status: 'failed', error: event.message },
             },
           },
-          sessionId: event.sessionId,
+          jobId: event.jobId,
           timestamp: event.timestamp,
         })
         break
       default:
         break
     }
-  }, [restoreGeneratedSessionOwner])
+  }, [restoreGeneratedJobOwner])
 
-  useSessionEvents(state.currentSessionId, handleSessionEvent)
+  useJobEvents(state.currentJobId, handleJobEvent)
 
   useEffect(() => {
     writeStringStorage(STORAGE_KEYS.resultViewMode, state.resultViewMode)
@@ -389,89 +402,89 @@ export default function App() {
     writeStringStorage(STORAGE_KEYS.resultPreviewWidth, String(state.resultPreviewWidth))
   }, [state.resultPreviewWidth])
 
-  const selectSession = (id: string) => {
-    if (!id || id === currentSessionIdRef.current) return
-    const previousSessionId = currentSessionIdRef.current
-    const previousSession = currentSessionRef.current
-    currentSessionIdRef.current = id
-    const snapshot = getLocalSessionSnapshot(id)
-    const localOnly = state.sessions.find((session) => session.id === id)?.__localOnly
+  const selectJob = (id: string) => {
+    if (!id || id === currentJobIdRef.current) return
+    const previousJobId = currentJobIdRef.current
+    const previousJob = currentJobRef.current
+    currentJobIdRef.current = id
+    const snapshot = getLocalJobSnapshot(id)
+    const localOnly = state.jobs.find((job) => job.id === id)?.__localOnly
     if (localOnly && snapshot) {
-      const restored = reviveLocalSessionSnapshot(snapshot, 'server-reset')!
-      sessionDetailsRef.current.set(restored.id, restored)
-      currentSessionRef.current = restored
-      currentSessionIdRef.current = restored.id
-      dispatch({ type: 'session/selected', session: restored, sessionId: restored.id })
-      updateUrlSession(restored.id)
+      const restored = reviveLocalJobSnapshot(snapshot, 'server-reset')!
+      jobDetailsRef.current.set(restored.id, restored)
+      currentJobRef.current = restored
+      currentJobIdRef.current = restored.id
+      dispatch({ type: 'job/selected', job: restored, jobId: restored.id })
+      updateUrlJob(restored.id)
       return
     }
 
-    const cached = sessionDetailsRef.current.get(id)
+    const cached = jobDetailsRef.current.get(id)
     if (cached) {
-      const immediateSession = immediateSessionForSelection(cached)
-      currentSessionRef.current = immediateSession
-      dispatch({ type: 'session/selected', session: immediateSession, sessionId: id })
-      updateUrlSession(id)
+      const immediateJob = immediateJobForSelection(cached)
+      currentJobRef.current = immediateJob
+      dispatch({ type: 'job/selected', job: immediateJob, jobId: id })
+      updateUrlJob(id)
     } else {
-      const summary = state.sessions.find((session) => session.id === id) || null
-      const immediateSession = summary ? immediateSessionForSelection(summary) : null
-      currentSessionRef.current = immediateSession
-      dispatch({ type: 'session/selected', session: immediateSession, sessionId: id })
-      updateUrlSession(id)
+      const summary = state.jobs.find((job) => job.id === id) || null
+      const immediateJob = summary ? immediateJobForSelection(summary) : null
+      currentJobRef.current = immediateJob
+      dispatch({ type: 'job/selected', job: immediateJob, jobId: id })
+      updateUrlJob(id)
     }
 
-    void loadSession(id)
+    void loadJob(id)
       .then((loaded) => {
-        if (currentSessionIdRef.current !== id) return
-        const session = mergeSessionIfNewerPreview(currentSessionRef.current, restoreGeneratedSessionOwner(loaded))
-        sessionDetailsRef.current.set(session.id, session)
-        currentSessionRef.current = session
-        dispatch({ type: 'session/selected', session, sessionId: session.id })
-        updateUrlSession(session.id)
+        if (currentJobIdRef.current !== id) return
+        const job = mergeJobIfNewerPreview(currentJobRef.current, restoreGeneratedJobOwner(loaded))
+        jobDetailsRef.current.set(job.id, job)
+        currentJobRef.current = job
+        dispatch({ type: 'job/selected', job, jobId: job.id })
+        updateUrlJob(job.id)
       })
       .catch((error) => {
-        if (currentSessionIdRef.current !== id) return
-        const restored = snapshot ? reviveLocalSessionSnapshot(snapshot, 'server-reset') : null
+        if (currentJobIdRef.current !== id) return
+        const restored = snapshot ? reviveLocalJobSnapshot(snapshot, 'server-reset') : null
         if (restored) {
-          sessionDetailsRef.current.set(restored.id, restored)
-          currentSessionRef.current = restored
-          currentSessionIdRef.current = restored.id
-          dispatch({ type: 'session/selected', session: restored, sessionId: restored.id })
-          updateUrlSession(restored.id)
+          jobDetailsRef.current.set(restored.id, restored)
+          currentJobRef.current = restored
+          currentJobIdRef.current = restored.id
+          dispatch({ type: 'job/selected', job: restored, jobId: restored.id })
+          updateUrlJob(restored.id)
           return
         }
         if (!cached) {
-          currentSessionIdRef.current = previousSessionId
-          currentSessionRef.current = previousSession
-          dispatch({ type: 'session/selected', session: previousSession, sessionId: previousSessionId })
-          updateUrlSession(previousSessionId)
+          currentJobIdRef.current = previousJobId
+          currentJobRef.current = previousJob
+          dispatch({ type: 'job/selected', job: previousJob, jobId: previousJobId })
+          updateUrlJob(previousJobId)
         }
         setError(error instanceof Error ? error.message : String(error))
       })
   }
 
-  const startCurrentSession = async () => {
-    if (!state.currentSession?.id) return
-    markGeneratedSession(state.currentSession)
+  const startCurrentJob = async () => {
+    if (!state.currentJob?.id) return
+    markGeneratedJob(state.currentJob)
     try {
-      await startSession(state.currentSession.id)
-      const session = restoreGeneratedSessionOwner(await loadSession(state.currentSession.id))
-      dispatch({ type: 'session/selected', session, sessionId: session.id })
+      await startJob(state.currentJob.id)
+      const job = restoreGeneratedJobOwner(await loadJob(state.currentJob.id))
+      dispatch({ type: 'job/selected', job, jobId: job.id })
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
     }
   }
 
-  const deleteCurrentSession = async () => {
-    if (!state.currentSession?.id) return
-    if (!window.confirm(`确定删除 session ${state.currentSession.id} 吗？`)) return
-    const deletedSessionId = state.currentSession.id
+  const deleteCurrentJob = async () => {
+    if (!state.currentJob?.id) return
+    if (!window.confirm(`确定删除 job ${state.currentJob.id} 吗？`)) return
+    const deletedJobId = state.currentJob.id
     try {
-      if (!state.currentSession.__localOnly) await deleteSession(state.currentSession.id)
-      removeLocalSessionId(state.currentSession.id)
-      sessionDetailsRef.current.delete(deletedSessionId)
-      dispatch({ type: 'session/deleted', sessionId: deletedSessionId })
-      updateUrlSession(null)
+      if (!state.currentJob.__localOnly) await deleteJob(state.currentJob.id)
+      removeLocalJobId(state.currentJob.id)
+      jobDetailsRef.current.delete(deletedJobId)
+      dispatch({ type: 'job/deleted', jobId: deletedJobId })
+      updateUrlJob(null)
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
     }
@@ -494,52 +507,52 @@ export default function App() {
     dispatch({ type: 'module/select', moduleId })
     dispatch({ type: 'chat/filter', moduleId })
   }, [])
-  const upsertQueuedMessage = useCallback((message: SessionMessage) => {
+  const upsertQueuedMessage = useCallback((message: JobMessage) => {
     dispatch({ type: 'message/upserted', message, timestamp: Date.now() })
   }, [])
 
-  const cacheStatus = artifactCache.statusFor(state.currentSession)
-  const showResults = hasPrimaryResults(state.currentSession)
+  const cacheStatus = artifactCache.statusFor(state.currentJob)
+  const showResults = hasPrimaryResults(state.currentJob)
   const showRunningWorkspace = Boolean(
-    state.currentSession &&
+    state.currentJob &&
       !showResults &&
-      (state.currentSession.status === 'running' || state.currentSession.status === 'queued'),
+      (state.currentJob.status === 'running' || state.currentJob.status === 'queued'),
   )
 
   const main = (
     <>
       <Toolbar
-        chatDisabled={Boolean(state.runtime?.sessionChatDisabled)}
+        chatDisabled={Boolean(state.runtime?.jobChatDisabled)}
         chatOpen={state.chatOpen}
-        deleteDisabled={Boolean(state.runtime?.sessionDeleteDisabled)}
-        onDelete={deleteCurrentSession}
+        deleteDisabled={Boolean(state.runtime?.jobDeleteDisabled)}
+        onDelete={deleteCurrentJob}
         onExpandSidebar={() => setSidebarCollapsed(false)}
         onToggleChat={() => dispatch({ type: 'chat/toggle' })}
         onToggleTheme={toggleTheme}
-        session={state.currentSession}
+        job={state.currentJob}
         showChatToggle={!showRunningWorkspace}
         sidebarCollapsed={sidebarCollapsed}
       />
       <div className="content-area">
         {state.error ? <div className="url-error app-error">{state.error}</div> : null}
-        {state.currentSession && state.currentSession.status === 'draft' ? (
+        {state.currentJob && state.currentJob.status === 'draft' ? (
           <div className="workflow-panel visible">
-            <button className="upload-dialog-submit" onClick={startCurrentSession} type="button">开始生成</button>
+            <button className="upload-dialog-submit" onClick={startCurrentJob} type="button">开始生成</button>
           </div>
         ) : null}
         {showRunningWorkspace ? (
           <RunningWorkspace
             agentEvents={state.agentEvents}
-            chatDisabled={Boolean(state.runtime?.sessionChatDisabled)}
+            chatDisabled={Boolean(state.runtime?.jobChatDisabled)}
             chatFilterModuleId={state.chatFilterModuleId}
             onFilterModule={(moduleId) => dispatch({ type: 'chat/filter', moduleId })}
             onMessageQueued={upsertQueuedMessage}
             onSelectModule={selectModule}
             selectedModuleId={state.selectedModuleId}
-            session={state.currentSession}
+            job={state.currentJob}
           />
         ) : (
-          <WorkflowPanel session={state.currentSession} visible={!showResults} />
+          <WorkflowPanel job={state.currentJob} visible={!showResults} />
         )}
         <ResultPanel
           cacheBusy={cacheStatus.busy}
@@ -548,15 +561,15 @@ export default function App() {
           chatOpen={state.chatOpen}
           comparePosition={state.resultComparePosition}
           onComparePositionChange={(value) => dispatch({ type: 'result/compare-position', value })}
-          onDownloadZip={() => artifactCache.downloadSessionZip(state.currentSession)}
-          onOpenArtifact={(kind) => artifactCache.openSessionArtifact(state.currentSession, kind)}
+          onDownloadZip={() => artifactCache.downloadJobZip(state.currentJob)}
+          onOpenArtifact={(kind) => artifactCache.openJobArtifact(state.currentJob, kind)}
           onOpenLightbox={setLightboxSrc}
           onPreviewWidthChange={(value) => dispatch({ type: 'result/preview-width', value })}
           onSelectModule={selectModule}
           onViewModeChange={(value) => dispatch({ type: 'result/view-mode', value })}
           previewWidth={state.resultPreviewWidth}
           selectedModuleId={state.selectedModuleId}
-          session={state.currentSession}
+          job={state.currentJob}
           viewMode={state.resultViewMode}
         />
       </div>
@@ -571,21 +584,21 @@ export default function App() {
             <ChatDrawer
               agentEvents={state.agentEvents}
               chatFilterModuleId={state.chatFilterModuleId}
-              disabled={Boolean(state.runtime?.sessionChatDisabled)}
+              disabled={Boolean(state.runtime?.jobChatDisabled)}
               onClose={() => dispatch({ type: 'chat/toggle', open: false })}
               onFilterModule={(moduleId) => dispatch({ type: 'chat/filter', moduleId })}
               onMessageQueued={upsertQueuedMessage}
               onSelectModule={selectModule}
               open={state.chatOpen}
               selectedModuleId={state.selectedModuleId}
-              session={state.currentSession}
+              job={state.currentJob}
             />
           )
         }
         main={main}
         sidebar={
           <Sidebar
-            currentSessionId={state.currentSessionId}
+            currentJobId={state.currentJobId}
             onCollapse={() => setSidebarCollapsed(true)}
             onOpenUpload={() => {
               setUploadFile(null)
@@ -595,33 +608,34 @@ export default function App() {
               setUploadFile(file)
               dispatch({ type: 'upload/open', open: true })
             }}
-            onSelectSession={selectSession}
-            sessions={state.sessions}
+            onSelectJob={selectJob}
+            jobs={state.jobs}
           />
         }
         sidebarCollapsed={sidebarCollapsed}
       />
       <UploadDialog
         initialFile={uploadFile}
+        modelOptions={state.runtime?.modelOptions || []}
         onClose={() => dispatch({ type: 'upload/open', open: false })}
         onUploaded={(response) => {
-          const uploaded = (response.sessions || (response.session ? [response.session] : [])).map((session) => {
-            return markGeneratedSession(session)
+          const uploaded = (response.jobs || (response.job ? [response.job] : [])).map((job) => {
+            return markGeneratedJob(job)
           })
-          dispatch({ type: 'sessions/loaded', sessions: [...uploaded, ...state.sessions] })
+          dispatch({ type: 'jobs/loaded', jobs: [...uploaded, ...state.jobs] })
           const first = uploaded[0]
           if (first) {
-            dispatch({ type: 'session/selected', session: first, sessionId: first.id })
-            updateUrlSession(first.id)
+            dispatch({ type: 'job/selected', job: first, jobId: first.id })
+            updateUrlJob(first.id)
           }
           void Promise.all(
             uploaded
-              .filter((session) => session.status !== 'queued' && session.status !== 'running')
-              .map(async (session) => {
-                await startSession(session.id)
-                if (session.id === first?.id) {
-                  const fresh = restoreGeneratedSessionOwner(await loadSession(session.id))
-                  dispatch({ type: 'session/selected', session: fresh, sessionId: fresh.id })
+              .filter((job) => job.status !== 'queued' && job.status !== 'running')
+              .map(async (job) => {
+                await startJob(job.id)
+                if (job.id === first?.id) {
+                  const fresh = restoreGeneratedJobOwner(await loadJob(job.id))
+                  dispatch({ type: 'job/selected', job: fresh, jobId: fresh.id })
                 }
               }),
           ).catch((error) => setError(error instanceof Error ? error.message : String(error)))

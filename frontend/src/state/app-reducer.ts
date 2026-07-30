@@ -1,31 +1,31 @@
-import type { Session, SessionMessage, SessionSummary } from '../types/session'
-import { saveLocalSessionSnapshot } from '../utils/local-session'
+import type { Job, JobMessage, JobSummary } from '../types/job'
+import { saveLocalJobSnapshot } from '../utils/local-job'
 import { collectSelectableModules } from '../utils/modules'
 import type { AppAction } from './actions'
 import type { AppState } from './app-state'
 
-const upsertSession = (sessions: SessionSummary[], session: Session): SessionSummary[] => {
-  const existing = sessions.findIndex((item) => item.id === session.id)
-  const next = existing >= 0 ? [...sessions] : [session, ...sessions]
-  if (existing >= 0) next[existing] = { ...next[existing], ...session }
+const upsertJob = (jobs: JobSummary[], job: Job): JobSummary[] => {
+  const existing = jobs.findIndex((item) => item.id === job.id)
+  const next = existing >= 0 ? [...jobs] : [job, ...jobs]
+  if (existing >= 0) next[existing] = { ...next[existing], ...job }
   return next.sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
 }
 
-const removeSession = (sessions: SessionSummary[], sessionId: string) =>
-  sessions.filter((session) => session.id !== sessionId)
+const removeJob = (jobs: JobSummary[], jobId: string) =>
+  jobs.filter((job) => job.id !== jobId)
 
-const mergeSessionSummaries = (
-  existing: SessionSummary[],
-  incoming: SessionSummary[],
+const mergeJobSummaries = (
+  existing: JobSummary[],
+  incoming: JobSummary[],
 ) => {
-  const byId = new Map(existing.map((session) => [session.id, session]))
-  incoming.forEach((session) => {
-    byId.set(session.id, { ...(byId.get(session.id) || {}), ...session } as SessionSummary)
+  const byId = new Map(existing.map((job) => [job.id, job]))
+  incoming.forEach((job) => {
+    byId.set(job.id, { ...(byId.get(job.id) || {}), ...job } as JobSummary)
   })
   return [...byId.values()].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
 }
 
-const upsertMessage = (messages: SessionMessage[] = [], message: SessionMessage) => {
+const upsertMessage = (messages: JobMessage[] = [], message: JobMessage) => {
   const index = messages.findIndex((entry) => entry.id === message.id)
   if (index < 0) return [...messages, message]
   const next = [...messages]
@@ -33,20 +33,20 @@ const upsertMessage = (messages: SessionMessage[] = [], message: SessionMessage)
   return next
 }
 
-const maybePersist = (session: Session | null) => {
-  if (!session) return
-  saveLocalSessionSnapshot(session)
+const maybePersist = (job: Job | null) => {
+  if (!job) return
+  saveLocalJobSnapshot(job)
 }
 
-const mergeSessionPatch = (session: Session, patch: Partial<Session>): Session => ({
-  ...session,
+const mergeJobPatch = (job: Job, patch: Partial<Job>): Job => ({
+  ...job,
   ...patch,
-  result: patch.result ? { ...(session.result || {}), ...patch.result } : session.result,
+  result: patch.result ? { ...(job.result || {}), ...patch.result } : job.result,
 })
 
-const syncSelectedModule = (state: AppState, session: Session | null): string | null => {
-  if (!session) return null
-  const modules = collectSelectableModules(session)
+const syncSelectedModule = (state: AppState, job: Job | null): string | null => {
+  if (!job) return null
+  const modules = collectSelectableModules(job)
   if (state.selectedModuleId && modules.some((module) => module.id === state.selectedModuleId)) {
     return state.selectedModuleId
   }
@@ -57,112 +57,112 @@ export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'runtime/loaded':
       return { ...state, runtime: action.runtime }
-    case 'sessions/loaded':
-      return { ...state, loading: false, sessions: action.sessions }
-    case 'sessions/refreshed':
-      const refreshedCurrent = state.currentSession
-        ? action.sessions.find((session) => session.id === state.currentSession?.id)
+    case 'jobs/loaded':
+      return { ...state, loading: false, jobs: action.jobs }
+    case 'jobs/refreshed':
+      const refreshedCurrent = state.currentJob
+        ? action.jobs.find((job) => job.id === state.currentJob?.id)
         : null
       return {
         ...state,
-        currentSession: state.currentSession && refreshedCurrent
+        currentJob: state.currentJob && refreshedCurrent
           ? ({
-              ...state.currentSession,
+              ...state.currentJob,
               ...refreshedCurrent,
-              result: state.currentSession.result,
-              messages: state.currentSession.messages,
-            } as Session)
-          : state.currentSession,
-        sessions: mergeSessionSummaries(state.sessions, action.sessions),
+              result: state.currentJob.result,
+              messages: state.currentJob.messages,
+            } as Job)
+          : state.currentJob,
+        jobs: mergeJobSummaries(state.jobs, action.jobs),
       }
-    case 'session/selected':
+    case 'job/selected':
       return {
         ...state,
         agentEvents: [],
         chatFilterModuleId: null,
-        currentSession: action.session,
-        currentSessionId: action.sessionId,
-        selectedModuleId: syncSelectedModule(state, action.session),
+        currentJob: action.job,
+        currentJobId: action.jobId,
+        selectedModuleId: syncSelectedModule(state, action.job),
       }
-    case 'session/init': {
-      maybePersist(action.session)
-      if (state.currentSessionId && state.currentSessionId !== action.session.id) {
+    case 'job/init': {
+      maybePersist(action.job)
+      if (state.currentJobId && state.currentJobId !== action.job.id) {
         return {
           ...state,
-          sessions: upsertSession(state.sessions, action.session),
+          jobs: upsertJob(state.jobs, action.job),
         }
       }
       return {
         ...state,
-        currentSession: action.session,
-        currentSessionId: action.session.id,
-        selectedModuleId: syncSelectedModule(state, action.session),
-        sessions: upsertSession(state.sessions, action.session),
+        currentJob: action.job,
+        currentJobId: action.job.id,
+        selectedModuleId: syncSelectedModule(state, action.job),
+        jobs: upsertJob(state.jobs, action.job),
       }
     }
-    case 'session/updated': {
+    case 'job/updated': {
       const current =
-        state.currentSession?.id === action.sessionId
+        state.currentJob?.id === action.jobId
           ? {
-              ...mergeSessionPatch(state.currentSession, action.data),
+              ...mergeJobPatch(state.currentJob, action.data),
               updatedAt: action.timestamp || Date.now(),
             }
-          : state.currentSession
-      if (current?.id === action.sessionId) maybePersist(current)
+          : state.currentJob
+      if (current?.id === action.jobId) maybePersist(current)
       return {
         ...state,
-        currentSession: current,
-        selectedModuleId: current?.id === action.sessionId ? syncSelectedModule(state, current) : state.selectedModuleId,
-        sessions: state.sessions.map((session) =>
-          session.id === action.sessionId
+        currentJob: current,
+        selectedModuleId: current?.id === action.jobId ? syncSelectedModule(state, current) : state.selectedModuleId,
+        jobs: state.jobs.map((job) =>
+          job.id === action.jobId
             ? ({
-                ...mergeSessionPatch(session, action.data),
+                ...mergeJobPatch(job, action.data),
                 updatedAt: action.timestamp || Date.now(),
-              } as SessionSummary)
-            : session,
+              } as JobSummary)
+            : job,
         ),
       }
     }
     case 'message/upserted': {
-      if (!state.currentSession) return state
+      if (!state.currentJob) return state
       const current = {
-        ...state.currentSession,
-        messages: upsertMessage(state.currentSession.messages, action.message),
+        ...state.currentJob,
+        messages: upsertMessage(state.currentJob.messages, action.message),
         updatedAt: action.timestamp || Date.now(),
       }
       maybePersist(current)
       return {
         ...state,
-        currentSession: current,
-        sessions: upsertSession(state.sessions, current),
+        currentJob: current,
+        jobs: upsertJob(state.jobs, current),
       }
     }
     case 'agent/event':
       return { ...state, agentEvents: [...state.agentEvents.slice(-200), action.event] }
     case 'pipeline/completed': {
-      const patch: Partial<Session> = { status: 'completed' }
+      const patch: Partial<Job> = { status: 'completed' }
       return appReducer(state, {
-        type: 'session/updated',
+        type: 'job/updated',
         data: patch,
-        sessionId: action.sessionId,
+        jobId: action.jobId,
         timestamp: action.timestamp,
       })
     }
     case 'pipeline/failed':
       return appReducer(state, {
-        type: 'session/updated',
+        type: 'job/updated',
         data: { status: 'failed', error: action.message },
-        sessionId: action.sessionId,
+        jobId: action.jobId,
         timestamp: action.timestamp,
       })
-    case 'session/deleted': {
-      const isCurrent = state.currentSessionId === action.sessionId
+    case 'job/deleted': {
+      const isCurrent = state.currentJobId === action.jobId
       return {
         ...state,
         agentEvents: isCurrent ? [] : state.agentEvents,
-        currentSession: isCurrent ? null : state.currentSession,
-        currentSessionId: isCurrent ? null : state.currentSessionId,
-        sessions: removeSession(state.sessions, action.sessionId),
+        currentJob: isCurrent ? null : state.currentJob,
+        currentJobId: isCurrent ? null : state.currentJobId,
+        jobs: removeJob(state.jobs, action.jobId),
       }
     }
     case 'module/select':

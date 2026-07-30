@@ -1,6 +1,6 @@
-import type { Session } from '../../types/session'
-import { getSessionOutputFormat } from '../../utils/artifacts'
-import { formatSessionDuration, labelForOutputFormat, labelForSessionStatus } from '../../utils/format'
+import type { Job } from '../../types/job'
+import { getJobOutputFormat } from '../../utils/artifacts'
+import { formatJobDuration, labelForOutputFormat, labelForJobStatus } from '../../utils/format'
 import { getWorkflowProgress, labelForWorkflowNode } from '../../utils/workflow'
 import { IconButton } from '../common/IconButton'
 
@@ -12,7 +12,7 @@ export function Toolbar({
   onExpandSidebar,
   onToggleChat,
   onToggleTheme,
-  session,
+  job,
   showChatToggle = true,
   sidebarCollapsed = false,
 }: {
@@ -23,14 +23,15 @@ export function Toolbar({
   onExpandSidebar?: () => void
   onToggleChat: () => void
   onToggleTheme: () => void
-  session: Session | null
+  job: Job | null
   showChatToggle?: boolean
   sidebarCollapsed?: boolean
 }) {
-  const progress = getWorkflowProgress(session)
-  const title = session?.designName || '选择一个 session'
-  const meta = session
-    ? `${session.id} · ${labelForSessionStatus(session)} · ${Number(session.scale || 1)}x · ${labelForOutputFormat(getSessionOutputFormat(session))} · ${formatSessionDuration(session)} · ${progress.detail || labelForWorkflowNode(progress.currentNode)}`
+  const progress = getWorkflowProgress(job)
+  const title = job?.designName || '选择一个 job'
+  const modelMeta = job?.model ? ` · 模型: ${job.model}` : ''
+  const meta = job
+    ? `${job.id} · ${labelForJobStatus(job)} · ${Number(job.scale || 1)}x · ${labelForOutputFormat(getJobOutputFormat(job))}${modelMeta} · ${formatJobDuration(job)} · ${progress.detail || labelForWorkflowNode(progress.currentNode)}`
     : '上传 SVG 开始'
 
   return (
@@ -51,12 +52,12 @@ export function Toolbar({
         </div>
       </div>
       <div className="toolbar-actions">
-        {session && !chatDisabled && showChatToggle ? (
+        {job && !chatDisabled && showChatToggle ? (
           <button className={`link-btn toolbar-link-btn${chatOpen ? ' active' : ''}`} type="button" onClick={onToggleChat}>
             {chatOpen ? '收起聊天' : '打开聊天'}
           </button>
         ) : null}
-        <IconButton danger disabled={!session || deleteDisabled} onClick={onDelete} title="删除 Session">
+        <IconButton danger disabled={!job || deleteDisabled} onClick={onDelete} title="删除 Job">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
             <line x1="6" y1="6" x2="18" y2="18" />
             <line x1="18" y1="6" x2="6" y2="18" />

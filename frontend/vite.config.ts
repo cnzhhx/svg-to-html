@@ -53,15 +53,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: (() => {
-      const backendPort = Number(readRootEnvValue('PORT') || 80)
-      const backendTarget = `http://127.0.0.1:${Number.isFinite(backendPort) && backendPort > 0 ? backendPort : 80}`
+      const backendPort = Number(readRootEnvValue('PORT') || 8081)
+      const backendTarget = `http://127.0.0.1:${Number.isFinite(backendPort) && backendPort > 0 ? backendPort : 8081}`
 
       return {
         '/transformer/api': {
-          target: backendTarget,
-          changeOrigin: true,
-        },
-        '/transformer/files': {
           target: backendTarget,
           changeOrigin: true,
         },

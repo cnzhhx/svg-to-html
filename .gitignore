@@ -12,7 +12,11 @@ test
 
 .DS_Store
 **/.DS_Store
+.env
+.env.*
+!.env.example
 .runtime-traces/
+.runtime/
 
 # Local model provider config may contain API keys.
 config/model-provider.json

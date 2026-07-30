@@ -1,6 +1,6 @@
 import type { AgentEvent } from '../types/events'
 import type { RuntimeInfo } from '../types/runtime'
-import type { Session, SessionSummary } from '../types/session'
+import type { Job, JobSummary } from '../types/job'
 import { STORAGE_KEYS, readNumberStorage, readStringStorage } from '../utils/storage'
 
 export type ResultViewMode = 'split' | 'slider'
@@ -9,8 +9,8 @@ export type AppState = {
   agentEvents: AgentEvent[]
   chatFilterModuleId: string | null
   chatOpen: boolean
-  currentSession: Session | null
-  currentSessionId: string | null
+  currentJob: Job | null
+  currentJobId: string | null
   error: string | null
   loading: boolean
   resultComparePosition: number
@@ -18,7 +18,7 @@ export type AppState = {
   resultViewMode: ResultViewMode
   runtime: RuntimeInfo | null
   selectedModuleId: string | null
-  sessions: SessionSummary[]
+  jobs: JobSummary[]
   uploadDialogOpen: boolean
 }
 
@@ -31,8 +31,8 @@ export const initialAppState: AppState = {
   agentEvents: [],
   chatFilterModuleId: null,
   chatOpen: false,
-  currentSession: null,
-  currentSessionId: null,
+  currentJob: null,
+  currentJobId: null,
   error: null,
   loading: true,
   resultComparePosition: Math.min(95, Math.max(5, readNumberStorage(STORAGE_KEYS.resultComparePosition, 50))),
@@ -40,6 +40,6 @@ export const initialAppState: AppState = {
   resultViewMode: readResultViewMode(),
   runtime: null,
   selectedModuleId: null,
-  sessions: [],
+  jobs: [],
   uploadDialogOpen: false,
 }

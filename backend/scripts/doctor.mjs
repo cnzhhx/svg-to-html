@@ -1,11 +1,39 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { constants } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const backendDir = dirname(dirname(fileURLToPath(import.meta.url)));
+const rootDir = resolve(backendDir, "..");
+
+const parseEnvValue = (raw) => {
+  const trimmed = raw.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+};
+
+const loadRootEnvFile = () => {
+  const envPath = join(rootDir, ".env");
+  if (!existsSync(envPath)) return;
+  const content = readFileSync(envPath, "utf8");
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const equalsIndex = trimmed.indexOf("=");
+    if (equalsIndex <= 0) continue;
+    const key = trimmed.slice(0, equalsIndex).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = parseEnvValue(trimmed.slice(equalsIndex + 1));
+  }
+};
 
 const commandVersion = (command, args = ["--version"]) => {
   const result = spawnSync(command, args, {
@@ -20,75 +48,108 @@ const commandVersion = (command, args = ["--version"]) => {
 
 const checks = [];
 
-const addCommandCheck = (label, command, required = true) => {
-  const version = commandVersion(command);
-  checks.push({
-    detail: version || `${command} not found`,
-    label,
-    ok: Boolean(version),
-    required,
-  });
+const addCheck = (label, ok, detail, required = true) => {
+  checks.push({ detail, label, ok, required });
 };
 
+const addCommandCheck = (label, command, required = true) => {
+  const version = commandVersion(command);
+  addCheck(label, Boolean(version), version || `${command} not found`, required);
+};
+
+const addPnpmCheck = () => {
+  const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  const pnpmVersion = commandVersion(pnpmCommand);
+  addCheck("pnpm", Boolean(pnpmVersion), pnpmVersion || "pnpm not found; install with: npm install -g pnpm@10.11.0");
+};
+
+loadRootEnvFile();
+
+const resolveRootPath = (value) =>
+  isAbsolute(value) ? value : resolve(rootDir, value);
+
 addCommandCheck("Node", "node");
-addCommandCheck("pnpm", process.platform === "win32" ? "pnpm.cmd" : "pnpm");
-addCommandCheck("opencode", "opencode", false);
+addPnpmCheck();
+addCommandCheck("Docker", "docker");
 
-const browserCandidates = [
-  process.env.CHROMIUM_PATH,
-  process.env.CHROME_PATH,
-  process.env.BROWSER_PATH,
-  "google-chrome-stable",
-  "google-chrome",
-  "chrome",
-  "chromium",
-  "chromium-browser",
-  "microsoft-edge",
-  "microsoft-edge-stable",
-].filter(Boolean);
-
-let browser = null;
-for (const candidate of browserCandidates) {
-  if (candidate.includes("/") || candidate.includes("\\")) {
-    try {
-      await access(candidate, constants.X_OK);
-      browser = candidate;
-      break;
-    } catch {
-      continue;
-    }
-  }
-
-  if (commandVersion(candidate, ["--version"])) {
-    browser = candidate;
-    break;
-  }
-}
-
-checks.push({
-  detail:
-    browser ||
-    "Chrome/Chromium not found; visual verification will fail until configured",
-  label: "Browser",
-  ok: Boolean(browser),
-  required: false,
+const dockerInfo = spawnSync("docker", ["info"], {
+  cwd: rootDir,
+  encoding: "utf8",
+  stdio: ["ignore", "pipe", "pipe"],
 });
+addCheck(
+  "Docker daemon",
+  dockerInfo.status === 0,
+  dockerInfo.status === 0
+    ? "running"
+    : (dockerInfo.stderr || dockerInfo.stdout || "docker info failed").trim(),
+);
 
 try {
-  await access(join(rootDir, "dist/browser-mcp-server.mjs"), constants.R_OK);
-  checks.push({
-    detail: "dist/browser-mcp-server.mjs",
-    label: "MCP build",
-    ok: true,
-    required: false,
-  });
+  await access(join(rootDir, "frontend/public/index.html"));
+  addCheck("Frontend build", true, "frontend/public/index.html");
 } catch {
-  checks.push({
-    detail: "run pnpm run build:mcp",
-    label: "MCP build",
-    ok: false,
-    required: false,
-  });
+  addCheck(
+    "Frontend build",
+    false,
+    "not required for pnpm dev; run pnpm -C frontend build for production static preview",
+    false,
+  );
+}
+
+const coreUrl = process.env.SVG_TRANSFORM_CORE_URL?.trim()?.replace(/\/+$/, "");
+const coreImage =
+  process.env.SVG_TRANSFORM_CORE_IMAGE?.trim() || "ghcr.io/cnzhhx/svg-transform-core:latest";
+const coreModelConfig =
+  resolveRootPath(
+    process.env.SVG_TRANSFORM_CORE_MODEL_CONFIG?.trim() ||
+      "backend/config/model-provider.json",
+  );
+const coreDockerScript = join(rootDir, "scripts/core-docker.sh");
+addCheck(
+  "Core Docker helper",
+  existsSync(coreDockerScript),
+  existsSync(coreDockerScript)
+    ? coreDockerScript
+    : `missing ${coreDockerScript}`,
+);
+addCheck(
+  "Core Docker image",
+  Boolean(coreImage),
+  coreImage,
+);
+addCheck(
+  "Core model config",
+  existsSync(coreModelConfig),
+  existsSync(coreModelConfig)
+    ? coreModelConfig
+    : `missing ${coreModelConfig}; copy backend/config/model-provider.example.json and fill provider credentials`,
+);
+
+if (!coreUrl) {
+  addCheck(
+    "svg-transform-core",
+    false,
+    "SVG_TRANSFORM_CORE_URL is not configured; expected Docker core URL such as http://127.0.0.1:4310",
+  );
+} else {
+  try {
+    const response = await fetch(`${coreUrl}/health`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    const text = (await response.text()).trim();
+    addCheck(
+      "svg-transform-core",
+      response.ok && text === "ok",
+      `${coreUrl}/health -> ${response.status} ${text || response.statusText}`,
+    );
+  } catch (error) {
+    addCheck(
+      "svg-transform-core",
+      false,
+      `${coreUrl}/health unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 let failed = false;

@@ -1,14 +1,15 @@
 export const STORAGE_KEYS = {
   clientId: 'svg2html:clientId',
   localArtifactDb: 'svg2html:artifactCache',
-  localSessionSnapshots: 'svg2html:sessionSnapshots',
+  localJobSnapshots: 'svg2html:jobSnapshots',
   runningPreviewFitModes: 'svg2html:runningPreviewFitModes:v1',
   resultComparePosition: 'svg2html:resultComparePosition',
   resultPreviewWidth: 'svg2html:resultPreviewWidth',
   resultViewMode: 'svg2html:resultViewMode:v2',
-  sessions: 'svg2html:sessions',
+  jobs: 'svg2html:jobs',
   theme: 'svg2html:theme',
   uploadFormat: 'svg2html:uploadFormat',
+  uploadModel: 'svg2html:uploadModel',
   uploadScale: 'svg2html:uploadScale',
 } as const
 
@@ -47,6 +48,8 @@ export function writeStringStorage(key: string, value: string) {
 }
 
 export function readNumberStorage(key: string, fallback: number) {
-  const value = Number(readStringStorage(key, ''))
+  const raw = readStringStorage(key, '')
+  if (!raw) return fallback
+  const value = Number(raw)
   return Number.isFinite(value) ? value : fallback
 }

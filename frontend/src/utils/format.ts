@@ -1,4 +1,4 @@
-import type { Session } from '../types/session'
+import type { Job } from '../types/job'
 
 function labelForStatus(status?: string) {
   const labels: Record<string, string> = {
@@ -13,9 +13,9 @@ function labelForStatus(status?: string) {
   return labels[String(status || '')] || status || '未知'
 }
 
-export function labelForSessionStatus(session?: Session | null) {
-  const base = labelForStatus(session?.status)
-  return session?.__localOnly ? `${base} · 本地记录` : base
+export function labelForJobStatus(job?: Job | null) {
+  const base = labelForStatus(job?.status)
+  return job?.__localOnly ? `${base} · 本地记录` : base
 }
 
 export function labelForOutputFormat(format?: string) {
@@ -37,13 +37,13 @@ function formatElapsedDuration(ms: number) {
   return `${seconds}s`
 }
 
-export function formatSessionDuration(session?: Session | null, now = Date.now()) {
-  if (!session) return '0s'
-  const start = Number(session.executionStartedAt || session.queuedAt || session.createdAt || now)
+export function formatJobDuration(job?: Job | null, now = Date.now()) {
+  if (!job) return '0s'
+  const start = Number(job.executionStartedAt || job.queuedAt || job.createdAt || now)
   const end =
-    session.status === 'running' || session.status === 'queued'
+    job.status === 'running' || job.status === 'queued'
       ? now
-      : Number(session.updatedAt || now)
+      : Number(job.updatedAt || now)
   return formatElapsedDuration(Math.max(0, end - start))
 }
 

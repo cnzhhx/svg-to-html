@@ -1,13 +1,13 @@
-import type { Session } from '../types/session'
+import type { Job } from '../types/job'
 import {
-  getSessionCompareEntryPath,
-  getSessionRenderEntryPath,
-  getSessionRenderPngPath,
-  getSessionSourceEntryPath,
-  getSessionSourceStylePath,
-  getSessionSvgPngPath,
+  getJobCompareEntryPath,
+  getJobRenderEntryPath,
+  getJobRenderPngPath,
+  getJobSourceEntryPath,
+  getJobSourceStylePath,
+  getJobSvgPngPath,
   normalizeFsPath,
-  workspaceFileUrl,
+  artifactFileUrl,
 } from './artifacts'
 import { STORAGE_KEYS } from './storage'
 
@@ -22,7 +22,7 @@ export type ArtifactCacheMeta = {
   fileCount: number
   paths: string[]
   renderEntryPath: string
-  sessionId: string
+  jobId: string
   sourceEntryPath?: string
   status: 'cached' | 'caching' | 'error'
 }
@@ -32,14 +32,14 @@ export type ArtifactRecord = {
   contentType: string
   key: string
   path: string
-  sessionId: string
+  jobId: string
   size: number
   updatedAt: number
 }
 
-const DB_VERSION = 2
+const DB_VERSION = 3
 const FILE_STORE = 'files'
-const SESSION_STORE = 'sessions'
+const JOB_STORE = 'jobs'
 const HTML_REFERENCE_PATTERN = /(?:src|href|poster)=["']([^"'<>]+)["']|url\((['"]?)([^)"']+)\2\)/g
 const IMPORT_META_URL_REFERENCE_PATTERN = /new\s+URL\(\s*(["'`])([^"'`]+)\1\s*,\s*import\.meta\.url\s*\)/g
 const LOCAL_ARTIFACT_STRING_PATTERN = /(["'`])((?:\.{1,2}\/)+artifacts\/[^"'`\s)]+)\1/g
@@ -58,10 +58,10 @@ function openArtifactDb() {
       const db = request.result
       if (!db.objectStoreNames.contains(FILE_STORE)) {
         const store = db.createObjectStore(FILE_STORE, { keyPath: 'key' })
-        store.createIndex('sessionId', 'sessionId', { unique: false })
+        store.createIndex('jobId', 'jobId', { unique: false })
       }
-      if (!db.objectStoreNames.contains(SESSION_STORE)) {
-        db.createObjectStore(SESSION_STORE, { keyPath: 'sessionId' })
+      if (!db.objectStoreNames.contains(JOB_STORE)) {
+        db.createObjectStore(JOB_STORE, { keyPath: 'jobId' })
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -86,52 +86,52 @@ function transactionDone(transaction: IDBTransaction) {
   })
 }
 
-const fileKey = (sessionId: string, filePath: string) => `${sessionId}\n${normalizeFsPath(filePath)}`
+const fileKey = (jobId: string, filePath: string) => `${jobId}\n${normalizeFsPath(filePath)}`
 
-export const artifactCacheKeyForSession = (session: Session) =>
+export const artifactCacheKeyForJob = (job: Job) =>
   [
-    session.id,
-    session.result?.artifactUpdatedAt || session.updatedAt || '',
-    session.result?.finalOutputReady ?? '',
-    getSessionSourceEntryPath(session),
-    getSessionRenderEntryPath(session),
-    getSessionCompareEntryPath(session),
-    getSessionSvgPngPath(session),
-    getSessionRenderPngPath(session),
+    job.id,
+    job.result?.artifactUpdatedAt || job.updatedAt || '',
+    job.result?.finalOutputReady ?? '',
+    getJobSourceEntryPath(job),
+    getJobRenderEntryPath(job),
+    getJobCompareEntryPath(job),
+    getJobSvgPngPath(job),
+    getJobRenderPngPath(job),
   ].join('|')
 
-export async function getCachedArtifactSessionMeta(sessionId: string): Promise<ArtifactCacheMeta | null> {
-  if (!sessionId) return null
+export async function getCachedArtifactJobMeta(jobId: string): Promise<ArtifactCacheMeta | null> {
+  if (!jobId) return null
   const db = await openArtifactDb()
-  const transaction = db.transaction(SESSION_STORE, 'readonly')
-  const meta = await requestResult<ArtifactCacheMeta | undefined>(transaction.objectStore(SESSION_STORE).get(sessionId))
+  const transaction = db.transaction(JOB_STORE, 'readonly')
+  const meta = await requestResult<ArtifactCacheMeta | undefined>(transaction.objectStore(JOB_STORE).get(jobId))
   return meta || null
 }
 
-async function getCachedArtifactSessionMetas(): Promise<ArtifactCacheMeta[]> {
+async function getCachedArtifactJobMetas(): Promise<ArtifactCacheMeta[]> {
   const db = await openArtifactDb()
-  const transaction = db.transaction(SESSION_STORE, 'readonly')
-  return requestResult<ArtifactCacheMeta[]>(transaction.objectStore(SESSION_STORE).getAll())
+  const transaction = db.transaction(JOB_STORE, 'readonly')
+  return requestResult<ArtifactCacheMeta[]>(transaction.objectStore(JOB_STORE).getAll())
 }
 
-export async function getCachedArtifactFiles(sessionId: string): Promise<ArtifactRecord[]> {
-  if (!sessionId) return []
+export async function getCachedArtifactFiles(jobId: string): Promise<ArtifactRecord[]> {
+  if (!jobId) return []
   const db = await openArtifactDb()
   const transaction = db.transaction(FILE_STORE, 'readonly')
-  const index = transaction.objectStore(FILE_STORE).index('sessionId')
-  return requestResult<ArtifactRecord[]>(index.getAll(IDBKeyRange.only(sessionId)))
+  const index = transaction.objectStore(FILE_STORE).index('jobId')
+  return requestResult<ArtifactRecord[]>(index.getAll(IDBKeyRange.only(jobId)))
 }
 
-export async function deleteLocalArtifactCache(sessionId: string) {
-  if (!sessionId) return
+export async function deleteLocalArtifactCache(jobId: string) {
+  if (!jobId) return
   const db = await openArtifactDb()
-  const transaction = db.transaction([FILE_STORE, SESSION_STORE], 'readwrite')
+  const transaction = db.transaction([FILE_STORE, JOB_STORE], 'readwrite')
   const done = transactionDone(transaction)
-  transaction.objectStore(SESSION_STORE).delete(sessionId)
+  transaction.objectStore(JOB_STORE).delete(jobId)
   const fileStore = transaction.objectStore(FILE_STORE)
-  const index = fileStore.index('sessionId')
+  const index = fileStore.index('jobId')
   await new Promise<void>((resolve, reject) => {
-    const request = index.openCursor(IDBKeyRange.only(sessionId))
+    const request = index.openCursor(IDBKeyRange.only(jobId))
     request.onsuccess = () => {
       const cursor = request.result
       if (!cursor) {
@@ -146,45 +146,45 @@ export async function deleteLocalArtifactCache(sessionId: string) {
   await done
 }
 
-async function putBundle(sessionId: string, records: ArtifactRecord[], meta: ArtifactCacheMeta) {
+async function putBundle(jobId: string, records: ArtifactRecord[], meta: ArtifactCacheMeta) {
   const db = await openArtifactDb()
-  const transaction = db.transaction([FILE_STORE, SESSION_STORE], 'readwrite')
+  const transaction = db.transaction([FILE_STORE, JOB_STORE], 'readwrite')
   const done = transactionDone(transaction)
   const fileStore = transaction.objectStore(FILE_STORE)
   records.forEach((record) => fileStore.put(record))
-  transaction.objectStore(SESSION_STORE).put(meta)
+  transaction.objectStore(JOB_STORE).put(meta)
   await done
 }
 
-async function putBundleWithEviction(sessionId: string, records: ArtifactRecord[], meta: ArtifactCacheMeta) {
+async function putBundleWithEviction(jobId: string, records: ArtifactRecord[], meta: ArtifactCacheMeta) {
   try {
-    await putBundle(sessionId, records, meta)
+    await putBundle(jobId, records, meta)
     return
   } catch (error) {
     if (!isQuotaExceededError(error)) throw error
   }
-  const candidates = (await getCachedArtifactSessionMetas())
-    .filter((item) => item.sessionId && item.sessionId !== sessionId)
+  const candidates = (await getCachedArtifactJobMetas())
+    .filter((item) => item.jobId && item.jobId !== jobId)
     .sort((left, right) => Number(left.cachedAt || 0) - Number(right.cachedAt || 0))
   for (const candidate of candidates) {
-    await deleteLocalArtifactCache(candidate.sessionId)
+    await deleteLocalArtifactCache(candidate.jobId)
     try {
-      await putBundle(sessionId, records, meta)
+      await putBundle(jobId, records, meta)
       return
     } catch (error) {
       if (!isQuotaExceededError(error)) throw error
     }
   }
-  throw new Error('浏览器本地缓存空间不足，已清理旧缓存但仍无法写入当前 session')
+  throw new Error('浏览器本地缓存空间不足，已清理旧缓存但仍无法写入当前 job')
 }
 
-export async function cacheSessionArtifacts(session: Session): Promise<ArtifactCacheMeta> {
-  const sessionId = session.id
-  const cacheKey = artifactCacheKeyForSession(session)
-  const sourceEntryPath = getSessionSourceEntryPath(session)
-  const renderEntryPath = getSessionRenderEntryPath(session)
-  const compareEntryPath = getSessionCompareEntryPath(session)
-  if (!sessionId || !renderEntryPath) throw new Error('当前 session 没有可缓存的渲染预览')
+export async function cacheJobArtifacts(job: Job): Promise<ArtifactCacheMeta> {
+  const jobId = job.id
+  const cacheKey = artifactCacheKeyForJob(job)
+  const sourceEntryPath = getJobSourceEntryPath(job)
+  const renderEntryPath = getJobRenderEntryPath(job)
+  const compareEntryPath = getJobCompareEntryPath(job)
+  if (!jobId || !renderEntryPath) throw new Error('当前 job 没有可缓存的渲染预览')
 
   const queue: Array<{ critical?: boolean; filePath: string }> = []
   const queued = new Set<string>()
@@ -197,21 +197,21 @@ export async function cacheSessionArtifacts(session: Session): Promise<ArtifactC
     queue.push({ critical, filePath: normalized })
   }
 
-  collectSessionRootArtifactPaths(session).forEach((filePath) => {
+  collectJobRootArtifactPaths(job).forEach((filePath) => {
     enqueue(filePath, normalizeFsPath(filePath) === normalizeFsPath(renderEntryPath))
   })
 
   while (queue.length) {
     const item = queue.shift()!
     try {
-      const blob = await fetchLocalFileBlob(item.filePath, session)
+      const blob = await fetchLocalFileBlob(item.filePath, job)
       const contentType = blob.type || guessContentType(item.filePath)
       recordsByPath.set(item.filePath, {
         blob,
         contentType,
-        key: fileKey(sessionId, item.filePath),
+        key: fileKey(jobId, item.filePath),
         path: item.filePath,
-        sessionId,
+        jobId,
         size: blob.size,
         updatedAt: Date.now(),
       })
@@ -239,27 +239,27 @@ export async function cacheSessionArtifacts(session: Session): Promise<ArtifactC
     cachedAt: Date.now(),
     cacheKey,
     compareEntryPath: normalizeFsPath(compareEntryPath),
-    designName: session.designName || sessionId,
+    designName: job.designName || jobId,
     failures: failures.slice(0, 20),
     fileCount: records.length,
     paths: records.map((record) => record.path),
     renderEntryPath: normalizeFsPath(renderEntryPath),
-    sessionId,
+    jobId,
     sourceEntryPath: normalizeFsPath(sourceEntryPath),
     status: 'cached',
   }
-  await putBundleWithEviction(sessionId, records, meta)
+  await putBundleWithEviction(jobId, records, meta)
   return meta
 }
 
-function collectSessionRootArtifactPaths(session: Session) {
-  const result = session.result || {}
+function collectJobRootArtifactPaths(job: Job) {
+  const result = job.result || {}
   return unique([
-    getSessionSourceEntryPath(session),
-    getSessionSourceStylePath(session),
-    getSessionRenderEntryPath(session),
-    getSessionCompareEntryPath(session),
-    session.svgPath,
+    getJobSourceEntryPath(job),
+    getJobSourceStylePath(job),
+    getJobRenderEntryPath(job),
+    getJobCompareEntryPath(job),
+    job.svgPath,
     result.svgPngPath,
     result.renderPngPath,
     result.diffPngPath,
@@ -275,7 +275,7 @@ export async function createCachedArtifactObjectUrl(targetPath: string, records:
     const existing = objectUrls.get(normalized)
     if (existing) return existing
     const record = recordsByPath.get(normalized)
-    if (!record || building.has(normalized)) return absoluteBrowserUrl(workspaceFileUrl(normalized))
+    if (!record || building.has(normalized)) return absoluteBrowserUrl(artifactFileUrl(normalized))
     building.add(normalized)
     let blob = record.blob
     const contentType = record.contentType || guessContentType(normalized)
@@ -294,14 +294,14 @@ export async function createCachedArtifactObjectUrl(targetPath: string, records:
   return url
 }
 
-export async function createZipBlobForCachedSession(session: Session, records: ArtifactRecord[]) {
+export async function createZipBlobForCachedJob(job: Job, records: ArtifactRecord[]) {
   const entries = []
   const usedNames = new Set<string>()
   const sortedRecords = records
     .filter((record) => record.path && record.blob)
     .sort((left, right) => normalizeFsPath(left.path).localeCompare(normalizeFsPath(right.path)))
   for (const record of sortedRecords) {
-    let name = zipEntryNameForCachedRecord(session, record.path)
+    let name = zipEntryNameForCachedRecord(job, record.path)
     if (usedNames.has(name)) {
       const dotIndex = name.lastIndexOf('.')
       const prefix = dotIndex > 0 ? name.slice(0, dotIndex) : name
@@ -328,8 +328,8 @@ export function downloadBlob(blob: Blob, fileName: string) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000)
 }
 
-function fetchLocalFileBlob(filePath: string, session: Session) {
-  return fetch(workspaceFileUrl(filePath, session)).then((response) => {
+function fetchLocalFileBlob(filePath: string, job: Job) {
+  return fetch(artifactFileUrl(filePath, job)).then((response) => {
     if (!response.ok) throw new Error(`读取文件失败 ${response.status}: ${filePath}`)
     return response.blob()
   })
@@ -450,10 +450,10 @@ function unique(values: string[]) {
   return [...new Set(values.filter(Boolean))]
 }
 
-function zipEntryNameForCachedRecord(session: Session, filePath: string) {
+function zipEntryNameForCachedRecord(job: Job, filePath: string) {
   const normalizedPath = normalizeFsPath(filePath)
-  const baseDir = normalizeFsPath(session.sessionDir || dirnameFsPath(getSessionRenderEntryPath(session) || getSessionSourceEntryPath(session) || normalizedPath)).replace(/\/+$/, '')
-  const root = sanitizeFileName(session.designName || session.id || 'session')
+  const baseDir = normalizeFsPath(job.jobDir || dirnameFsPath(getJobRenderEntryPath(job) || getJobSourceEntryPath(job) || normalizedPath)).replace(/\/+$/, '')
+  const root = sanitizeFileName(job.designName || job.id || 'job')
   let relative = normalizedPath
   if (baseDir && normalizedPath.startsWith(`${baseDir}/`)) relative = normalizedPath.slice(baseDir.length + 1)
   else relative = basenameFsPath(normalizedPath)

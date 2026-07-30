@@ -1,10 +1,10 @@
-import type { Session } from '../../types/session'
+import type { Job } from '../../types/job'
 import { WORKFLOW_NODE_ORDER, getWorkflowProgress, labelForWorkflowNode } from '../../utils/workflow'
 
-export function WorkflowPanel({ session, visible = true }: { session: Session | null; visible?: boolean }) {
-  const progress = getWorkflowProgress(session)
-  const moduleCount = Number(session?.result?.moduleCount)
-  const concurrencyLimit = Number(session?.result?.moduleConcurrencyLimit ?? 5)
+export function WorkflowPanel({ job, visible = true }: { job: Job | null; visible?: boolean }) {
+  const progress = getWorkflowProgress(job)
+  const moduleCount = Number(job?.result?.moduleCount)
+  const concurrencyLimit = Number(job?.result?.moduleConcurrencyLimit ?? 5)
   const showWarning = Number.isFinite(moduleCount) && Number.isFinite(concurrencyLimit) && moduleCount > concurrencyLimit
 
   return (

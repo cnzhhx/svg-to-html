@@ -1,16 +1,16 @@
 import { useCallback, useMemo, useState } from 'react'
-import type { Session } from '../types/session'
-import { sessionDownloadUrl } from '../api/sessions'
+import type { Job } from '../types/job'
+import { jobDownloadUrl } from '../api/jobs'
 import {
-  artifactCacheKeyForSession,
-  cacheSessionArtifacts as cacheSessionArtifactsToIdb,
+  artifactCacheKeyForJob,
+  cacheJobArtifacts as cacheJobArtifactsToIdb,
   createCachedArtifactObjectUrl,
-  createZipBlobForCachedSession,
+  createZipBlobForCachedJob,
   downloadBlob,
   getCachedArtifactFiles,
-  getCachedArtifactSessionMeta,
+  getCachedArtifactJobMeta,
 } from '../utils/artifact-cache'
-import { getSessionCompareEntryPath, getSessionRenderEntryPath, getSessionSourceEntryPath, workspaceFileUrl } from '../utils/artifacts'
+import { getJobCompareEntryPath, getJobRenderEntryPath, getJobSourceEntryPath, artifactFileUrl } from '../utils/artifacts'
 import { formatBytes } from '../utils/format'
 import type { ArtifactCacheMeta } from '../utils/artifact-cache'
 
@@ -21,8 +21,8 @@ export type ArtifactCacheStatus = {
 }
 
 const isCached = (meta?: ArtifactCacheMeta | null) => meta?.status === 'cached'
-const isUsableCache = (session: Session, meta?: ArtifactCacheMeta | null) =>
-  isCached(meta) && (session.__localOnly || meta?.cacheKey === artifactCacheKeyForSession(session))
+const isUsableCache = (job: Job, meta?: ArtifactCacheMeta | null) =>
+  isCached(meta) && (job.__localOnly || meta?.cacheKey === artifactCacheKeyForJob(job))
 
 const openUrl = (url: string) => {
   const anchor = document.createElement('a')
@@ -39,115 +39,115 @@ const sanitizeFileName = (value: unknown) => {
   return text || 'file'
 }
 
-export function useArtifactCache(onSessionCached?: (session: Session, meta: ArtifactCacheMeta) => void) {
-  const [busySessionIds, setBusySessionIds] = useState<Set<string>>(() => new Set())
+export function useArtifactCache(onJobCached?: (job: Job, meta: ArtifactCacheMeta) => void) {
+  const [busyJobIds, setBusyJobIds] = useState<Set<string>>(() => new Set())
   const [error, setError] = useState<string | null>(null)
-  const [metaBySession, setMetaBySession] = useState<Map<string, ArtifactCacheMeta>>(() => new Map())
+  const [metaByJob, setMetaByJob] = useState<Map<string, ArtifactCacheMeta>>(() => new Map())
 
-  const rememberMeta = useCallback((sessionId: string, meta: ArtifactCacheMeta) => {
-    setMetaBySession((previous) => new Map(previous).set(sessionId, meta))
+  const rememberMeta = useCallback((jobId: string, meta: ArtifactCacheMeta) => {
+    setMetaByJob((previous) => new Map(previous).set(jobId, meta))
   }, [])
 
-  const cacheSessionArtifacts = useCallback(async (session: Session | null) => {
-    if (!session?.id) return
+  const cacheJobArtifacts = useCallback(async (job: Job | null) => {
+    if (!job?.id) return
     setError(null)
-    setBusySessionIds((previous) => new Set(previous).add(session.id))
+    setBusyJobIds((previous) => new Set(previous).add(job.id))
     try {
-      const meta = await cacheSessionArtifactsToIdb(session)
-      rememberMeta(session.id, meta)
-      onSessionCached?.(session, meta)
+      const meta = await cacheJobArtifactsToIdb(job)
+      rememberMeta(job.id, meta)
+      onJobCached?.(job, meta)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setBusySessionIds((previous) => {
+      setBusyJobIds((previous) => {
         const next = new Set(previous)
-        next.delete(session.id)
+        next.delete(job.id)
         return next
       })
     }
-  }, [onSessionCached, rememberMeta])
+  }, [onJobCached, rememberMeta])
 
-  const openSessionArtifact = useCallback(async (session: Session | null, kind: 'compare' | 'render' | 'source') => {
-    if (!session?.id) return
+  const openJobArtifact = useCallback(async (job: Job | null, kind: 'compare' | 'render' | 'source') => {
+    if (!job?.id) return
     const targetPath =
       kind === 'compare'
-        ? getSessionCompareEntryPath(session)
+        ? getJobCompareEntryPath(job)
         : kind === 'source'
-          ? getSessionSourceEntryPath(session)
-          : getSessionRenderEntryPath(session)
+          ? getJobSourceEntryPath(job)
+          : getJobRenderEntryPath(job)
     if (!targetPath) {
       setError('没有可打开的文件')
       return
     }
-    const meta = metaBySession.get(session.id) || await getCachedArtifactSessionMeta(session.id).catch(() => null)
-    if (isUsableCache(session, meta)) {
+    const meta = metaByJob.get(job.id) || await getCachedArtifactJobMeta(job.id).catch(() => null)
+    if (isUsableCache(job, meta)) {
       try {
-        const records = await getCachedArtifactFiles(session.id)
+        const records = await getCachedArtifactFiles(job.id)
         if (records.length) {
           openUrl(await createCachedArtifactObjectUrl(targetPath, records))
-          rememberMeta(session.id, meta!)
+          rememberMeta(job.id, meta!)
           return
         }
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught))
       }
     }
-    if (session.__localOnly) {
+    if (job.__localOnly) {
       setError('本地归档记录没有可打开的浏览器缓存文件')
       return
     }
-    openUrl(workspaceFileUrl(targetPath, session))
-  }, [metaBySession, rememberMeta])
+    openUrl(artifactFileUrl(targetPath, job))
+  }, [metaByJob, rememberMeta])
 
-  const downloadSessionZip = useCallback(async (session: Session | null) => {
-    if (!session?.id) return
-    const meta = metaBySession.get(session.id) || await getCachedArtifactSessionMeta(session.id).catch(() => null)
-    if (isUsableCache(session, meta)) {
+  const downloadJobZip = useCallback(async (job: Job | null) => {
+    if (!job?.id) return
+    const meta = metaByJob.get(job.id) || await getCachedArtifactJobMeta(job.id).catch(() => null)
+    if (isUsableCache(job, meta)) {
       try {
-        const records = await getCachedArtifactFiles(session.id)
+        const records = await getCachedArtifactFiles(job.id)
         if (records.length) {
-          const zip = await createZipBlobForCachedSession(session, records)
-          downloadBlob(zip, `${sanitizeFileName(session.designName || session.id)}.zip`)
+          const zip = await createZipBlobForCachedJob(job, records)
+          downloadBlob(zip, `${sanitizeFileName(job.designName || job.id)}.zip`)
           setError(`本地 ZIP 已生成：${formatBytes(zip.size)}`)
-          rememberMeta(session.id, meta!)
+          rememberMeta(job.id, meta!)
           return
         }
       } catch (caught) {
-        if (session.__localOnly) {
+        if (job.__localOnly) {
           setError(caught instanceof Error ? caught.message : '本地 ZIP 打包失败')
           return
         }
       }
     }
-    if (session.__localOnly) {
+    if (job.__localOnly) {
       setError('本地归档记录没有可下载的浏览器缓存 ZIP')
       return
     }
-    window.location.href = sessionDownloadUrl(session.id)
-  }, [metaBySession, rememberMeta])
+    window.location.href = jobDownloadUrl(job.id)
+  }, [metaByJob, rememberMeta])
 
   const statusFor = useCallback(
-    (session?: Session | null): ArtifactCacheStatus => {
-      const meta = session?.id ? metaBySession.get(session.id) : null
-      if (session?.id && !meta) {
-        void getCachedArtifactSessionMeta(session.id)
+    (job?: Job | null): ArtifactCacheStatus => {
+      const meta = job?.id ? metaByJob.get(job.id) : null
+      if (job?.id && !meta) {
+        void getCachedArtifactJobMeta(job.id)
           .then((stored) => {
             if (!stored) return
-            rememberMeta(session.id, stored)
+            rememberMeta(job.id, stored)
           })
           .catch(() => {})
       }
       return {
-        busy: Boolean(session?.id && busySessionIds.has(session.id)),
+        busy: Boolean(job?.id && busyJobIds.has(job.id)),
         error,
         meta,
       }
     },
-    [busySessionIds, error, metaBySession, rememberMeta],
+    [busyJobIds, error, metaByJob, rememberMeta],
   )
 
   return useMemo(
-    () => ({ cacheSessionArtifacts, downloadSessionZip, openSessionArtifact, statusFor }),
-    [cacheSessionArtifacts, downloadSessionZip, openSessionArtifact, statusFor],
+    () => ({ cacheJobArtifacts, downloadJobZip, openJobArtifact, statusFor }),
+    [cacheJobArtifacts, downloadJobZip, openJobArtifact, statusFor],
   )
 }

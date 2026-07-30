@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Session } from '../../types/session'
-import { resultImageVersion, workspaceFileUrl } from '../../utils/artifacts'
+import type { Job } from '../../types/job'
+import { resultImageVersion, artifactFileUrl } from '../../utils/artifacts'
 import { computeModuleOverlayBoxes, collectSelectableModules } from '../../utils/modules'
 import { selectResultImageCards } from '../../state/selectors'
 import type { ResultViewMode } from '../../state/app-state'
@@ -17,7 +17,7 @@ export function ResultImageComparison({
   onSelectModule,
   previewWidth,
   selectedModuleId,
-  session,
+  job,
   viewMode,
 }: {
   cacheMeta?: ArtifactCacheMeta | null
@@ -28,19 +28,19 @@ export function ResultImageComparison({
   onSelectModule: (moduleId: string) => void
   previewWidth: number
   selectedModuleId: string | null
-  session: Session | null
+  job: Job | null
   viewMode: ResultViewMode
 }) {
   const syncScroll = useSyncedScroll()
-  const sourceCards = useMemo(() => selectResultImageCards(session), [session])
-  const imageVersion = useMemo(() => resultImageVersion(session), [session])
+  const sourceCards = useMemo(() => selectResultImageCards(job), [job])
+  const imageVersion = useMemo(() => resultImageVersion(job), [job])
   const [cachedUrls, setCachedUrls] = useState<Record<string, string>>({})
   useEffect(() => {
     let cancelled = false
     const objectUrls: string[] = []
     const shouldUseCache = Boolean(
-      session?.id &&
-        session.__localOnly &&
+      job?.id &&
+        job.__localOnly &&
         cacheMeta?.status === 'cached' &&
         sourceCards.some((card) => card.path && cacheMeta.paths?.includes(card.path)),
     )
@@ -48,7 +48,7 @@ export function ResultImageComparison({
       setCachedUrls((previous) => (Object.keys(previous).length ? {} : previous))
       return () => {}
     }
-    void getCachedArtifactFiles(session!.id)
+    void getCachedArtifactFiles(job!.id)
       .then(async (records) => {
         const entries: Record<string, string> = {}
         for (const card of sourceCards) {
@@ -65,10 +65,10 @@ export function ResultImageComparison({
       cancelled = true
       objectUrls.forEach((url) => URL.revokeObjectURL(url))
     }
-  }, [cacheMeta?.status, cacheMeta?.paths, session, sourceCards])
+  }, [cacheMeta?.status, cacheMeta?.paths, job, sourceCards])
   const cards = sourceCards.map((card) => ({
     ...card,
-    url: cachedUrls[card.path] || workspaceFileUrl(card.path, session, imageVersion),
+    url: cachedUrls[card.path] || artifactFileUrl(card.path, job, imageVersion),
   }))
   const svgCard = cards.find((card) => card.kind === 'svg')
   const renderCard = cards.find((card) => card.kind === 'render')
@@ -76,20 +76,20 @@ export function ResultImageComparison({
   const boxes = useMemo(() => {
     if (!chatOpen) return []
     return computeModuleOverlayBoxes({
-      designHeight: Number(session?.result?.designHeight || 0),
-      designWidth: Number(session?.result?.designWidth || 0),
-      modules: collectSelectableModules(session),
+      designHeight: Number(job?.result?.designHeight || 0),
+      designWidth: Number(job?.result?.designWidth || 0),
+      modules: collectSelectableModules(job),
     })
   }, [
     chatOpen,
-    session?.result?.designHeight,
-    session?.result?.designWidth,
-    session?.result?.moduleAgentRuns,
-    session?.result?.moduleCount,
-    session?.result?.moduleFailedIds,
-    session?.result?.modulePlanModules,
-    session?.result?.moduleAgentThreadIds,
-    session?.messages,
+    job?.result?.designHeight,
+    job?.result?.designWidth,
+    job?.result?.moduleAgentRuns,
+    job?.result?.moduleCount,
+    job?.result?.moduleFailedIds,
+    job?.result?.modulePlanModules,
+    job?.result?.moduleAgentThreadIds,
+    job?.messages,
   ])
 
   if (!cards.length) return <div className="result-grid" />
