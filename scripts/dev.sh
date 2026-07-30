@@ -32,7 +32,8 @@ resolve_host_path() {
 
 prepare_config() {
   if [ ! -f "$ENV_FILE" ]; then
-    log "creating .env from .env.example"
+    log "creating $ENV_FILE from .env.example"
+    mkdir -p "$(dirname "$ENV_FILE")"
     cp "$ROOT_DIR/.env.example" "$ENV_FILE"
   fi
 

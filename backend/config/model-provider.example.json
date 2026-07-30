@@ -2,10 +2,9 @@
   "models": {
     "your-model": {
       "runtime": "opencode",
-      "wireApi": "anthropic/chat-completions/responses",
-      "provider": "your-provider",
+      "provider": "openai",
       "baseURL": "https://api.example.com/v1",
-      "apiKeyEnv": "YOUR_PROVIDER_API_KEY",
+      "apiKey": "your-api-key",
       "model": "your-model-id",
       "modalities": {
         "input": ["text", "image"],
