@@ -12,6 +12,7 @@ import {
 } from '../utils/artifact-cache'
 import { getJobCompareEntryPath, getJobRenderEntryPath, getJobSourceEntryPath, artifactFileUrl } from '../utils/artifacts'
 import { formatBytes } from '../utils/format'
+import { createIsolatedArtifactUrl } from '../utils/artifact-preview'
 import type { ArtifactCacheMeta } from '../utils/artifact-cache'
 
 export type ArtifactCacheStatus = {
@@ -22,7 +23,7 @@ export type ArtifactCacheStatus = {
 
 const isCached = (meta?: ArtifactCacheMeta | null) => meta?.status === 'cached'
 const isUsableCache = (job: Job, meta?: ArtifactCacheMeta | null) =>
-  isCached(meta) && (job.__localOnly || meta?.cacheKey === artifactCacheKeyForJob(job))
+  (job.__localOnly || job.accessMode === 'owner') && isCached(meta) && (job.__localOnly || meta?.cacheKey === artifactCacheKeyForJob(job))
 
 const openUrl = (url: string) => {
   const anchor = document.createElement('a')
@@ -50,6 +51,7 @@ export function useArtifactCache(onJobCached?: (job: Job, meta: ArtifactCacheMet
 
   const cacheJobArtifacts = useCallback(async (job: Job | null) => {
     if (!job?.id) return
+    if (job.accessMode !== 'owner') return
     setError(null)
     setBusyJobIds((previous) => new Set(previous).add(job.id))
     try {
@@ -84,7 +86,7 @@ export function useArtifactCache(onJobCached?: (job: Job, meta: ArtifactCacheMet
       try {
         const records = await getCachedArtifactFiles(job.id)
         if (records.length) {
-          openUrl(await createCachedArtifactObjectUrl(targetPath, records))
+          openUrl(createIsolatedArtifactUrl(await createCachedArtifactObjectUrl(targetPath, records)))
           rememberMeta(job.id, meta!)
           return
         }

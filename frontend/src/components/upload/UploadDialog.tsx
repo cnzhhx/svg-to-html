@@ -1,28 +1,54 @@
 import { useEffect, useMemo, useState } from 'react'
 import { uploadSvg } from '../../api/job-upload'
-import type { UploadResponse } from '../../api/job-upload'
+import type { UploadProgress, UploadResponse } from '../../api/job-upload'
+import { ApiError } from '../../api/http'
+import type { UploadQuota } from '../../types/runtime'
 import { STORAGE_KEYS, readNumberStorage, readStringStorage, writeStringStorage } from '../../utils/storage'
 
 export function UploadDialog({
+  adminMode,
+  quotaEnabled,
+  allowUserShowcase,
   onClose,
   initialFile,
   modelOptions,
+  maxSvgUploadBytes,
   onUploaded,
+  onQuotaChanged,
   open,
+  uploadQuota,
 }: {
+  adminMode: boolean
+  quotaEnabled: boolean
+  allowUserShowcase: boolean
   onClose: () => void
   initialFile: File | null
   modelOptions: string[]
+  maxSvgUploadBytes: number
   onUploaded: (response: UploadResponse) => void
+  onQuotaChanged: (quota: UploadQuota) => void
   open: boolean
+  uploadQuota: UploadQuota | null
 }) {
   const [file, setFile] = useState<File | null>(null)
   const [format, setFormat] = useState(readStringStorage(STORAGE_KEYS.uploadFormat, 'html') || 'html')
   const [model, setModel] = useState(readStringStorage(STORAGE_KEYS.uploadModel, ''))
   const [scale, setScale] = useState(() => (readNumberStorage(STORAGE_KEYS.uploadScale, 1) === 2 ? 2 : 1))
-  const [jobCountInput, setJobCountInput] = useState('1')
+  const [showcase, setShowcase] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null)
+  const maxSvgUploadLabel = `${Math.round(maxSvgUploadBytes / 1024 / 1024)} MB`
+
+  const selectFile = (nextFile: File | null) => {
+    if (nextFile && nextFile.size > maxSvgUploadBytes) {
+      setFile(null)
+      setError(`SVG 文件不能超过 ${maxSvgUploadLabel}`)
+      return
+    }
+    setFile(nextFile)
+    setError(null)
+  }
 
   useEffect(() => {
     writeStringStorage(STORAGE_KEYS.uploadFormat, format)
@@ -44,34 +70,45 @@ export function UploadDialog({
   }, [scale])
 
   useEffect(() => {
-    if (open && initialFile) setFile(initialFile)
+    if (!open) return
+    setShowcase(false)
+    setError(null)
+    if (initialFile) selectFile(initialFile)
   }, [initialFile, open])
 
-  const canSubmit = useMemo(() => Boolean(file && !busy), [busy, file])
+  const quotaAvailable = adminMode || !quotaEnabled || Number(uploadQuota?.remaining ?? 0) > 0
+  const canSubmit = useMemo(
+    () => Boolean(file && !busy && quotaAvailable),
+    [busy, file, quotaAvailable],
+  )
   if (!open) return null
 
   const submit = async () => {
     if (!file) return
+    if (file.size > maxSvgUploadBytes) {
+      setError(`SVG 文件不能超过 ${maxSvgUploadLabel}`)
+      return
+    }
     setBusy(true)
     setError(null)
+    setUploadProgress({ loaded: 0, percent: 0, phase: 'uploading', total: file.size })
     try {
-      const parsedJobCount = Number(jobCountInput)
-      const jobCount = Number.isFinite(parsedJobCount) && parsedJobCount > 0
-        ? Math.max(1, Math.min(20, Math.floor(parsedJobCount)))
-        : 1
       const response = await uploadSvg(file, {
         model: model.trim(),
         outputFormat: format,
         scale,
-        jobCount,
-      })
+        showcase: (adminMode || allowUserShowcase) && showcase,
+      }, setUploadProgress)
       onUploaded(response)
       setFile(null)
       onClose()
     } catch (caught) {
+      const quota = caught instanceof ApiError ? caught.payload.quota : null
+      if (quota && typeof quota === 'object') onQuotaChanged(quota as UploadQuota)
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setBusy(false)
+      setUploadProgress(null)
     }
   }
 
@@ -82,7 +119,7 @@ export function UploadDialog({
           <h3 className="upload-dialog-title">上传设计稿</h3>
           <div className="upload-dialog-field">
             <label className="upload-dialog-label" htmlFor="uploadScaleSelect">渲染预览倍率</label>
-            <select className="upload-dialog-select" id="uploadScaleSelect" value={scale} onChange={(event) => setScale(Number(event.target.value))}>
+            <select className="upload-dialog-select" disabled={busy} id="uploadScaleSelect" value={scale} onChange={(event) => setScale(Number(event.target.value))}>
               <option value={1}>1x — 按设计稿原始像素产出</option>
               <option value={2}>2x — 按设计稿 2x 像素产出</option>
             </select>
@@ -92,7 +129,7 @@ export function UploadDialog({
             <div className="upload-format-options">
               {['html', 'vue', 'react'].map((item) => (
                 <label className="upload-format-option" key={item}>
-                  <input checked={format === item} name="uploadFormat" onChange={() => setFormat(item)} type="radio" value={item} />
+                  <input checked={format === item} disabled={busy} name="uploadFormat" onChange={() => setFormat(item)} type="radio" value={item} />
                   <span>{item === 'html' ? 'HTML' : item === 'vue' ? 'Vue' : 'React'}</span>
                 </label>
               ))}
@@ -102,6 +139,7 @@ export function UploadDialog({
             <label className="upload-dialog-label" htmlFor="uploadModelSelect">模型配置 ID</label>
             <select
               className="upload-dialog-select"
+              disabled={busy}
               id="uploadModelSelect"
               onChange={(event) => setModel(event.target.value)}
               value={model}
@@ -112,28 +150,44 @@ export function UploadDialog({
             </select>
           </div>
           <div className="upload-dialog-field">
-            <label className="upload-dialog-label" htmlFor="uploadJobCount">并发 Job 数</label>
-            <input
-              className="upload-dialog-input"
-              id="uploadJobCount"
-              max={20}
-              min={1}
-              onChange={(event) => setJobCountInput(event.target.value)}
-              type="number"
-              value={jobCountInput}
-            />
-          </div>
-          <div className="upload-dialog-field">
             <label className="upload-dialog-label">选择文件</label>
-            <label className={`upload-dialog-file${file ? ' has-file' : ''}`}>
-              <input accept=".svg" onChange={(event) => setFile(event.target.files?.[0] || null)} type="file" />
+            <label className={`upload-dialog-file${file ? ' has-file' : ''}${busy ? ' is-disabled' : ''}`}>
+              <input accept=".svg" disabled={busy} onChange={(event) => selectFile(event.target.files?.[0] || null)} type="file" />
               <span>{file?.name || '点击选择 SVG 文件'}</span>
             </label>
+            <div className="upload-dialog-hint">
+              {adminMode
+                ? `单个 SVG 不超过 ${maxSvgUploadLabel} · 管理员上传不限次数`
+                : quotaEnabled ? `单个 SVG 不超过 ${maxSvgUploadLabel} · 今日剩余 ${uploadQuota?.remaining ?? 0} / ${uploadQuota?.limit ?? 5} 次`
+                  : `单个 SVG 不超过 ${maxSvgUploadLabel} · 不限上传次数`}
+            </div>
           </div>
+          {(adminMode || allowUserShowcase) && <div className="upload-dialog-field">
+            <label className="upload-dialog-check">
+              <input checked={showcase} disabled={busy} onChange={(event) => setShowcase(event.target.checked)} type="checkbox" />
+              <span>加入公开示例</span>
+            </label>
+          </div>}
+          {busy && uploadProgress ? (
+            <div className="upload-progress" aria-live="polite" role="status">
+              <div className="upload-progress-heading">
+                <span>{uploadProgress.phase === 'uploading' ? '正在上传 SVG' : '上传完成，正在创建任务'}</span>
+                <strong>{uploadProgress.percent}%</strong>
+              </div>
+              <div className="upload-progress-track" aria-hidden="true">
+                <span style={{ width: `${uploadProgress.percent}%` }} />
+              </div>
+              <div className="upload-progress-detail">
+                {uploadProgress.phase === 'uploading' ? '请保持当前页面打开' : '服务器正在保存文件并加入队列'}
+              </div>
+            </div>
+          ) : null}
           {error ? <div className="url-error">{error}</div> : null}
           <div className="upload-dialog-actions">
-            <button className="upload-dialog-cancel" onClick={onClose} type="button">取消</button>
-            <button className="upload-dialog-submit" disabled={!canSubmit} onClick={submit} type="button">{busy ? '上传中…' : '上传'}</button>
+            <button className="upload-dialog-cancel" disabled={busy} onClick={onClose} type="button">取消</button>
+            <button className="upload-dialog-submit" disabled={!canSubmit} onClick={submit} type="button">
+              {busy ? (uploadProgress?.phase === 'processing' ? '处理中…' : `上传 ${uploadProgress?.percent ?? 0}%`) : '上传'}
+            </button>
           </div>
         </div>
       </div>

@@ -59,7 +59,7 @@ export default defineConfig({
       return {
         '/transformer/api': {
           target: backendTarget,
-          changeOrigin: true,
+          changeOrigin: false,
         },
       }
     })(),

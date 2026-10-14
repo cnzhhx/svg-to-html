@@ -4,7 +4,9 @@ import { readFile } from 'node:fs/promises'
 
 import express from 'express'
 
-import { assertCoreAvailable, getCoreServiceUrl } from './core-service/client.js'
+import { initializeJobAccessStore } from './access/job-access.js'
+import { assertCoreAvailable } from './core-service/client.js'
+import { getGatewayStore } from './settings/gateway-store.js'
 import jobsRouter from './routes/jobs.js'
 import { getBackendConfig } from './config/index.js'
 
@@ -33,6 +35,10 @@ const INDEX_HTML_PATH = path.join(FRONTEND_PUBLIC_DIR, 'index.html')
 
 const app = express()
 
+// The gateway only listens on loopback. Trust the local reverse proxy so req.ip
+// resolves to the public client address instead of 127.0.0.1.
+app.set('trust proxy', 'loopback')
+
 const handleHealth = (_req: express.Request, res: express.Response) => {
   res.status(200).type('text/plain').send('ok')
 }
@@ -55,12 +61,14 @@ const serveIndexHtml = async (_req: express.Request, res: express.Response) => {
   const template = await readFile(INDEX_HTML_PATH, 'utf8')
   res
     .status(200)
+    .set('Cache-Control', 'no-store')
     .type('html')
     .send(template.replace('__BUILD_TIME__', BUILD_TIME))
 }
 
 router.get('/', serveIndexHtml)
 router.get('/index.html', serveIndexHtml)
+router.get(['/setup', '/login', '/admin/settings'], serveIndexHtml)
 router.get('/favicon.ico', (_req, res) => {
   res.status(204).end()
 })
@@ -71,7 +79,11 @@ router.use(express.static(FRONTEND_PUBLIC_DIR))
 app.use(BASE_PATH, router)
 
 const main = async () => {
-  await assertCoreAvailable()
+  await getGatewayStore().initialize()
+  await initializeJobAccessStore()
+  await assertCoreAvailable().catch(() => {
+    console.warn('Core is unavailable; administration remains accessible. Conversion requests require Core.')
+  })
 
   await new Promise<void>((resolve, reject) => {
     app.listen(PORT, '127.0.0.1', (error?: Error) => {
@@ -81,7 +93,7 @@ const main = async () => {
       }
       console.log(`Design-to-HTML gateway running at http://localhost:${PORT}${BASE_PATH || '/'}`)
       console.log(`Base Path: ${BASE_PATH || '(none)'}`)
-      console.log(`SVG Transform Core: ${getCoreServiceUrl()}`)
+      console.log(`SVG Transform Core configured: ${Boolean(getBackendConfig().core.serviceUrl)}`)
       console.log(`Platform: ${process.platform} ${os.release()}`)
       console.log(`Node: ${process.version}`)
       console.log(`Build Time: ${BUILD_TIME}`)

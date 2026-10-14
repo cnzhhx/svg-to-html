@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { loadJob, loadJobs, startJob, deleteJob } from './api/jobs'
+import { endAdminSession } from './api/admin'
 import type { JobEvent } from './types/events'
 import {
   hasPrimaryResults,
@@ -84,23 +85,31 @@ const immediateJobForSelection = (job: Job): Job =>
     : withoutLivePreviewFromSummary(job)
 
 const mergeJobIfNewerPreview = (current: Job | null, incoming: Job) => {
+  const nextIncoming = current?.id === incoming.id
+    ? {
+        ...incoming,
+        accessMode: incoming.accessMode ?? current.accessMode,
+        isShowcase: incoming.isShowcase ?? current.isShowcase,
+        capabilities: incoming.capabilities ?? current.capabilities,
+      }
+    : incoming
   if (current?.id !== incoming.id || !isLiveJobStatus(current.status) || !isLiveJobStatus(incoming.status)) {
-    return incoming
+    return nextIncoming
   }
   const currentPreviewVersion = jobLivePreviewVersion(current)
   const incomingPreviewVersion = jobLivePreviewVersion(incoming)
   if (currentPreviewVersion > incomingPreviewVersion) {
     return {
-      ...incoming,
+      ...nextIncoming,
       result: {
-        ...(incoming.result || {}),
+        ...(nextIncoming.result || {}),
         livePreviewEntryPath: current.result?.livePreviewEntryPath,
         livePreviewUpdatedAt: current.result?.livePreviewUpdatedAt,
         livePreviewVersion: current.result?.livePreviewVersion,
       },
     }
   }
-  return incoming
+  return nextIncoming
 }
 
 const sanitizeJobUpdateForPreview = (current: Job | null, data: Partial<Job> = {}) => {
@@ -126,16 +135,21 @@ const sanitizeJobUpdateForPreview = (current: Job | null, data: Partial<Job> = {
   }
 }
 
-export default function App() {
+export default function App({ initialError }: { initialError?: string }) {
   const [state, dispatch] = useReducer(appReducer, initialAppState)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [loadingJobId, setLoadingJobId] = useState<string | null>(null)
   const currentJobRef = useRef(state.currentJob)
   const currentJobIdRef = useRef(state.currentJobId)
   const autoCacheKeysRef = useRef<Map<string, string>>(new Map())
   const ownedJobIdsRef = useRef<Set<string>>(new Set())
   const jobDetailsRef = useRef<Map<string, Job>>(new Map())
+
+  useEffect(() => {
+    if (initialError) dispatch({ type: 'error/set', error: initialError })
+  }, [initialError])
 
   useEffect(() => {
     currentJobRef.current = state.currentJob
@@ -194,6 +208,7 @@ export default function App() {
   useEffect(() => {
     const job = state.currentJob
     if (!job?.id || job.__localOnly) return
+    if (job.accessMode !== 'owner') return
     if (!isJobOwnedByCurrentClient(job) && !ownedJobIdsRef.current.has(job.id)) return
     if (!hasPrimaryResults(job)) return
     const cacheKey = artifactCacheKeyForJob(job)
@@ -232,10 +247,18 @@ export default function App() {
               })
           : []
         const mergedJobs = [...jobs, ...restoredJobs]
+        for (const id of jobDetailsRef.current.keys()) if (!mergedJobs.some(job => job.id === id)) jobDetailsRef.current.delete(id)
+        if (currentJobIdRef.current && !mergedJobs.some(job => job.id === currentJobIdRef.current)) {
+          currentJobIdRef.current = null
+          currentJobRef.current = null
+          setLightboxSrc(null)
+          updateUrlJob(null)
+        }
         saveServerJobsToLocal(mergedJobs)
         dispatch({ type: 'jobs/loaded', jobs: mergedJobs })
         const targetId = getUrlJobId() || mergedJobs[0]?.id || null
         if (targetId && !currentJobIdRef.current) {
+          setLoadingJobId(targetId)
           try {
             const restored = restoredJobs.find((job) => job.id === targetId)
             const job = restored || await loadJob(targetId)
@@ -246,7 +269,7 @@ export default function App() {
               updateUrlJob(job.id)
             }
           } catch {
-            const snapshot = getLocalJobSnapshot(targetId)
+            const snapshot = enableLocalJobStorage ? getLocalJobSnapshot(targetId) : null
             const restored = snapshot ? reviveLocalJobSnapshot(snapshot, 'server-reset') : null
             if (!cancelled && !currentJobIdRef.current) {
               if (restored) {
@@ -257,6 +280,8 @@ export default function App() {
                 dispatch({ type: 'job/selected', job: null, jobId: null })
               }
             }
+          } finally {
+            if (!cancelled) setLoadingJobId((current) => current === targetId ? null : current)
           }
         }
       })
@@ -272,25 +297,29 @@ export default function App() {
     if (!state.runtime) return undefined
     if (!hasLiveJobSummaries) return undefined
     let cancelled = false
-    const refreshJobs = () => {
-      loadJobs()
-        .then((jobs) => {
-          if (!cancelled) dispatch({ type: 'jobs/refreshed', jobs })
-        })
-        .catch(() => {})
+    const controller = new AbortController()
+    let timer: number | undefined
+    const refreshJobs = async () => {
+      try {
+        const jobs = await loadJobs(controller.signal)
+        if (!cancelled) dispatch({ type: 'jobs/refreshed', jobs })
+      } catch { /* Retry on the next poll. */ }
+      finally {
+        if (!cancelled) timer = window.setTimeout(refreshJobs, 2000)
+      }
     }
-    refreshJobs()
-    const timer = window.setInterval(refreshJobs, 2000)
+    timer = window.setTimeout(refreshJobs, 2000)
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      controller.abort()
+      window.clearTimeout(timer)
     }
   }, [hasLiveJobSummaries, state.runtime])
 
   const handleJobEvent = useCallback((event: JobEvent) => {
     const eventJobId = event.type === 'init' ? event.job.id : event.jobId
     const currentJobId = currentJobIdRef.current
-    if (currentJobId && eventJobId !== currentJobId) return
+    if (!currentJobId || eventJobId !== currentJobId) return
     const currentJob = currentJobRef.current
     switch (event.type) {
       case 'init': {
@@ -404,10 +433,12 @@ export default function App() {
 
   const selectJob = (id: string) => {
     if (!id || id === currentJobIdRef.current) return
+    setLoadingJobId(id)
+    setError(null)
     const previousJobId = currentJobIdRef.current
     const previousJob = currentJobRef.current
     currentJobIdRef.current = id
-    const snapshot = getLocalJobSnapshot(id)
+    const snapshot = state.runtime?.enableJobLocalStorage ? getLocalJobSnapshot(id) : null
     const localOnly = state.jobs.find((job) => job.id === id)?.__localOnly
     if (localOnly && snapshot) {
       const restored = reviveLocalJobSnapshot(snapshot, 'server-reset')!
@@ -416,6 +447,7 @@ export default function App() {
       currentJobIdRef.current = restored.id
       dispatch({ type: 'job/selected', job: restored, jobId: restored.id })
       updateUrlJob(restored.id)
+      setLoadingJobId(null)
       return
     }
 
@@ -461,6 +493,9 @@ export default function App() {
         }
         setError(error instanceof Error ? error.message : String(error))
       })
+      .finally(() => {
+        setLoadingJobId((current) => current === id ? null : current)
+      })
   }
 
   const startCurrentJob = async () => {
@@ -490,6 +525,15 @@ export default function App() {
     }
   }
 
+  const exitAdminMode = async () => {
+    try {
+      await endAdminSession()
+      window.location.reload()
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const toggleTheme = () => {
     const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'
     if (current === 'light') document.documentElement.setAttribute('data-theme', 'light')
@@ -512,19 +556,23 @@ export default function App() {
   }, [])
 
   const cacheStatus = artifactCache.statusFor(state.currentJob)
+  const showcaseReadOnly = !state.currentJob?.capabilities?.canWrite
+  const chatDisabled = Boolean(state.runtime?.jobChatDisabled || showcaseReadOnly)
   const showResults = hasPrimaryResults(state.currentJob)
   const showRunningWorkspace = Boolean(
     state.currentJob &&
       !showResults &&
-      (state.currentJob.status === 'running' || state.currentJob.status === 'queued'),
+      state.currentJob.status === 'running',
   )
 
   const main = (
     <>
       <Toolbar
-        chatDisabled={Boolean(state.runtime?.jobChatDisabled)}
+        chatDisabled={chatDisabled}
         chatOpen={state.chatOpen}
-        deleteDisabled={Boolean(state.runtime?.jobDeleteDisabled)}
+        deleteDisabled={Boolean(
+          state.runtime?.jobDeleteDisabled || !state.currentJob?.capabilities?.canDelete,
+        )}
         onDelete={deleteCurrentJob}
         onExpandSidebar={() => setSidebarCollapsed(false)}
         onToggleChat={() => dispatch({ type: 'chat/toggle' })}
@@ -534,8 +582,14 @@ export default function App() {
         sidebarCollapsed={sidebarCollapsed}
       />
       <div className="content-area">
-        {state.error ? <div className="url-error app-error">{state.error}</div> : null}
-        {state.currentJob && state.currentJob.status === 'draft' ? (
+        {loadingJobId ? (
+          <div className="job-loading-overlay" aria-live="polite" role="status">
+            <span className="loading-spinner" aria-hidden="true" />
+            <strong>正在加载任务</strong>
+            <span>{state.jobs.find((job) => job.id === loadingJobId)?.designName || loadingJobId}</span>
+          </div>
+        ) : null}
+        {state.currentJob && state.currentJob.status === 'draft' && !showcaseReadOnly ? (
           <div className="workflow-panel visible">
             <button className="upload-dialog-submit" onClick={startCurrentJob} type="button">开始生成</button>
           </div>
@@ -543,7 +597,7 @@ export default function App() {
         {showRunningWorkspace ? (
           <RunningWorkspace
             agentEvents={state.agentEvents}
-            chatDisabled={Boolean(state.runtime?.jobChatDisabled)}
+            chatDisabled={chatDisabled}
             chatFilterModuleId={state.chatFilterModuleId}
             onFilterModule={(moduleId) => dispatch({ type: 'chat/filter', moduleId })}
             onMessageQueued={upsertQueuedMessage}
@@ -584,7 +638,7 @@ export default function App() {
             <ChatDrawer
               agentEvents={state.agentEvents}
               chatFilterModuleId={state.chatFilterModuleId}
-              disabled={Boolean(state.runtime?.jobChatDisabled)}
+              disabled={chatDisabled}
               onClose={() => dispatch({ type: 'chat/toggle', open: false })}
               onFilterModule={(moduleId) => dispatch({ type: 'chat/filter', moduleId })}
               onMessageQueued={upsertQueuedMessage}
@@ -598,27 +652,42 @@ export default function App() {
         main={main}
         sidebar={
           <Sidebar
+            adminMode={Boolean(state.runtime?.adminMode)}
+            quotaEnabled={state.runtime?.quotaEnabled !== false}
+            initialized={Boolean(state.runtime?.initialized)}
             currentJobId={state.currentJobId}
             onCollapse={() => setSidebarCollapsed(true)}
             onOpenUpload={() => {
               setUploadFile(null)
               dispatch({ type: 'upload/open', open: true })
             }}
+            onExitAdmin={exitAdminMode}
             onUploadFile={(file) => {
               setUploadFile(file)
               dispatch({ type: 'upload/open', open: true })
             }}
             onSelectJob={selectJob}
             jobs={state.jobs}
+            uploadQuota={state.runtime?.uploadQuota || null}
           />
         }
         sidebarCollapsed={sidebarCollapsed}
       />
       <UploadDialog
+        adminMode={Boolean(state.runtime?.adminMode)}
+        quotaEnabled={state.runtime?.quotaEnabled !== false}
+        allowUserShowcase={Boolean(state.runtime?.allowUserShowcase)}
         initialFile={uploadFile}
+        maxSvgUploadBytes={state.runtime?.maxSvgUploadBytes || 50 * 1024 * 1024}
         modelOptions={state.runtime?.modelOptions || []}
         onClose={() => dispatch({ type: 'upload/open', open: false })}
+        onQuotaChanged={(uploadQuota) => {
+          if (state.runtime) runtimeLoaded({ ...state.runtime, uploadQuota })
+        }}
         onUploaded={(response) => {
+          if (state.runtime && response.quota) {
+            runtimeLoaded({ ...state.runtime, uploadQuota: response.quota })
+          }
           const uploaded = (response.jobs || (response.job ? [response.job] : [])).map((job) => {
             return markGeneratedJob(job)
           })
@@ -641,6 +710,7 @@ export default function App() {
           ).catch((error) => setError(error instanceof Error ? error.message : String(error)))
         }}
         open={state.uploadDialogOpen}
+        uploadQuota={state.runtime?.uploadQuota || null}
       />
       <Lightbox onClose={() => setLightboxSrc(null)} src={lightboxSrc} />
     </>

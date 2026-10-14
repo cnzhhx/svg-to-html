@@ -1,0 +1,66 @@
+body:has(.admin-page) { overflow: auto; height: auto; min-height: 100vh; }
+.admin-page { max-width: 1000px; margin: 0 auto; padding: 30px 28px 48px; color: var(--ink); font-size: 14px; line-height: 1.6; }
+.admin-auth-page { max-width: 820px; }
+.admin-page a { color: var(--accent); text-decoration: none; }
+.admin-header { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 46px; }
+.admin-header .admin-brand { color: var(--ink); font-size: 20px; font-weight: 750; letter-spacing: -.5px; }
+.admin-brand span { color: var(--accent); }
+.admin-eyebrow { color: var(--accent); font-size: 11px; letter-spacing: .2em; font-weight: 700; }
+.admin-heading { margin-bottom: 28px; }
+.admin-heading h1 { margin: 8px 0; font-size: 32px; letter-spacing: -.8px; }
+.admin-heading p, .settings-card p { color: var(--ink-2); }
+.admin-page fieldset { min-width: 0; border: 0; }
+.settings-card { border: 1px solid var(--border-strong); background: var(--surface); border-radius: 16px; padding: 25px; margin-bottom: 18px; }
+.settings-card h2 { font-size: 17px; margin-bottom: 5px; }
+.settings-card > p { margin-bottom: 20px; }
+.admin-page small { display: block; color: var(--ink-3); font-size: 12px; margin-top: 6px; }
+.setting-toggle { display: flex; justify-content: space-between; align-items: center; gap: 22px; cursor: pointer; padding: 5px 0 12px; }
+.setting-toggle strong { font-size: 14px; font-weight: 600; }
+.setting-toggle input { flex: 0 0 auto; appearance: none; width: 42px; height: 24px; border-radius: 20px; background: var(--surface-3); border: 1px solid var(--border-strong); cursor: pointer; }
+.setting-toggle input::before { content: ''; display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--ink-3); margin: 3px; transition: transform .15s; }
+.setting-toggle input:checked { background: var(--accent-strong); }
+.setting-toggle input:checked::before { background: white; transform: translateX(17px); }
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin: 16px 0 10px; }
+.settings-grid label, .auth-fields label { display: flex; flex-direction: column; gap: 8px; color: var(--ink-2); }
+.admin-page input:not([type=checkbox]) { width: 100%; background: var(--bg); color: var(--ink); border: 1px solid var(--border-strong); border-radius: 9px; padding: 11px 12px; font: inherit; }
+.admin-page button { border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--ink); padding: 10px 17px; border-radius: 9px; cursor: pointer; }
+.admin-page button:disabled, .admin-page input:disabled { opacity: .5; cursor: not-allowed; }
+.admin-page .admin-primary { background: var(--accent-strong); color: #03111b; border-color: transparent; font-weight: 700; }
+.settings-tabs { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; border-right: 1px solid var(--border); padding: 28px 18px; }
+.settings-tabs button { text-align: left; }
+.settings-tabs button { background: transparent; border-color: transparent; color: var(--ink-2); }
+.settings-tabs button[aria-current] { background: var(--accent-dim); color: var(--accent); }
+.settings-savebar { margin-bottom: 18px; border: 1px solid var(--border-strong); background: var(--surface-2); border-radius: 12px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.settings-savebar > span { color: var(--ink-2); }
+.settings-savebar > div { display: flex; gap: 10px; }
+.settings-notice, .settings-error, .settings-success { padding: 13px 16px; border-radius: 10px; margin: 12px 0 18px; }
+.settings-notice { background: var(--warn-dim); color: var(--warn); }
+.settings-error { background: var(--bad-dim); color: var(--bad); }
+.settings-success { background: var(--good-dim); color: var(--good); }
+.auth-fields { display: grid; gap: 19px; }
+.auth-submit { width: 100%; margin: 4px 0 16px; }
+.auth-links { display: flex; justify-content: center; flex-wrap: wrap; align-items: center; gap: 14px; }
+.auth-links button { background: transparent; border: 0; color: var(--accent); padding: 5px; }
+.showcase-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 0; border-top: 1px solid var(--border); }
+.showcase-row > div { min-width: 0; overflow-wrap: anywhere; }
+.showcase-row button { flex-shrink: 0; }
+.admin-page .admin-logout { margin-top: 20px; }
+.admin-footer { color: var(--ink-3); margin-top: 40px; text-align: center; font-size: 12px; }
+.admin-page code { color: var(--ink-2); overflow-wrap: anywhere; }
+.sidebar-admin-link { display: block; margin-top: auto; padding: 16px; text-align: center; color: var(--ink-3); text-decoration: none; font-size: 12px; }
+@media (max-width: 600px) { .admin-page { padding: 22px 16px; } .admin-header { margin-bottom: 30px; font-size: 12px; } .admin-heading h1 { font-size: 26px; } .settings-card { padding: 20px 17px; } .settings-grid { grid-template-columns: 1fr; gap: 16px; } .settings-savebar { flex-wrap: wrap; padding: 12px; } .settings-savebar > div { width: 100%; justify-content: flex-end; } }
+body:has(.admin-settings-page) { overflow: hidden; height: 100dvh; min-height: 0; }
+.admin-settings-page { display: grid; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); width: 100%; max-width: none; height: 100dvh; margin: 0; padding: 0; }
+.admin-settings-page .admin-header { grid-column: 1 / -1; margin: 0; padding: 22px 28px; border-bottom: 1px solid var(--border); }
+.admin-settings-page .admin-content { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: 28px clamp(20px, 4vw, 64px) 48px; }
+.admin-settings-page .admin-content > * { max-width: 1000px; margin-left: auto; margin-right: auto; }
+@media (max-width: 600px) {
+  .admin-settings-page { grid-template-columns: 108px minmax(0, 1fr); }
+  .admin-settings-page .admin-header { padding: 16px; gap: 10px; }
+  .admin-settings-page .admin-brand { font-size: 17px; }
+  .settings-tabs { padding: 18px 6px; }
+  .settings-tabs button { padding: 10px 7px; font-size: 12px; }
+  .admin-settings-page .admin-content { padding: 18px 12px 32px; }
+  .admin-settings-page .settings-card { padding: 16px 12px; }
+  .admin-settings-page .settings-savebar > div { flex-wrap: wrap; }
+}

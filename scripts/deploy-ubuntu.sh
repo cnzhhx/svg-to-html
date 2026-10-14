@@ -133,6 +133,27 @@ load_config() {
   export SVG_TRANSFORM_CORE_MODEL_CONFIG="$MODEL_CONFIG"
 }
 
+prepare_access_state() {
+  local default_state_path="$ROOT_DIR/workspace/gateway/access-state.json"
+  ACCESS_STATE_PATH="$(resolve_host_path "${SVG_TO_HTML_ACCESS_STATE_PATH:-$default_state_path}")"
+  local access_state_dir
+  access_state_dir="$(dirname "$ACCESS_STATE_PATH")"
+
+  if [ ! -d "$access_state_dir" ]; then
+    install -d -m 750 -o "$SERVICE_USER" -g "$CONFIG_GROUP" "$access_state_dir"
+  elif [ "$access_state_dir" = "$(dirname "$default_state_path")" ]; then
+    chown "$SERVICE_USER:$CONFIG_GROUP" "$access_state_dir"
+    chmod 750 "$access_state_dir"
+  fi
+  if [ -f "$ACCESS_STATE_PATH" ]; then
+    chown "$SERVICE_USER:$CONFIG_GROUP" "$ACCESS_STATE_PATH"
+    chmod 600 "$ACCESS_STATE_PATH"
+  fi
+  runuser -u "$SERVICE_USER" -g "$CONFIG_GROUP" -- test -w "$access_state_dir" \
+    || fail "service user $SERVICE_USER cannot write access state directory: $access_state_dir"
+  export SVG_TO_HTML_ACCESS_STATE_PATH="$ACCESS_STATE_PATH"
+}
+
 build_project() {
   cd "$ROOT_DIR"
   pnpm install --frozen-lockfile
@@ -162,6 +183,7 @@ SupplementaryGroups=$CONFIG_GROUP
 WorkingDirectory=$ROOT_DIR/backend
 EnvironmentFile=$ENV_FILE
 Environment="SVG_TRANSFORM_CORE_MODEL_CONFIG=$MODEL_CONFIG"
+Environment="SVG_TO_HTML_ACCESS_STATE_PATH=$ACCESS_STATE_PATH"
 ExecStart=$pnpm_bin start
 Restart=on-failure
 RestartSec=3
@@ -184,7 +206,16 @@ server {
     listen [::]:80 default_server;
     server_name _;
 
-    client_max_body_size 55m;
+    # Multipart adds a small envelope; the gateway enforces a strict 50 MB SVG limit.
+    client_max_body_size 51m;
+
+    # SVG files are text, so compress them when a client needs the original asset.
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_min_length 1024;
+    gzip_comp_level 4;
+    gzip_types image/svg+xml application/json application/javascript text/css;
 
     location = / {
         return 302 /transformer/;
@@ -235,6 +266,7 @@ main() {
   install_packages
   validate_nginx_default_site
   load_config
+  prepare_access_state
   build_project
   start_core
   install_gateway_service

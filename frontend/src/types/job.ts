@@ -93,6 +93,17 @@ export type JobResult = Record<string, unknown> & {
   uncachedInputTokens?: number
 }
 
+export type JobQueueDetails = {
+  estimatedStartAt: number
+  estimatedTaskMinutes: number
+  estimatedWaitMinutes: number
+  maxConcurrentJobs: number
+  queuePosition: number
+  queuedAhead: number
+  runningJobs: number
+  totalQueued: number
+}
+
 export type Region = {
   x?: number
   y?: number
@@ -119,6 +130,8 @@ export type ModulePlanModule = {
 }
 
 export type Job = {
+  accessMode?: 'admin' | 'owner' | 'showcase' | 'shared'
+  capabilities?: { canWrite: boolean; canDelete: boolean }
   id: string
   designName: string
   queuedAt?: number
@@ -131,6 +144,7 @@ export type Job = {
   artifactDir?: string
   outputFormat: OutputFormat
   outputTarget?: JobOutputTarget
+  queue?: JobQueueDetails
   status: JobStatus
   activeStep: PipelineStep | null
   steps: Record<PipelineStep, StepState>
@@ -144,6 +158,7 @@ export type Job = {
   updatedAt: number
   __localOnly?: boolean
   __summary?: boolean
+  isShowcase?: boolean
   localOwnerId?: string
 }
 

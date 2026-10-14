@@ -119,6 +119,7 @@ export function ResultPanel({
         {renderEntryPath ? <button className="link-btn" onClick={() => onOpenArtifact('render')} type="button">{sourceEntryPath === renderEntryPath ? '打开源码/渲染预览' : '打开渲染预览'}</button> : null}
         {job?.id ? <button className="link-btn download-btn" onClick={onDownloadZip} type="button">下载 ZIP</button> : null}
       </div>
+      <p className="muted">网页预览不运行生成文件中的脚本；完整交互请下载 ZIP 后在本地运行。</p>
     </section>
   )
 }
