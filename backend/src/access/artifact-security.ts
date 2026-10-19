@@ -10,7 +10,7 @@ export function isSafeJobId(value: string) {
   return isSafeArtifactPath(value) && !value.includes("/");
 }
 
-// Preserve the origin only for authenticated image/style subresources. Never
-// allow scripts: generated HTML/SVG is untrusted, including the admin's output.
-// Downloads retain their original bytes for running full interactions locally.
-export const ARTIFACT_CSP = "sandbox allow-same-origin; script-src 'none'; connect-src 'none'; form-action 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'";
+// Allow bundled framework code and live-preview fitting to run. Same-origin
+// scripts are trusted here; this policy is not an isolation boundary from the
+// application. Keep direct network connections, forms, workers and plugins off.
+export const ARTIFACT_CSP = "sandbox allow-same-origin allow-scripts; script-src 'self' 'unsafe-inline' blob:; connect-src 'none'; form-action 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'";

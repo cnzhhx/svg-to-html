@@ -10,7 +10,7 @@ import { listen, closeServer } from "./helpers/mock-core.js";
 import { ARTIFACT_CSP } from "../src/access/artifact-security.js";
 import { createIsolatedArtifactUrl } from "../../frontend/src/utils/artifact-preview.js";
 
-test("artifact boundaries reject traversal and isolate generated documents", async t => {
+test("artifact boundaries reject traversal and allow preview scripts with connection restrictions", async t => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "artifact-security-"));
   const coreRequests: string[] = [];
   const attack = `<!doctype html><html><body><h1>Preview</h1>
@@ -24,6 +24,12 @@ test("artifact boundaries reject traversal and isolate generated documents", asy
       fetch('/transformer/api/jobs/owned/start', {method:'POST', credentials:'include', mode:'no-cors'})
         .then(()=>window.probe.write=true).catch(()=>window.probe.writeBlocked=true)
     ]).finally(()=>window.probe.done=true);
+    </script>
+    <div id="design" style="width:750px;height:1624px;transform-origin:0 0"></div>
+    <script type="module">
+      document.body.dataset.moduleReady = 'true';
+      const fit = () => document.querySelector('#design').style.transform = 'scale(' + innerWidth / 750 + ')';
+      addEventListener('resize', fit); fit();
     </script></body></html>`;
   const core = createServer((req, res) => {
     coreRequests.push(req.url!);
@@ -98,14 +104,13 @@ test("artifact boundaries reject traversal and isolate generated documents", asy
     const url = createIsolatedArtifactUrl("blob:https://example.com/test");
     try {
       const html = await (await fetch(url)).text();
-      assert.match(html, /sandbox="allow-same-origin"/);
-      assert.doesNotMatch(html, /allow-scripts/);
-      assert.match(html, /script-src 'none'/);
+      assert.match(html, /sandbox="allow-same-origin allow-scripts"/);
+      assert.match(html, /script-src 'self' 'unsafe-inline' blob:/);
       assert.match(html, /connect-src 'none'/);
       assert.throws(() => createIsolatedArtifactUrl("javascript:alert(1)"));
     } finally { URL.revokeObjectURL(url); }
   });
-  await t.test("browser blocks online and cached artifact access to the signed-in gateway", {
+  await t.test("online and cached preview scripts run and resize while direct API fetches stay blocked", {
     skip: !process.env.ARTIFACT_TEST_PLAYWRIGHT_PATH,
   }, async () => {
     const { chromium } = await import(pathToFileURL(process.env.ARTIFACT_TEST_PLAYWRIGHT_PATH!).href);
@@ -121,9 +126,18 @@ test("artifact boundaries reject traversal and isolate generated documents", asy
       page.setDefaultTimeout(10_000);
       const assertProbe = async (frame: any) => {
         assert.equal(await frame.locator("h1").textContent(), "Preview");
-        assert.equal(await frame.evaluate(() => (window as any).probe), undefined);
+        await frame.waitForFunction(() => (window as any).probe?.done && document.body.dataset.moduleReady === 'true');
+        const probe = await frame.evaluate(() => (window as any).probe);
+        assert.equal(probe.ran, true);
+        assert.equal(probe.readBlocked, true);
+        assert.equal(probe.writeBlocked, true);
+        assert.equal(probe.read, undefined);
+        assert.equal(probe.write, undefined);
+        await frame.waitForFunction(() => Math.abs(document.querySelector('#design')!.getBoundingClientRect().width - innerWidth) < 1);
       };
       await page.goto(origin + "/transformer/api/jobs/owned/files/result.html");
+      await assertProbe(page);
+      await page.setViewportSize({ width: 388, height: 840 });
       await assertProbe(page);
       await page.waitForFunction(() => (document.querySelector("#sample") as HTMLImageElement)?.naturalWidth === 20);
       await page.goto(origin + "/transformer/test-host");
@@ -139,6 +153,8 @@ test("artifact boundaries reject traversal and isolate generated documents", asy
       await cachedPage.waitForSelector("iframe");
       const frame = cachedPage.frames().find((f: any) => f !== cachedPage.mainFrame());
       assert.ok(frame); await assertProbe(frame);
+      await cachedPage.setViewportSize({ width: 388, height: 840 });
+      await assertProbe(frame);
       assert.equal(coreRequests.some(p => p.endsWith("/start")), false);
       await context.close();
     } finally { await browser.close(); }

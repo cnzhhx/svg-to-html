@@ -96,9 +96,9 @@ pnpm publish:app
 
 ## Verification
 
-Online HTML/SVG previews and browser-cached previews use a static sandbox: generated scripts, form submissions, and API calls are disabled. Images and styles remain available. JavaScript-dependent Vue/React output may only show static content; use the result screenshots for visual comparison and download the ZIP to run full interactions locally. Downloaded files are unchanged.
+Online HTML/SVG and browser-cached previews allow inline, same-origin, and Blob scripts for live-preview fitting and bundled Vue/React rendering. CSP still blocks direct network connections, form submissions, workers, and plugins; external scripts are not allowed. Previews retain the application origin, so this policy does not isolate them from administrator privileges: generated scripts must be treated as trusted code. Downloaded files are unchanged.
 
-Job write endpoints require `X-Requested-With: svg-to-html`; a browser-supplied `Origin` must match the gateway origin. Reverse proxies must preserve the public Host and protocol. Do not weaken script restrictions on artifact responses.
+Job write endpoints require `X-Requested-With: svg-to-html`; a browser-supplied `Origin` must match the gateway origin. Reverse proxies must preserve the public Host and protocol. These checks do not prevent same-origin preview scripts from using the current user's privileges.
 
 ```bash
 pnpm test

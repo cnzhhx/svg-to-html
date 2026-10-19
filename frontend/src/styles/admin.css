@@ -25,7 +25,7 @@ body:has(.admin-page) { overflow: auto; height: auto; min-height: 100vh; }
 .admin-page input:not([type=checkbox]) { width: 100%; background: var(--bg); color: var(--ink); border: 1px solid var(--border-strong); border-radius: 9px; padding: 11px 12px; font: inherit; }
 .admin-page button { border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--ink); padding: 10px 17px; border-radius: 9px; cursor: pointer; }
 .admin-page button:disabled, .admin-page input:disabled { opacity: .5; cursor: not-allowed; }
-.admin-page .admin-primary { background: var(--accent-strong); color: #03111b; border-color: transparent; font-weight: 700; }
+.admin-page .admin-primary { background: var(--accent-strong); color: var(--on-accent); border-color: transparent; font-weight: 700; }
 .settings-tabs { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; border-right: 1px solid var(--border); padding: 28px 18px; }
 .settings-tabs button { text-align: left; }
 .settings-tabs button { background: transparent; border-color: transparent; color: var(--ink-2); }

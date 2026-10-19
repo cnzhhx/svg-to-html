@@ -76,6 +76,7 @@ button:active:not(:disabled),
   --ink-3: #7c8aa5;
   --accent: #38bdf8;
   --accent-strong: #0ea5e9;
+  --on-accent: #02131b;
   --accent-dim: rgba(56, 189, 248, 0.14);
   --good: #34d399;
   --good-dim: rgba(52, 211, 153, 0.12);
@@ -498,7 +499,7 @@ body {
   border: 0;
   border-radius: var(--radius-sm);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font: inherit;
   font-size: 13px;
   font-weight: 500;
@@ -2042,7 +2043,7 @@ body {
   border-radius: 11px;
   border: none;
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-  color: #02131b;
+  color: var(--on-accent);
   font: inherit;
   font-size: 13px;
   font-weight: 700;
@@ -2548,6 +2549,7 @@ body {
   --ink-3: #94a3b8;
   --accent: #0284c7;
   --accent-strong: #0369a1;
+  --on-accent: #fff;
   --accent-dim: rgba(2, 132, 199, 0.1);
   --good: #059669;
   --good-dim: rgba(5, 150, 105, 0.08);
@@ -2615,10 +2617,6 @@ body {
       rgba(255, 255, 255, 0.5) 12px,
       rgba(255, 255, 255, 0.5) 24px
     );
-}
-
-[data-theme="light"] .send-btn {
-  color: #fff;
 }
 
 [data-theme="light"] .icon-btn {
