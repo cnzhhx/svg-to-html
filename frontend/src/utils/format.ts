@@ -15,7 +15,8 @@ function labelForStatus(status?: string) {
 
 export function labelForJobStatus(job?: Job | null) {
   const base = labelForStatus(job?.status)
-  return job?.__localOnly ? `${base} · 本地记录` : base
+  const quality = job?.status === 'completed' && job.result?.quality?.status === 'partial' ? ' · 部分达标' : ''
+  return `${base}${quality}${job?.__localOnly ? ' · 本地记录' : ''}`
 }
 
 export function labelForOutputFormat(format?: string) {
@@ -23,6 +24,7 @@ export function labelForOutputFormat(format?: string) {
     html: 'HTML',
     react: 'React',
     vue: 'Vue',
+    flutter: 'Flutter',
   }
   return labels[String(format || '')] || format || '未知格式'
 }

@@ -615,7 +615,7 @@ export default function App({ initialError }: { initialError?: string }) {
           chatOpen={state.chatOpen}
           comparePosition={state.resultComparePosition}
           onComparePositionChange={(value) => dispatch({ type: 'result/compare-position', value })}
-          onDownloadZip={() => artifactCache.downloadJobZip(state.currentJob)}
+          onDownloadZip={(kind) => artifactCache.downloadJobZip(state.currentJob, kind)}
           onOpenArtifact={(kind) => artifactCache.openJobArtifact(state.currentJob, kind)}
           onOpenLightbox={setLightboxSrc}
           onPreviewWidthChange={(value) => dispatch({ type: 'result/preview-width', value })}
@@ -680,6 +680,7 @@ export default function App({ initialError }: { initialError?: string }) {
         initialFile={uploadFile}
         maxSvgUploadBytes={state.runtime?.maxSvgUploadBytes || 50 * 1024 * 1024}
         modelOptions={state.runtime?.modelOptions || []}
+        outputFormats={state.runtime?.outputFormats}
         onClose={() => dispatch({ type: 'upload/open', open: false })}
         onQuotaChanged={(uploadQuota) => {
           if (state.runtime) runtimeLoaded({ ...state.runtime, uploadQuota })

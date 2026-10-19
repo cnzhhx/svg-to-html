@@ -26,7 +26,8 @@
     "doctor": "pnpm -C backend run doctor",
     "lint:frontend": "pnpm -C frontend run lint:types",
     "lint:types": "pnpm -C backend run lint:types",
-    "test": "pnpm test:publish && pnpm -C backend test",
+    "test": "pnpm test:publish && pnpm test:core && pnpm -C backend test",
+    "test:core": "node --test scripts/tests/core-docker.test.mjs",
     "test:publish": "node --test scripts/tests/publish.test.mjs",
     "publish:toc": "node scripts/publish.mjs"
   },

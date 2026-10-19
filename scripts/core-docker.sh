@@ -12,7 +12,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 CONTAINER_NAME="${SVG_TRANSFORM_CORE_CONTAINER:-svg-transform-core}"
-IMAGE_NAME="${SVG_TRANSFORM_CORE_IMAGE:-ghcr.io/cnzhhx/svg-transform-core:latest}"
+IMAGE_NAME="${SVG_TRANSFORM_CORE_IMAGE:-ghcr.io/cnzhhx/svg-transform-core:0.2.2}"
 PORT="${SVG_TRANSFORM_CORE_PORT:-}"
 WORKSPACE_DIR="${SVG_TRANSFORM_CORE_WORKSPACE:-$ROOT_DIR/workspace/core}"
 MODEL_CONFIG="${SVG_TRANSFORM_CORE_MODEL_CONFIG:-$ROOT_DIR/backend/config/model-provider.json}"
@@ -58,7 +58,7 @@ spec_hash() {
     env_file_hash="$(cksum <"$CORE_ENV_FILE" | awk '{print $1}')"
   fi
   # Bump the leading version when docker run flags change so old containers get recreated.
-  printf '%s\n' "7|$IMAGE_NAME|$CORE_PORT|$WORKSPACE_DIR|$MODEL_CONFIG|$CORE_ENV_FILE|$env_file_hash|${MAX_CONCURRENT_AGENTS:-}|${MAX_PARALLEL_MODULE_AGENTS:-}" | cksum | awk '{print $1}'
+  printf '%s\n' "8|$IMAGE_NAME|$CORE_PORT|$WORKSPACE_DIR|$MODEL_CONFIG|$MODEL_CONFIG_GID|$CORE_ENV_FILE|$env_file_hash|${MAX_CONCURRENT_AGENTS:-}|${MAX_PARALLEL_MODULE_AGENTS:-}" | cksum | awk '{print $1}'
 }
 
 health_url() {
@@ -102,6 +102,20 @@ Create and fill it first, for example:
   fi
 }
 
+ensure_runtime_access() {
+  # Use the image's own user and a disposable container to check bind mounts
+  # before stopping an existing Core. Never chmod/chown existing runtime data.
+  docker run --rm --network none --entrypoint sh \
+    --group-add "$MODEL_CONFIG_GID" \
+    -v "$WORKSPACE_DIR:/app/workspace" \
+    -v "$MODEL_CONFIG:/app/config/model-provider.json:ro" \
+    "$IMAGE_NAME" -c 'test -w /app/workspace && test -r /app/config/model-provider.json' \
+    || fail "Core cannot write its workspace or read its model config.
+Core 0.2.2 runs as uid 1000. Ensure $WORKSPACE_DIR is writable by that user
+and $MODEL_CONFIG is readable by uid 1000 or its group $MODEL_CONFIG_GID.
+Existing runtime permissions and containers were left intact."
+}
+
 container_exists() {
   docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1
 }
@@ -139,6 +153,8 @@ run_container() {
     --name "$CONTAINER_NAME"
     --init
     --restart unless-stopped
+    --stop-timeout 35
+    --group-add "$MODEL_CONFIG_GID"
     --label "$SPEC_LABEL=$SPEC_HASH"
     --log-opt max-size=10m
     --log-opt max-file=3
@@ -174,15 +190,23 @@ wait_health() {
 }
 
 recreate_existing() {
-  docker rm -f "$CONTAINER_NAME" >/dev/null
+  remove_existing
   log "creating container from $IMAGE_NAME: $CONTAINER_NAME"
   run_container >/dev/null
+}
+
+remove_existing() {
+  if container_running; then
+    docker stop --time 35 "$CONTAINER_NAME" >/dev/null
+  fi
+  docker rm "$CONTAINER_NAME" >/dev/null
 }
 
 start_container() {
   ensure_docker
   ensure_image
   ensure_runtime_files
+  ensure_runtime_access
 
   if container_exists; then
     if ! container_uses_target_image; then
@@ -213,9 +237,10 @@ recreate_container() {
   ensure_docker
   ensure_image
   ensure_runtime_files
+  ensure_runtime_access
   if container_exists; then
     log "removing existing container: $CONTAINER_NAME"
-    docker rm -f "$CONTAINER_NAME" >/dev/null
+    remove_existing
   fi
   log "creating container from $IMAGE_NAME: $CONTAINER_NAME"
   run_container >/dev/null
@@ -232,7 +257,7 @@ update_container() {
 stop_container() {
   ensure_docker
   if container_exists; then
-    docker stop "$CONTAINER_NAME" >/dev/null
+    docker stop --time 35 "$CONTAINER_NAME" >/dev/null
     log "stopped: $CONTAINER_NAME"
   else
     log "container does not exist: $CONTAINER_NAME"
@@ -259,7 +284,7 @@ Commands:
   health      Check the container health endpoint
 
 Environment:
-  SVG_TRANSFORM_CORE_IMAGE          Image name, default ghcr.io/cnzhhx/svg-transform-core:latest
+  SVG_TRANSFORM_CORE_IMAGE          Image name, default ghcr.io/cnzhhx/svg-transform-core:0.2.2
   SVG_TRANSFORM_CORE_CONTAINER      Container name, default svg-transform-core
   SVG_TRANSFORM_CORE_PORT           Host port, default from SVG_TRANSFORM_CORE_URL or 4310
   SVG_TRANSFORM_CORE_WORKSPACE      Host workspace dir, default ./workspace/core
@@ -275,6 +300,10 @@ WORKSPACE_DIR="$(resolve_host_path "$WORKSPACE_DIR")"
 MODEL_CONFIG="$(resolve_host_path "$MODEL_CONFIG")"
 if [ -n "$CORE_ENV_FILE" ]; then
   CORE_ENV_FILE="$(resolve_host_path "$CORE_ENV_FILE")"
+fi
+MODEL_CONFIG_GID=""
+if [ -f "$MODEL_CONFIG" ]; then
+  MODEL_CONFIG_GID="$(stat -c '%g' "$MODEL_CONFIG" 2>/dev/null || stat -f '%g' "$MODEL_CONFIG")"
 fi
 SPEC_HASH="$(spec_hash)"
 

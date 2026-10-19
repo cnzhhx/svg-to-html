@@ -70,7 +70,7 @@ export async function createMockCore() {
     } else if (suffix.endsWith(".png")) {
       try {
         const source = suffix.includes("svg") ? "comparison-4.33-source.png" : "comparison-4.33-html.png";
-        const bytes = await readFile(new URL(`../../../../example/assets/${source}`, import.meta.url));
+        const bytes = await readFile(new URL(`../../../example/assets/${source}`, import.meta.url));
         res.writeHead(200, { "Content-Type": "image/png" }); res.end(bytes);
       } catch { json({ error: "Missing sample image" }, 404); }
     } else if (suffix === "download") {

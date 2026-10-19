@@ -49,7 +49,7 @@ Local development reads `.env` in the repository root; see [.env.example](../../
 | --- | --- | --- |
 | `PORT` | `8081` | Gateway port |
 | `SVG_TRANSFORM_CORE_URL` | `http://127.0.0.1:4310` | Core URL used by the gateway |
-| `SVG_TRANSFORM_CORE_IMAGE` | `ghcr.io/cnzhhx/svg-transform-core:0.2.1` | Pinned Core image for reproducible installation |
+| `SVG_TRANSFORM_CORE_IMAGE` | `ghcr.io/cnzhhx/svg-transform-core:0.2.2` | Pinned Core image for reproducible installation |
 | `SVG_TRANSFORM_CORE_WORKSPACE` | `./workspace/core` | Persistent Core tasks and artifacts |
 | `SVG_TRANSFORM_CORE_MODEL_CONFIG` | Locally, `backend/config/model-provider.json` | Model file; Ubuntu uses external configuration by default |
 | `SVG_TO_HTML_ACCESS_STATE_PATH` | `./workspace/gateway/access-state.json` | Ownership and usage ledger; gateway settings live beside it |
@@ -57,6 +57,12 @@ Local development reads `.env` in the repository root; see [.env.example](../../
 | `MAX_PARALLEL_MODULE_AGENTS` | `4` | Module concurrency within one session, separate from site-wide concurrency |
 
 Core scripts also accept `SVG_TRANSFORM_CORE_CONTAINER` (default `svg-transform-core`), `SVG_TRANSFORM_CORE_PORT`, and `SVG_TRANSFORM_CORE_ENV_FILE`. Most installations can keep the defaults. With a custom port, ensure the gateway URL matches the container mapping. Additional Core environment files can contain credentials and must remain private.
+
+The application targets Core v0.2.2. Helper scripts and diagnostics also default to the pinned `0.2.2` image. The HTTP SDK remains the published `@svg-transform/core-client@0.2.0`; Docker and client package versions are independent.
+
+The upload dialog reads Core's `/ready` capabilities to offer HTML, Vue, React, and Flutter when the Core runtime has a Flutter SDK. The official `0.2.2` image does not include that SDK. Older Core versions without this endpoint keep the original three formats.
+
+Flutter results use screenshot comparison in the application. Download the ZIP to run the complete project: Flutter Web asset loading requires capabilities blocked by the current preview's network, worker, and base URI restrictions, so the final Flutter application has no online run action.
 
 Relative workspace and data paths resolve from the repository root. An absolute path is recommended for a custom model file.
 

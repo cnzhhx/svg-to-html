@@ -1,4 +1,4 @@
-import type { Job, JobMessage, JobSummary } from '../types/job'
+import type { Job, JobDownloadKind, JobMessage, JobSummary } from '../types/job'
 import { apiJson, apiUrl } from './http'
 
 export const loadJobs = (signal?: AbortSignal) => apiJson<JobSummary[]>('/api/jobs', { signal })
@@ -22,4 +22,5 @@ export const deleteJob = (id: string) =>
     method: 'DELETE',
   })
 
-export const jobDownloadUrl = (id: string) => apiUrl(`/api/jobs/${encodeURIComponent(id)}/download`)
+export const jobDownloadUrl = (id: string, kind: JobDownloadKind = 'deliverable') =>
+  apiUrl(`/api/jobs/${encodeURIComponent(id)}/download${kind === 'diagnostic' ? '?kind=diagnostic' : ''}`)

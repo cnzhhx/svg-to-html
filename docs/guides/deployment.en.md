@@ -115,6 +115,16 @@ Before activation it backs up existing code and dependencies and retains private
 
 Application releases preserve Core images, models, and task data. Evaluate Core upgrades separately and perform them in a maintenance window after active tasks finish. `service-ubuntu.sh restart/update` involves Core and is not an alternative for frontend-and-gateway-only releases.
 
+## Upgrading to Core v0.2.2
+
+Updating application code leaves existing environment files and running Core instances intact. To upgrade Core separately, wait for active jobs to finish, back up the runtime data below, change `SVG_TRANSFORM_CORE_IMAGE` in the matching environment file to `ghcr.io/cnzhhx/svg-transform-core:0.2.2`, then run `pnpm core:update` with the same `ENV_FILE`.
+
+The new image runs as uid/gid `1000:1000`. On Linux, the Core workspace must be writable by uid `1000`; the model file must be readable by that user or its owning group. The helper adds the model file's group to the container and checks mount permissions in a disposable container before replacing Core. Failed checks preserve the existing container and permissions. First-time installation sets ownership only for a new workspace; operators must review permission changes to existing data.
+
+Containers have a 35-second stop timeout to allow Core's 30-second shutdown flush. After upgrading, check `http://127.0.0.1:4310/ready` as well as `/health` to verify the workspace, browser, agent executable, and model configuration. Readiness makes no model request and does not verify provider connectivity.
+
+The default download in v0.2.2 is the final deliverable ZIP with a checksum manifest and run instructions. The interface also offers diagnostic downloads for analysis and execution history. Historical jobs without a deliverable use diagnostic downloads. Browser preview caches support offline viewing; online downloads always obtain the complete package from Core.
+
 ## Backups and migration
 
 | Content | Why it must be retained |

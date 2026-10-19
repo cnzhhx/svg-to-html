@@ -1,0 +1,9 @@
+.result-quality {
+  color: var(--good);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.result-quality.is-partial {
+  color: var(--warn);
+}

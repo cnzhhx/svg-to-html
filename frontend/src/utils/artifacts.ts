@@ -1,4 +1,4 @@
-import type { Job, JobOutputTarget } from '../types/job'
+import type { Job, JobDownloadKind, JobOutputTarget } from '../types/job'
 import { basePath } from '../api/http'
 
 let runtimeArtifactRoot = ''
@@ -58,6 +58,10 @@ export function getOutputTarget(job?: Job | null): JobOutputTarget | null {
 
 export function getJobOutputFormat(job?: Job | null) {
   return job?.outputFormat || getOutputTarget(job)?.format || ''
+}
+
+export function getJobDownloadKind(job: Job): JobDownloadKind {
+  return job.result?.diagnosticDownloadUrl && !job.result.deliverable ? 'diagnostic' : 'deliverable'
 }
 
 export function getJobSourceEntryPath(job?: Job | null) {

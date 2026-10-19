@@ -163,6 +163,13 @@ build_project() {
 }
 
 start_core() {
+  local core_workspace
+  core_workspace="$(resolve_host_path "${SVG_TRANSFORM_CORE_WORKSPACE:-$ROOT_DIR/workspace/core}")"
+  # The 0.2.2 image runs as uid 1000. Provision only a new workspace; existing
+  # data and ownership must be reviewed by the operator before an upgrade.
+  if [ ! -d "$core_workspace" ]; then
+    install -d -m 750 -o 1000 -g "$CONFIG_GROUP" "$core_workspace"
+  fi
   ENV_FILE="$ENV_FILE" bash "$ROOT_DIR/scripts/core-docker.sh" start
 }
 
