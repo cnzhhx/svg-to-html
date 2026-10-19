@@ -1,131 +1,152 @@
+<div align="center">
+
 # SVG to HTML
+
+将 SVG 设计稿转换为 HTML、Vue 或 React，在浏览器中对比效果、调整模块并下载源码。
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![React](https://img.shields.io/badge/React-18-149eca.svg)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6.svg)](https://www.typescriptlang.org/)
+[![Core: Docker](https://img.shields.io/badge/Core-Docker-2496ed.svg)](https://github.com/cnzhhx/svg-transform-core)
 
 简体中文 | [English](README.en.md)
 
-将 SVG 设计稿转换为 HTML、Vue 或 React。这个仓库维护一套前端和 API 网关，同时用于自部署和在线试用；转换引擎由独立的 [svg-transform-core](https://github.com/cnzhhx/svg-transform-core) 镜像提供。
+[效果展示](#效果展示) · [快速开始](#快速开始) · [部署指南](docs/guides/deployment.md) · [参与贡献](CONTRIBUTING.md)
 
-![SVG 与 HTML 对比](example/comparison-4.33.png)
+</div>
 
-示例视觉差异为 4.33%，仅代表该样本。[查看交互对比](example/comparison-4.33.html)。
+## 项目介绍
 
-## 本地启动
+SVG to HTML 提供从上传设计稿到检查、调整和导出代码的网页工作区，适合将 SVG 页面设计转成前端实现，也可以自部署为团队或访客使用的转换站点。
 
-需要 Node.js 20+、pnpm 10.11+ 和 Docker：
+本仓库维护 React 前端与 API 网关，实际转换由独立的 [svg-transform-core](https://github.com/cnzhhx/svg-transform-core) Docker 服务完成。自部署和在线试用使用同一套应用；模型服务由部署者配置，真实转换会调用所配置的模型 API。
+
+## 核心功能
+
+| 功能 | 说明 |
+| --- | --- |
+| 多种源码格式 | 上传 SVG，选择 HTML、Vue 或 React，以及 1× / 2× 渲染倍率 |
+| 转换进度 | 查看任务队列、工作流阶段、模块执行情况和对话记录 |
+| 效果对比 | 分列或滑块查看设计稿与生成结果，调整预览宽度，查看视觉差异 |
+| 模块调整 | 选中模块，通过聊天提交具体的调整要求 |
+| 源码交付 | 打开对照页、源码或渲染预览，并下载任务 ZIP |
+| 公开示例 | 展示可供所有访客查看的转换结果，由管理员管理示例状态 |
+| 站点管理 | 在网页中设置访问隔离、每日额度、文件大小限制和排队并发 |
+
+## 效果展示
+
+![SVG 设计稿与生成 HTML 的效果对比](example/comparison-4.33.png)
+
+这个样本的视觉差异为 **4.33%**。[查看交互对比文件](example/comparison-4.33.html)（下载后用浏览器打开）。结果取决于设计稿、模型和配置，该数字仅代表这个样本。
+
+## 快速开始
+
+### 1. 准备环境
+
+| 依赖 | 要求 |
+| --- | --- |
+| Node.js | 推荐 22 LTS，版本至少 22.12；也支持 20.19+ 的 Node.js 20 |
+| pnpm | 10.11.0，与仓库 `packageManager` 保持一致 |
+| Docker | 已安装，且 Docker 服务正在运行 |
+| 命令行 | Git、Bash、curl；macOS / Linux 可使用下方命令，Windows 请使用 WSL2 |
+| 模型服务 | 准备支持文本和图像输入的模型及对应 API 凭据 |
+
+尚未安装 pnpm 时，可执行 `npm install -g pnpm@10.11.0`。
+
+### 2. 获取代码并准备配置
+
+以下步骤适用于全新克隆；升级已有安装时请保留原配置和运行数据。
+
+```bash
+git clone https://github.com/cnzhhx/svg-to-html.git
+cd svg-to-html
+pnpm install --frozen-lockfile
+
+cp .env.example .env
+cp backend/config/model-provider.example.json backend/config/model-provider.json
+```
+
+编辑 `backend/config/model-provider.json`，将示例中的 `baseURL`、`apiKey` 和 `model` 替换为模型服务的实际值。`models` 下的键是上传页面中选择的“模型配置 ID”。完整格式见[配置指南](docs/guides/configuration.md)。
+
+### 3. 启动应用
 
 ```bash
 pnpm dev
 ```
 
-首次启动创建缺失的环境与模型配置。访问 `http://localhost:5173/transformer/`。真实转换前，填写 `backend/config/model-provider.json`，模型密钥仅在服务端保存。模型配置格式见该目录中的示例；修改模型后使用 `pnpm core:recreate` 让 Core 重新读取。在线运营设置不需要重启 Core。
+脚本会拉取本地尚不存在的 Core 镜像、启动 Core，并启动前端和网关。首次拉取镜像可能需要一些时间；缺失的环境文件和模型配置会从模板创建，但仍需填写有效模型凭据才能转换。
 
-## 首次管理员设置
+打开 [http://localhost:5173/transformer/](http://localhost:5173/transformer/)。默认网关端口为 `8081`，Core 端口为 `4310`。已有独立 Core 的开发方式见[贡献指南](CONTRIBUTING.md#连接已有-core)。
 
-在项目根目录生成一次性初始化码：
+### 4. 创建管理员
+
+在项目根目录的另一个终端执行：
 
 ```bash
 pnpm admin:setup-token
 ```
 
-打开 `/transformer/setup`，填写初始化码、管理员账号及至少 12 位的密码，确认初始运营设置。初始化码 15 分钟有效、只能使用一次；未持有码的访客不能创建管理员。普通用户无需注册。
+打开[初始化页面](http://localhost:5173/transformer/setup)，使用终端输出的初始化码创建管理员账号，并设置至少 12 位的密码。初始化码 15 分钟内有效，只能使用一次。
 
-初始化完成后通过 `/transformer/login` 登录，在 `/transformer/admin/settings` 管理站点；工作区侧边栏也提供入口。管理员会话最长 7 天，服务重启、退出或修改密码后需要重新登录。
+之后通过[管理员登录页](http://localhost:5173/transformer/login)进入[站点设置](http://localhost:5173/transformer/admin/settings)。普通访客无需注册。服务器部署时，管理员命令需要使用服务相同的环境和数据路径，详见[部署指南](docs/guides/deployment.md#初始化管理员)。
 
-如果已有 ToC 管理员密钥，可在登录页选择“使用原管理员密钥迁移”，或使用旧的 `#adminKey=...` 入口，然后创建账号。创建成功后旧密钥和旧会话停止生效。
+## 使用流程
 
-忘记密码时，在同一运行环境执行：
+1. 点击“上传 SVG”，选择设计稿、源码格式、渲染倍率和模型配置。
+2. 提交后查看排队状态、转换进度和模块执行过程。
+3. 在结果区域用分列或滑块对比效果；需要继续调整时，选中模块并在“聊天调整”中输入要求。
+4. 打开源码或渲染预览，下载 ZIP 后按生成项目的结构继续开发。
 
-```bash
-pnpm admin:reset-password
-```
+默认按浏览器隔离任务；勾选“加入公开示例”的任务可被其他访客查看。浏览器 Cookie 用于记录匿名任务归属，清除 Cookie 或切换浏览器后不会自动找回原有任务。
 
-在登录页选择“恢复密码”，输入 15 分钟内有效的一次性恢复码和新密码。原账号名保留。账号名可由服务器管理员从运行数据中的管理员记录查看；不要对外提供运行数据文件。
+## 文档导航
 
-## 在线运营设置
+| 文档 | 内容 |
+| --- | --- |
+| [配置指南](docs/guides/configuration.md) | 模型配置、环境变量、端口与数据路径、配置生效方式 |
+| [管理员指南](docs/guides/administration.md) | 初始化与密码恢复、访问隔离、额度、示例和并发设置 |
+| [部署与维护](docs/guides/deployment.md) | Ubuntu 安装、反向代理、应用发布、备份迁移和故障排查 |
+| [贡献指南](CONTRIBUTING.md) | 项目结构、开发方式、测试命令和 Issue / PR 提交建议 |
+| [转换引擎](https://github.com/cnzhhx/svg-transform-core) | Core 服务及其独立实现 |
 
-| 设置 | 默认值 | 行为 |
-| --- | --- | --- |
-| 访问隔离 | 开启 | 按浏览器 Cookie 隔离任务；公开示例除外 |
-| 每日额度 | 开启，5 次 | 每浏览器每日上传次数；管理员不限额、不计入普通用量 |
-| 额度时区 | Asia/Shanghai | 按该时区划分日期，修改后按新的日期边界计算 |
-| SVG 上传大小 | 50 MB | 可设置 1–50 MB，管理员同样受文件大小限制 |
-| 单任务预计耗时 | 20 分钟 | 仅用于排队等待估算，不改变转换并发 |
-| 用户提交公开示例 | 允许 | 关闭后禁止新提交，不撤销已有示例 |
+## 部署到服务器
 
-保存后新请求立即使用新设置，已接受的转换不受影响。其他页面会在重新获得焦点或定时刷新时更新。多人编辑发生版本冲突时，重新加载后再保存。
-
-在“排队与并发”中可设置全站同时执行的 session 数（1–32），保存按钮位于底部。增加上限立即补入排队任务；降低上限等待现有任务自然完成，不中断任务。此设置不改变单 session 内的模块并发。需要支持 `GET/PUT /api/queue/settings` 的 Core；旧 Core 会显示升级提示，不能假保存。Core 在工作目录的 `queue-settings.json` 中持久保存实际执行上限，首次未保存时使用 `MAX_CONCURRENT_AGENTS`，重启后优先使用已保存值。此文件属于运行数据，备份时与 Core 工作目录一起保留，不能进入代码快照。排队估算读取 Core 的实际上限。
-
-**关闭访问隔离会让全部已有任务对访客可见、可预览和下载。** 他人的任务仍只读；创建者和管理员可修改自己的授权任务。重新开启隔离不改变任务归属，并终止失去权限的活动事件流和下载流。已经下载的文件无法收回。
-
-关闭每日额度时仍记录用量；重新开启不会清零。管理员可以在“公开示例”页面设置或取消任意任务的示例状态。普通用户不能删除示例，管理员可以删除。
-
-Cookie 是匿名浏览器身份，不是正式用户账号。清除 Cookie 或切换浏览器会失去原有归属并获得新的额度身份；部署到公网时仍需按实际需求配置 TLS、入口限流等基础设施。
-
-## 运行数据与迁移
-
-网关默认在 `workspace/gateway/` 保存：
-
-- `access-state.json`：原有任务归属、Cookie 标识哈希和每日用量。
-- `gateway-state.json`：运营设置、示例覆盖状态、管理员密码哈希及初始化码哈希。
-- `gateway-state.json.lock`：短暂的跨进程写锁。若异常退出残留，只能在确认相关服务和管理命令均已停止后删除。
-
-通过 `SVG_TO_HTML_ACCESS_STATE_PATH` 指定归属账本位置，在线设置始终保存在其相邻目录。升级、迁移和备份必须一起保留两份 JSON；代码发布不会覆盖它们。首次迁移前先备份原账本和环境配置。
-
-只有缺少在线设置文件时，才导入旧环境中的每日次数、时区、等待估算和示例 ID。之后网页设置优先，重启不会重新导入。损坏的文件会报错，不能通过自动重置恢复，以免丢失权限。
-
-旧 Cookie 及归属账本格式保持兼容。Core 中未登记归属的历史任务，在隔离开启时仅管理员可见；管理员可将其设为公开示例。原有未绑定浏览器的 IP 归属记录继续支持一次性迁移绑定。
-
-## 部署配置与发布
-
-仍由部署环境配置的内容：端口、Core 地址、Core 镜像、模型与密钥、单 session 内的模块并发及数据路径。Core 执行 API（包括并发设置接口）仅供可信网关访问，不应直接暴露到公网；网关仅允许已登录管理员修改并发设置。
-
-Ubuntu 首次部署：
+仓库提供 Ubuntu 首次安装脚本，安装 Node.js、pnpm、Docker 和 Nginx，构建应用并配置 systemd 服务。在服务器上克隆仓库后，从项目根目录执行：
 
 ```bash
 sudo bash scripts/deploy-ubuntu.sh
 ```
 
-模型配置默认位于 `/etc/svg-to-html/model-provider.json`，应用环境默认位于 `/etc/svg-to-html/app.env`。管理命令必须使用服务相同的环境和数据路径，例如在项目根目录通过具备该文件读取权限的服务用户运行：
+默认访问 `http://服务器地址/transformer/`。模型配置保存在 `/etc/svg-to-html/model-provider.json`，应用环境保存在 `/etc/svg-to-html/app.env`；模板中的占位值需要替换。该安装脚本会配置系统服务与 Nginx，已有站点请先查看[部署与维护](docs/guides/deployment.md)。
 
-```bash
-ENV_FILE=/etc/svg-to-html/app.env pnpm admin:setup-token
-```
+后续应用发布使用 `pnpm publish:app`，由部署者提供目标服务器、目录和 URL。发布包含暂存验证、备份、失败回滚和活动任务检查；具体步骤见[应用代码发布](docs/guides/deployment.md#应用代码发布)。
 
-不要通过 root 管理命令创建服务用户无法写入的运行数据；应保持数据目录的服务用户所有权。
+## 常见问题
 
-后续只发布应用代码：
+**支持 PNG、Figma 链接或 PDF 吗？**
 
-```bash
-TOC_DEPLOY_HOST=ubuntu@your-server \
-TOC_DEPLOY_DIR=/home/ubuntu/svg-to-html \
-TOC_DEPLOY_URL=https://your-domain/transformer \
-pnpm publish:app
-```
+当前上传入口接收 SVG 文件。其他设计工具中的页面请先导出为 SVG。
 
-`pnpm publish:toc` 仍是兼容别名。脚本包含当前工作目录的未提交修改、新文件和删除，在服务器暂存目录检查、测试和构建，随后备份、切换、重启网关并核验；切换失败恢复旧代码。有未完成任务时拒绝发布。脚本适配现有 `svg-to-html` systemd 服务与本机 4310 端口的 Core，保留其镜像、模型及任务数据，不更新 Core。
+**启动页面需要模型密钥吗？**
 
-生产服务器地址没有源码默认值；使用环境变量或本地部署环境提供。不要将密钥或运行数据提交到 Git。
+页面可以在占位配置下启动，真实转换需要有效的模型配置和可用的 Core。模型凭据保留在服务端。
 
-## 开发与验证
+**转换速度和效果有保证吗？**
 
-HTML/SVG 在线预览及浏览器缓存预览允许内联、同源和 Blob 脚本执行，以支持实时预览缩放及打包后的 Vue/React 页面。仍通过 CSP 禁止直接网络连接、表单提交、Worker 和插件，外部脚本未放行。预览保留同源能力，此策略不构成与管理后台的权限隔离，生成脚本应视为受信任代码。下载文件本身不作修改。
+耗时和视觉差异受设计复杂度、模型能力、上游服务与排队情况影响。页面等待时间是估算值，示例中的差异数值也不是所有任务的保证。
 
-任务写接口需要 `X-Requested-With: svg-to-html`，浏览器提供的 `Origin` 必须与网关入口一致。反向代理应保留公开 Host 和协议；这些检查不能阻止同源预览脚本使用当前用户权限。
+**站点额度和并发在哪里改？**
 
-```bash
-pnpm test              # 网关行为与发布回滚测试，使用模拟 Core
-pnpm build             # 前端构建与网关类型检查
-pnpm lint:frontend     # 前端类型检查
-pnpm audit             # 依赖安全审计
-pnpm doctor            # 环境检查
-```
+在管理员设置页修改。访问策略、额度和示例设置保存在网关；全站转换并发由支持相应接口的 Core 保存。详见[管理员指南](docs/guides/administration.md)。
 
-Core 不可用时，网关仍提供初始化、登录和设置页面，转换相关接口返回不可用提示。健康检查用于网关存活检查，不代表 Core 可用。
+**能直接开放给公网访客吗？**
 
-测试涵盖设置持久化、保存冲突、写盘失败、管理员迁移与恢复、额度开关和跨日退款、权限矩阵、活动流撤销及发布数据保留。不消耗模型额度。
+请先配置 HTTPS、入口限流和备份，并阅读[预览脚本的信任边界](docs/guides/deployment.md#预览与访问安全)。匿名浏览器身份不等同于正式用户账号，生成页面中的脚本也需要按受信任代码处理。
 
-路径穿越和预览安全回归包含在 `pnpm test` 中。可选浏览器验证需要本机 Chrome 和 Playwright：设置 `ARTIFACT_TEST_PLAYWRIGHT_PATH` 为 Playwright 的 `index.mjs` 绝对路径后运行 `pnpm test`。测试自动创建隔离浏览器上下文及临时运行目录，不使用个人浏览器数据。
+## 参与贡献
 
-## License
+欢迎通过 [Issues](https://github.com/cnzhhx/svg-to-html/issues) 反馈问题、讨论需求，通过 Pull Request 改进代码、文档和示例。提交前请阅读[贡献指南](CONTRIBUTING.md)。
 
-[MIT](LICENSE)。保留原有版权和许可声明。
+## 许可证
+
+本仓库使用 [MIT License](LICENSE)。使用或分发时请保留版权和许可声明；独立 Core 与第三方依赖的许可请查看各自项目。

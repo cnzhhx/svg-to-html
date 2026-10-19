@@ -1,8 +1,11 @@
 node_modules/
 **/node_modules/
 workspace/
-docs/
-docs
+# Keep local planning notes private; track only maintained public guides.
+docs/*
+!docs/guides/
+docs/guides/*
+!docs/guides/*.md
 dist/
 backend/dist/
 frontend/dist/
