@@ -18,7 +18,7 @@ const mergeJobSummaries = (
   existing: JobSummary[],
   incoming: JobSummary[],
 ) => {
-  const byId = new Map(existing.map((job) => [job.id, job]))
+  const byId = new Map(existing.filter(job => job.__localOnly || incoming.some(next => next.id === job.id)).map((job) => [job.id, job]))
   incoming.forEach((job) => {
     byId.set(job.id, { ...(byId.get(job.id) || {}), ...job } as JobSummary)
   })
@@ -56,9 +56,13 @@ const syncSelectedModule = (state: AppState, job: Job | null): string | null => 
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'runtime/loaded':
-      return { ...state, runtime: action.runtime }
-    case 'jobs/loaded':
-      return { ...state, loading: false, jobs: action.jobs }
+      return JSON.stringify(state.runtime) === JSON.stringify(action.runtime)
+        ? state : { ...state, runtime: action.runtime }
+    case 'jobs/loaded': {
+      const visible = action.jobs.find(job => job.id === state.currentJobId)
+      const current = state.currentJob && visible ? { ...state.currentJob, accessMode: visible.accessMode, capabilities: visible.capabilities, isShowcase: visible.isShowcase } : null
+      return { ...state, loading: false, jobs: action.jobs, currentJob: current, currentJobId: current?.id ?? null, ...(current ? {} : { agentEvents: [], chatOpen: false }) }
+    }
     case 'jobs/refreshed':
       const refreshedCurrent = state.currentJob
         ? action.jobs.find((job) => job.id === state.currentJob?.id)
@@ -71,8 +75,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
               ...refreshedCurrent,
               result: state.currentJob.result,
               messages: state.currentJob.messages,
+              logs: state.currentJob.logs,
+              __summary: state.currentJob.__summary,
             } as Job)
-          : state.currentJob,
+          : state.currentJob?.__localOnly ? state.currentJob : null,
+        currentJobId: refreshedCurrent?.id ?? (state.currentJob?.__localOnly ? state.currentJob.id : null),
         jobs: mergeJobSummaries(state.jobs, action.jobs),
       }
     case 'job/selected':

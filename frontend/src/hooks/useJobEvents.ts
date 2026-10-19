@@ -18,7 +18,7 @@ export function useJobEvents(jobId: string | null, onEvent: (event: JobEvent) =>
     const source = connectJobEvents(jobId, (event) => {
       if (!active || getEventJobId(event) !== jobId) return
       onEventRef.current(event)
-    })
+    }, () => { if (active) window.dispatchEvent(new Event('svg-runtime-refresh')) })
     return () => {
       active = false
       source.close()

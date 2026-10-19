@@ -75,9 +75,12 @@ const getCoreClient = () =>
 
 const normalizeCoreError = (error: unknown) => {
   if (error instanceof SvgTransformCoreClientError) {
+    if (error.status === 502 && error.payload === undefined && error.message.startsWith("Core service unavailable:")) {
+      return new CoreServiceError("转换服务暂不可用，请稍后重试", 503);
+    }
     return new CoreServiceError(error.message, error.status, error.payload);
   }
-  return error;
+  return new CoreServiceError("转换服务暂不可用，请稍后重试", 503);
 };
 
 const requestCore = async (path: string, init?: RequestInit) => {
@@ -114,8 +117,7 @@ const toJobRelativePathText = (value: string) =>
     "$1",
   );
 
-const rewriteCoreUrlValue = (value: string) => {
-  const base = getCoreServiceUrl();
+const rewriteCoreUrlValue = (value: string, base: string) => {
   let rewritten = value;
   if (value.startsWith(`${base}/api/jobs`)) {
     rewritten = `/transformer${value.slice(base.length)}`;
@@ -125,17 +127,17 @@ const rewriteCoreUrlValue = (value: string) => {
   return toJobRelativePathText(rewritten);
 };
 
-const rewriteCoreUrls = (value: unknown): unknown => {
+const rewriteCoreUrls = (value: unknown, base = getCoreServiceUrl()): unknown => {
   if (typeof value === "string") {
-    return rewriteCoreUrlValue(redactSensitiveText(value));
+    return rewriteCoreUrlValue(redactSensitiveText(value), base);
   }
-  if (Array.isArray(value)) return value.map(rewriteCoreUrls);
+  if (Array.isArray(value)) return value.map(entry => rewriteCoreUrls(entry, base));
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).map(([key, entry]) =>
       SENSITIVE_KEY.test(key)
         ? [key, REDACTED]
-        : [key, rewriteCoreUrls(entry)],
+        : [key, rewriteCoreUrls(entry, base)],
     ),
   );
 };

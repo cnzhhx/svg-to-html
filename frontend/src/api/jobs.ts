@@ -1,7 +1,7 @@
 import type { Job, JobMessage, JobSummary } from '../types/job'
 import { apiJson, apiUrl } from './http'
 
-export const loadJobs = () => apiJson<JobSummary[]>('/api/jobs')
+export const loadJobs = (signal?: AbortSignal) => apiJson<JobSummary[]>('/api/jobs', { signal })
 
 export const loadJob = (id: string) => apiJson<Job>(`/api/jobs/${encodeURIComponent(id)}`)
 

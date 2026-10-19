@@ -1,8 +1,11 @@
 node_modules/
 **/node_modules/
 workspace/
-docs/
-docs
+# Keep local planning notes private; track only maintained public guides.
+docs/*
+!docs/guides/
+docs/guides/*
+!docs/guides/*.md
 dist/
 backend/dist/
 frontend/dist/
@@ -21,3 +24,13 @@ test
 # Local model provider config may contain API keys.
 config/model-provider.json
 backend/config/model-provider.json
+
+# Local deployment data and credentials are never source code.
+.local/*.state
+LOCAL_ADMIN.md
+**/gateway-state.json
+**/gateway-state.json.*
+**/access-state.json
+**/access-state.json.*
+**/queue-settings.json
+**/queue-settings.json.*

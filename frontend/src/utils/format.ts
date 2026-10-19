@@ -47,6 +47,15 @@ export function formatJobDuration(job?: Job | null, now = Date.now()) {
   return formatElapsedDuration(Math.max(0, end - start))
 }
 
+export function formatQueueWait(minutes: number) {
+  if (!Number.isFinite(minutes) || minutes <= 0) return '即将开始'
+  const rounded = Math.ceil(minutes)
+  if (rounded < 60) return `约 ${rounded} 分钟`
+  const hours = Math.floor(rounded / 60)
+  const rest = rounded % 60
+  return rest ? `约 ${hours} 小时 ${rest} 分钟` : `约 ${hours} 小时`
+}
+
 export function formatTokenCount(value: unknown) {
   const n = Number(value)
   if (!Number.isFinite(n) || n <= 0) return ''

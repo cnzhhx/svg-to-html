@@ -15,7 +15,7 @@ const parseEnvValue = (raw: string) => {
 };
 
 const loadRootEnvFile = () => {
-  const envPath = path.join(repoRoot(), ".env");
+  const envPath = process.env["ENV_FILE"] || path.join(repoRoot(), ".env");
   if (!existsSync(envPath)) return;
   const content = readFileSync(envPath, "utf8");
   for (const line of content.split(/\r?\n/)) {
@@ -45,8 +45,65 @@ const readNumber = (envName: string, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const readPositiveInteger = (envName: string, fallback: number) => {
+  const parsed = readNumber(envName, fallback);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const readCsv = (envName: string) =>
+  (process.env[envName] ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+const resolveRepoPath = (value: string) =>
+  path.isAbsolute(value) ? value : path.resolve(repoRoot(), value);
+
+const readTimeZone = (envName: string, fallback: string) => {
+  const value = readBackendEnvString(envName) ?? fallback;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return value;
+  } catch {
+    throw new Error(`${envName} is not a valid IANA time zone: ${value}`);
+  }
+};
+
+const readAdminKey = () => {
+  const key = readBackendEnvString("SVG_TO_HTML_ADMIN_KEY");
+  if (key && key.length < 32) {
+    throw new Error("SVG_TO_HTML_ADMIN_KEY must contain at least 32 characters");
+  }
+  return key;
+};
+
 const buildBackendConfig = () =>
   ({
+    admin: {
+      key: readAdminKey(),
+    },
+    access: {
+      dailyUploadLimit: readPositiveInteger("SVG_TO_HTML_DAILY_UPLOAD_LIMIT", 5),
+      statePath: resolveRepoPath(
+        readBackendEnvString("SVG_TO_HTML_ACCESS_STATE_PATH") ??
+          "workspace/gateway/access-state.json",
+      ),
+      timeZone: readTimeZone(
+        "SVG_TO_HTML_DAILY_QUOTA_TIME_ZONE",
+        "Asia/Shanghai",
+      ),
+      showcaseJobIds: readCsv("SVG_TO_HTML_SHOWCASE_JOB_IDS"),
+    },
+    limits: {
+      maxSvgUploadBytes: 50 * 1024 * 1024,
+    },
+    queue: {
+      estimatedTaskMinutes: readPositiveInteger(
+        "SVG_TO_HTML_ESTIMATED_TASK_MINUTES",
+        20,
+      ),
+      maxConcurrentJobs: readPositiveInteger("MAX_CONCURRENT_AGENTS", 2),
+    },
     core: {
       modelConfigPath:
         readBackendEnvString("SVG_TRANSFORM_CORE_MODEL_CONFIG") ??

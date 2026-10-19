@@ -1,4 +1,5 @@
 import type { Job } from '../../types/job'
+import { formatQueueWait } from '../../utils/format'
 import { WORKFLOW_NODE_ORDER, getWorkflowProgress, labelForWorkflowNode } from '../../utils/workflow'
 
 export function WorkflowPanel({ job, visible = true }: { job: Job | null; visible?: boolean }) {
@@ -6,6 +7,43 @@ export function WorkflowPanel({ job, visible = true }: { job: Job | null; visibl
   const moduleCount = Number(job?.result?.moduleCount)
   const concurrencyLimit = Number(job?.result?.moduleConcurrencyLimit ?? 5)
   const showWarning = Number.isFinite(moduleCount) && Number.isFinite(concurrencyLimit) && moduleCount > concurrencyLimit
+
+  if (job?.status === 'queued') {
+    const queue = job.queue
+    return (
+      <section className={`workflow-panel${visible ? ' visible' : ''}`} id="workflowPanel">
+        <div className="workflow-stage-card queue-stage">
+          <div className="workflow-summary">
+            <span className="workflow-kicker">全局队列</span>
+            <div className="workflow-summary-main">
+              <strong className="workflow-current">
+                {queue ? `排队第 ${queue.queuePosition} / ${queue.totalQueued} 位` : '正在获取排队位置'}
+              </strong>
+            </div>
+            <p className="workflow-detail">
+              {queue ? `前方共 ${queue.queuedAhead} 个任务，其中 ${queue.runningJobs} 个正在执行` : '队列数据会自动刷新'}
+            </p>
+          </div>
+          {queue ? (
+            <div className="queue-metrics">
+              <div className="queue-metric">
+                <span>预计等待</span>
+                <strong>{formatQueueWait(queue.estimatedWaitMinutes)}</strong>
+              </div>
+              <div className="queue-metric">
+                <span>单任务基准</span>
+                <strong>{queue.estimatedTaskMinutes} 分钟</strong>
+              </div>
+              <div className="queue-metric">
+                <span>执行通道</span>
+                <strong>{queue.runningJobs} / {queue.maxConcurrentJobs}</strong>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section className={`workflow-panel${visible ? ' visible' : ''}`} id="workflowPanel">
