@@ -76,11 +76,6 @@ export function ResultPanel({
           {result?.diffRatio !== undefined ? (
             <span className="result-diff-gap is-passed">还原度 {toPercent(Math.max(0, 1 - Number(result.diffRatio)))}</span>
           ) : null}
-          {result?.quality ? (
-            <span className={`result-quality${result.quality.status === 'partial' ? ' is-partial' : ''}`}>
-              {result.quality.status === 'pass' ? '质量检查通过' : '部分达标'}
-            </span>
-          ) : null}
           {tokenBadges.length ? (
             <span className="result-token-group">
               {tokenBadges.map((badge) => (

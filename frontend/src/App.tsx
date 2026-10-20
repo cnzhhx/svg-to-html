@@ -39,7 +39,6 @@ import './styles/layout.css'
 import './styles/sidebar.css'
 import './styles/upload.css'
 import './styles/workflow.css'
-import './styles/result.css'
 import './styles/chat.css'
 
 const getUrlJobId = () => new URLSearchParams(window.location.search).get('job')
