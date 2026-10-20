@@ -1,4 +1,5 @@
-export type OutputFormat = 'html' | 'vue' | 'react'
+export type OutputFormat = 'html' | 'vue' | 'react' | 'flutter'
+export type JobDownloadKind = 'deliverable' | 'diagnostic'
 
 export type PipelineStep = 'agent' | 'verify'
 export type WorkflowNodeKey = 'upload' | 'analysis' | 'agent' | 'verify' | 'done'
@@ -51,6 +52,7 @@ export type JobOutputTarget = {
   compareEntryPath: string
   format: OutputFormat
   frameworkBuildDir?: string
+  frameworkProjectDir?: string
   renderEntryPath: string
   sourceEntryPath: string
   sourceStylePath?: string
@@ -63,6 +65,16 @@ export type JobResult = Record<string, unknown> & {
   designHeight?: number
   designWidth?: number
   diffRatio?: number | string
+  deliverable?: { version: string; manifestPath?: string }
+  diagnosticDownloadUrl?: string
+  downloadUrl?: string
+  quality?: {
+    status: 'pass' | 'partial'
+    softIssues: string[]
+    blockingIssues: string[]
+    gateSummary: Record<string, unknown>
+  }
+  stageTimings?: Record<string, number>
   inputTokens?: number
   cachedInputTokens?: number
   localArtifactCacheAt?: number

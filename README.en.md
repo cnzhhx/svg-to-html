@@ -2,7 +2,7 @@
 
 # SVG to HTML
 
-Turn SVG designs into HTML, Vue, or React. Compare results, refine modules, and download source code in your browser.
+Turn SVG designs into HTML, Vue, React, or Flutter. Compare results, refine modules, and download source code in your browser.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![React](https://img.shields.io/badge/React-18-149eca.svg)](https://react.dev/)
@@ -25,11 +25,11 @@ This repository contains the React frontend and API gateway. The independent [sv
 
 | Feature | What it does |
 | --- | --- |
-| Multiple output formats | Upload SVG and choose HTML, Vue, or React, with 1× or 2× render scale |
+| Multiple output formats | Choose HTML, Vue, React, or Flutter when enabled by Core, with 1× or 2× render scale |
 | Conversion progress | Follow the queue, workflow stages, module execution, and conversation history |
 | Visual comparison | Compare designs and results side by side or with a slider, adjust preview width, and inspect visual differences |
 | Module refinement | Select a module and send specific adjustment requests through chat |
-| Source delivery | Open comparison pages, source, or rendered previews, and download a ZIP |
+| Source delivery | Open comparison pages, source, or rendered previews; download complete deliverables or diagnostics and inspect separate quality results |
 | Public showcases | Share selected conversion results with all visitors; administrators manage showcase status |
 | Site administration | Configure access isolation, daily quotas, upload limits, and queue concurrency in the browser |
 

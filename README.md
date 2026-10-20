@@ -2,7 +2,7 @@
 
 # SVG to HTML
 
-将 SVG 设计稿转换为 HTML、Vue 或 React，在浏览器中对比效果、调整模块并下载源码。
+将 SVG 设计稿转换为 HTML、Vue、React 或 Flutter，在浏览器中对比效果、调整模块并下载源码。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![React](https://img.shields.io/badge/React-18-149eca.svg)](https://react.dev/)
@@ -25,11 +25,11 @@ SVG to HTML 提供从上传设计稿到检查、调整和导出代码的网页�
 
 | 功能 | 说明 |
 | --- | --- |
-| 多种源码格式 | 上传 SVG，选择 HTML、Vue 或 React，以及 1× / 2× 渲染倍率 |
+| 多种源码格式 | 上传 SVG，选择 HTML、Vue、React，或 Core 已启用的 Flutter，以及 1× / 2× 渲染倍率 |
 | 转换进度 | 查看任务队列、工作流阶段、模块执行情况和对话记录 |
 | 效果对比 | 分列或滑块查看设计稿与生成结果，调整预览宽度，查看视觉差异 |
 | 模块调整 | 选中模块，通过聊天提交具体的调整要求 |
-| 源码交付 | 打开对照页、源码或渲染预览，并下载任务 ZIP |
+| 源码交付 | 打开对照页、源码或渲染预览，下载完整交付 ZIP 或诊断包，查看独立的质量检查状态 |
 | 公开示例 | 展示可供所有访客查看的转换结果，由管理员管理示例状态 |
 | 站点管理 | 在网页中设置访问隔离、每日额度、文件大小限制和排队并发 |
 

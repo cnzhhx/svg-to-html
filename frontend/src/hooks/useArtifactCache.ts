@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import type { Job } from '../types/job'
+import type { Job, JobDownloadKind } from '../types/job'
 import { jobDownloadUrl } from '../api/jobs'
 import {
   artifactCacheKeyForJob,
@@ -10,7 +10,7 @@ import {
   getCachedArtifactFiles,
   getCachedArtifactJobMeta,
 } from '../utils/artifact-cache'
-import { getJobCompareEntryPath, getJobRenderEntryPath, getJobSourceEntryPath, artifactFileUrl } from '../utils/artifacts'
+import { getJobCompareEntryPath, getJobDownloadKind, getJobRenderEntryPath, getJobSourceEntryPath, artifactFileUrl } from '../utils/artifacts'
 import { formatBytes } from '../utils/format'
 import { createIsolatedArtifactUrl } from '../utils/artifact-preview'
 import type { ArtifactCacheMeta } from '../utils/artifact-cache'
@@ -101,8 +101,14 @@ export function useArtifactCache(onJobCached?: (job: Job, meta: ArtifactCacheMet
     openUrl(artifactFileUrl(targetPath, job))
   }, [metaByJob, rememberMeta])
 
-  const downloadJobZip = useCallback(async (job: Job | null) => {
+  const downloadJobZip = useCallback(async (job: Job | null, kind?: JobDownloadKind) => {
     if (!job?.id) return
+    // Online exports include Core's project scaffolding and checksum manifest.
+    // The preview cache contains only files needed for offline viewing.
+    if (!job.__localOnly) {
+      window.location.href = jobDownloadUrl(job.id, kind ?? getJobDownloadKind(job))
+      return
+    }
     const meta = metaByJob.get(job.id) || await getCachedArtifactJobMeta(job.id).catch(() => null)
     if (isUsableCache(job, meta)) {
       try {
@@ -115,17 +121,11 @@ export function useArtifactCache(onJobCached?: (job: Job, meta: ArtifactCacheMet
           return
         }
       } catch (caught) {
-        if (job.__localOnly) {
-          setError(caught instanceof Error ? caught.message : '本地 ZIP 打包失败')
-          return
-        }
+        setError(caught instanceof Error ? caught.message : '本地 ZIP 打包失败')
+        return
       }
     }
-    if (job.__localOnly) {
-      setError('本地归档记录没有可下载的浏览器缓存 ZIP')
-      return
-    }
-    window.location.href = jobDownloadUrl(job.id)
+    setError('本地归档记录没有可下载的浏览器缓存 ZIP')
   }, [metaByJob, rememberMeta])
 
   const statusFor = useCallback(

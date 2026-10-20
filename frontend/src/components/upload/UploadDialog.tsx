@@ -3,7 +3,11 @@ import { uploadSvg } from '../../api/job-upload'
 import type { UploadProgress, UploadResponse } from '../../api/job-upload'
 import { ApiError } from '../../api/http'
 import type { UploadQuota } from '../../types/runtime'
+import type { OutputFormat } from '../../types/job'
+import { labelForOutputFormat } from '../../utils/format'
 import { STORAGE_KEYS, readNumberStorage, readStringStorage, writeStringStorage } from '../../utils/storage'
+
+const DEFAULT_OUTPUT_FORMATS: OutputFormat[] = ['html', 'vue', 'react']
 
 export function UploadDialog({
   adminMode,
@@ -12,6 +16,7 @@ export function UploadDialog({
   onClose,
   initialFile,
   modelOptions,
+  outputFormats = DEFAULT_OUTPUT_FORMATS,
   maxSvgUploadBytes,
   onUploaded,
   onQuotaChanged,
@@ -24,6 +29,7 @@ export function UploadDialog({
   onClose: () => void
   initialFile: File | null
   modelOptions: string[]
+  outputFormats?: OutputFormat[]
   maxSvgUploadBytes: number
   onUploaded: (response: UploadResponse) => void
   onQuotaChanged: (quota: UploadQuota) => void
@@ -39,6 +45,7 @@ export function UploadDialog({
   const [error, setError] = useState<string | null>(null)
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null)
   const maxSvgUploadLabel = `${Math.round(maxSvgUploadBytes / 1024 / 1024)} MB`
+  const selectedFormat = outputFormats.find(item => item === format) || outputFormats[0]
 
   const selectFile = (nextFile: File | null) => {
     if (nextFile && nextFile.size > maxSvgUploadBytes) {
@@ -51,8 +58,8 @@ export function UploadDialog({
   }
 
   useEffect(() => {
-    writeStringStorage(STORAGE_KEYS.uploadFormat, format)
-  }, [format])
+    if (selectedFormat) writeStringStorage(STORAGE_KEYS.uploadFormat, selectedFormat)
+  }, [selectedFormat])
 
   useEffect(() => {
     writeStringStorage(STORAGE_KEYS.uploadModel, model)
@@ -78,13 +85,13 @@ export function UploadDialog({
 
   const quotaAvailable = adminMode || !quotaEnabled || Number(uploadQuota?.remaining ?? 0) > 0
   const canSubmit = useMemo(
-    () => Boolean(file && !busy && quotaAvailable),
-    [busy, file, quotaAvailable],
+    () => Boolean(file && selectedFormat && !busy && quotaAvailable),
+    [busy, file, quotaAvailable, selectedFormat],
   )
   if (!open) return null
 
   const submit = async () => {
-    if (!file) return
+    if (!file || !selectedFormat) return
     if (file.size > maxSvgUploadBytes) {
       setError(`SVG 文件不能超过 ${maxSvgUploadLabel}`)
       return
@@ -95,7 +102,7 @@ export function UploadDialog({
     try {
       const response = await uploadSvg(file, {
         model: model.trim(),
-        outputFormat: format,
+        outputFormat: selectedFormat,
         scale,
         showcase: (adminMode || allowUserShowcase) && showcase,
       }, setUploadProgress)
@@ -127,13 +134,14 @@ export function UploadDialog({
           <div className="upload-dialog-field">
             <span className="upload-dialog-label">源码格式</span>
             <div className="upload-format-options">
-              {['html', 'vue', 'react'].map((item) => (
+              {outputFormats.map((item) => (
                 <label className="upload-format-option" key={item}>
-                  <input checked={format === item} disabled={busy} name="uploadFormat" onChange={() => setFormat(item)} type="radio" value={item} />
-                  <span>{item === 'html' ? 'HTML' : item === 'vue' ? 'Vue' : 'React'}</span>
+                  <input checked={selectedFormat === item} disabled={busy} name="uploadFormat" onChange={() => setFormat(item)} type="radio" value={item} />
+                  <span>{labelForOutputFormat(item)}</span>
                 </label>
               ))}
             </div>
+            {selectedFormat === 'flutter' ? <div className="upload-dialog-hint">Flutter 提供源码和效果截图，完整应用请下载 ZIP 后运行。</div> : null}
           </div>
           <div className="upload-dialog-field">
             <label className="upload-dialog-label" htmlFor="uploadModelSelect">模型配置 ID</label>

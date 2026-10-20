@@ -1,3 +1,5 @@
+import type { OutputFormat } from './job'
+
 export type UploadQuota = {
   date: string
   limit: number
@@ -18,6 +20,7 @@ export type RuntimeInfo = {
   jobDeleteDisabled: boolean
   maxSvgUploadBytes: number
   modelOptions: string[]
+  outputFormats?: OutputFormat[]
   artifactRoot: string
   uploadQuota: UploadQuota
 }

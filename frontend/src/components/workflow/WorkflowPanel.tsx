@@ -1,4 +1,5 @@
 import type { Job } from '../../types/job'
+import { jobDownloadUrl } from '../../api/jobs'
 import { formatQueueWait } from '../../utils/format'
 import { WORKFLOW_NODE_ORDER, getWorkflowProgress, labelForWorkflowNode } from '../../utils/workflow'
 
@@ -73,6 +74,9 @@ export function WorkflowPanel({ job, visible = true }: { job: Job | null; visibl
           })}
         </div>
         <div className="workflow-stage-tip">首轮生成结束后，这里会切换成完整还原度报告。</div>
+        {job?.result?.diagnosticDownloadUrl && !job.__localOnly && ['failed', 'failed-gate', 'best-effort', 'completed'].includes(job.status) ? (
+          <a className="link-btn" href={jobDownloadUrl(job.id, 'diagnostic')}>下载诊断包</a>
+        ) : null}
       </div>
     </section>
   )

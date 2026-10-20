@@ -1,5 +1,5 @@
-import type { Job } from '../../types/job'
-import { getJobCompareEntryPath, getJobRenderEntryPath, getJobSourceEntryPath, hasPrimaryResults } from '../../utils/artifacts'
+import type { Job, JobDownloadKind } from '../../types/job'
+import { getJobCompareEntryPath, getJobDownloadKind, getJobOutputFormat, getJobRenderEntryPath, getJobSourceEntryPath, hasPrimaryResults } from '../../utils/artifacts'
 import { formatBytes, formatTokenCount, toPercent } from '../../utils/format'
 import type { ResultViewMode } from '../../state/app-state'
 import { ResultImageComparison } from './ResultImageComparison'
@@ -48,7 +48,7 @@ export function ResultPanel({
   chatOpen: boolean
   comparePosition: number
   onComparePositionChange: (value: number) => void
-  onDownloadZip: () => void
+  onDownloadZip: (kind?: JobDownloadKind) => void
   onOpenArtifact: (kind: 'compare' | 'render' | 'source') => void
   onOpenLightbox: (src: string) => void
   onPreviewWidthChange: (value: number) => void
@@ -64,6 +64,7 @@ export function ResultPanel({
   const sourceEntryPath = getJobSourceEntryPath(job)
   const renderEntryPath = getJobRenderEntryPath(job)
   const compareEntryPath = getJobCompareEntryPath(job)
+  const isFlutter = getJobOutputFormat(job) === 'flutter'
   const tokenBadges = tokenBadgesForResult(result)
 
   if (!show) return null
@@ -116,8 +117,10 @@ export function ResultPanel({
       <div className="result-actions">
         {compareEntryPath ? <button className="link-btn" onClick={() => onOpenArtifact('compare')} type="button">打开对照页</button> : null}
         {sourceEntryPath && sourceEntryPath !== renderEntryPath ? <button className="link-btn" onClick={() => onOpenArtifact('source')} type="button">打开源码</button> : null}
-        {renderEntryPath ? <button className="link-btn" onClick={() => onOpenArtifact('render')} type="button">{sourceEntryPath === renderEntryPath ? '打开源码/渲染预览' : '打开渲染预览'}</button> : null}
-        {job?.id ? <button className="link-btn download-btn" onClick={onDownloadZip} type="button">下载 ZIP</button> : null}
+        {renderEntryPath && !isFlutter ? <button className="link-btn" onClick={() => onOpenArtifact('render')} type="button">{sourceEntryPath === renderEntryPath ? '打开源码/渲染预览' : '打开渲染预览'}</button> : null}
+        {job?.id ? <button className="link-btn download-btn" onClick={() => onDownloadZip()} type="button">{job.__localOnly ? '下载本地 ZIP' : getJobDownloadKind(job) === 'diagnostic' ? '下载诊断包' : '下载 ZIP'}</button> : null}
+        {job?.id && !job.__localOnly && result?.deliverable && result.diagnosticDownloadUrl ? <button className="link-btn" onClick={() => onDownloadZip('diagnostic')} type="button">下载诊断包</button> : null}
+        {isFlutter ? <span className="result-cache-status">Flutter 项目请下载 ZIP 后运行</span> : null}
       </div>
     </section>
   )

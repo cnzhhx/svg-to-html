@@ -26,6 +26,7 @@ import {
 import { optimizeCompareHtml } from "../core-service/compare-html.js";
 import { JobSummaryCache } from "../core-service/job-summaries.js";
 import { requestQueueSettings } from "../core-service/queue-settings.js";
+import { requestCoreOutputFormats } from "../core-service/runtime.js";
 import { getBackendConfig } from "../config/index.js";
 import { buildJobQueueDetails } from "../queue/job-queue.js";
 import type { JobQueueDetails } from "../queue/job-queue.js";
@@ -225,6 +226,7 @@ router.get("/runtime", async (req, res) => {
       jobChatDisabled: false,
       jobDeleteDisabled: false,
       modelOptions: readRuntimeModelOptions(),
+      outputFormats: await requestCoreOutputFormats(),
       maxSvgUploadBytes: snapshot(res).settings.maxSvgUploadMb * 1024 * 1024,
       uploadQuota: await accessStore.getQuota(clientKey, snapshot(res).settings),
     });
@@ -532,9 +534,9 @@ router.get("/jobs/:id/preview", (req, res) => {
   );
 });
 
-router.get("/jobs/:id/files/*path", (req, res) => {
+const proxyJobFile = (prefix = "") => (req: import("express").Request, res: import("express").Response) => {
   const pathParam = req.params["path"];
-  const rawPath = Array.isArray(pathParam) ? pathParam.join("/") : String(pathParam ?? "");
+  const rawPath = prefix + (Array.isArray(pathParam) ? pathParam.join("/") : String(pathParam ?? ""));
   if (!isSafeArtifactPath(rawPath)) { res.status(400).json({ error: "Invalid artifact path" }); return; }
   const encodedPath = rawPath.split("/").map(encodeURIComponent).join("/");
   const jobId = String(req.params["id"] ?? "");
@@ -546,15 +548,22 @@ router.get("/jobs/:id/files/*path", (req, res) => {
     `/api/jobs/${encodeURIComponent(jobId)}/files/${encodedPath}`,
     isComparePage ? optimizeCompareHtml : undefined,
   );
-});
+};
+router.get("/jobs/:id/files/*path", proxyJobFile());
+router.get("/jobs/:id/artifacts/*path", proxyJobFile("artifacts/"));
 
 router.get("/jobs/:id/download", (req, res) => {
+  const kind = req.query["kind"];
+  if (Object.keys(req.query).some(key => key !== "kind") || (kind !== undefined && kind !== "deliverable" && kind !== "diagnostic")) {
+    res.status(400).json({ error: "kind must be deliverable or diagnostic" });
+    return;
+  }
   const jobId = String(req.params["id"] ?? "");
   void proxyCoreResponse(
     req,
     res,
     jobId,
-    `/api/jobs/${encodeURIComponent(jobId)}/download`,
+    `/api/jobs/${encodeURIComponent(jobId)}/download${kind ? `?kind=${kind}` : ""}`,
   );
 });
 

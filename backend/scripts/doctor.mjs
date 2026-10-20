@@ -99,7 +99,7 @@ try {
 
 const coreUrl = process.env.SVG_TRANSFORM_CORE_URL?.trim()?.replace(/\/+$/, "");
 const coreImage =
-  process.env.SVG_TRANSFORM_CORE_IMAGE?.trim() || "ghcr.io/cnzhhx/svg-transform-core:latest";
+  process.env.SVG_TRANSFORM_CORE_IMAGE?.trim() || "ghcr.io/cnzhhx/svg-transform-core:0.2.2";
 const coreModelConfig =
   resolveRootPath(
     process.env.SVG_TRANSFORM_CORE_MODEL_CONFIG?.trim() ||

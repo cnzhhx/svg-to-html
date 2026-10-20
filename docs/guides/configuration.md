@@ -49,7 +49,7 @@ Ubuntu 安装默认使用 `/etc/svg-to-html/model-provider.json`。通过 `SVG_T
 | --- | --- | --- |
 | `PORT` | `8081` | API 网关端口 |
 | `SVG_TRANSFORM_CORE_URL` | `http://127.0.0.1:4310` | 网关连接的 Core 地址 |
-| `SVG_TRANSFORM_CORE_IMAGE` | `ghcr.io/cnzhhx/svg-transform-core:0.2.1` | Core 镜像，固定版本便于复现 |
+| `SVG_TRANSFORM_CORE_IMAGE` | `ghcr.io/cnzhhx/svg-transform-core:0.2.2` | Core 镜像，固定版本便于复现 |
 | `SVG_TRANSFORM_CORE_WORKSPACE` | `./workspace/core` | Core 工作目录，保存任务及产物 |
 | `SVG_TRANSFORM_CORE_MODEL_CONFIG` | 本地 `backend/config/model-provider.json` | 模型配置文件；Ubuntu 安装默认使用外部配置 |
 | `SVG_TO_HTML_ACCESS_STATE_PATH` | `./workspace/gateway/access-state.json` | 任务归属和用量账本；网关设置保存在相邻目录 |
@@ -57,6 +57,12 @@ Ubuntu 安装默认使用 `/etc/svg-to-html/model-provider.json`。通过 `SVG_T
 | `MAX_PARALLEL_MODULE_AGENTS` | `4` | 单个 session 内的模块并发，与站点并发不同 |
 
 Core 脚本还支持 `SVG_TRANSFORM_CORE_CONTAINER`（默认 `svg-transform-core`）、`SVG_TRANSFORM_CORE_PORT` 和 `SVG_TRANSFORM_CORE_ENV_FILE`。通常保留默认即可；自定义端口时，确保网关 URL 与容器映射一致。额外 Core 环境文件也可能包含密钥，应按私有配置保管。
+
+默认适配 Core v0.2.2，启动脚本与诊断工具未配置镜像时也使用固定的 `0.2.2` 标签。HTTP 客户端保留 npm 已发布的 `@svg-transform/core-client@0.2.0`；Core 的 Docker 版本和客户端包版本独立。
+
+上传页通过 Core 的 `/ready` 能力信息显示可用格式：HTML、Vue、React，以及已安装 Flutter SDK 的 Core 所支持的 Flutter。官方 `0.2.2` 镜像未包含 Flutter SDK；使用自备 SDK 的 Core 才会出现 Flutter 选项。旧 Core 未提供该接口时保留原有三种格式。
+
+Flutter 结果在站内使用截图对比，完整应用下载 ZIP 后运行。Flutter Web 依赖的资源加载与当前预览的网络、Worker 和 base URI 限制不兼容，因此不提供最终 Flutter 应用的在线运行入口。
 
 文件中的相对工作目录与数据路径相对于仓库根目录解析。自定义模型文件建议使用绝对路径。
 
