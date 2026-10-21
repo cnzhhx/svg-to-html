@@ -11,7 +11,9 @@ Turn SVG designs into HTML, Vue, React, or Flutter. Compare results, refine modu
 
 [简体中文](README.md) | English
 
-[Example](#example) · [Quick start](#quick-start) · [Deployment](docs/guides/deployment.en.md) · [Contributing](CONTRIBUTING.en.md)
+[Live demo](https://lkti.cloud/transformer/) · [Example](#example) · [Quick start](#quick-start) · [Deployment](docs/guides/deployment.en.md) · [Contributing](CONTRIBUTING.en.md)
+
+Community: [LINUX DO](https://linux.do/)
 
 </div>
 

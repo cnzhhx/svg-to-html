@@ -11,7 +11,9 @@
 
 简体中文 | [English](README.en.md)
 
-[效果展示](#效果展示) · [快速开始](#快速开始) · [部署指南](docs/guides/deployment.md) · [参与贡献](CONTRIBUTING.md)
+[在线体验](https://lkti.cloud/transformer/) · [效果展示](#效果展示) · [快速开始](#快速开始) · [部署指南](docs/guides/deployment.md) · [参与贡献](CONTRIBUTING.md)
+
+交流社区：[LINUX DO](https://linux.do/)
 
 </div>
 
